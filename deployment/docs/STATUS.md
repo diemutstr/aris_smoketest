@@ -63,7 +63,13 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
 1. **Local planner** (`aris/local/`). To do, in order:
    - DONE: fixed set for both arms, floors in the tests, "Measured" section of the module page,
      table against live, comparison with the old planner (see the table above)
-   - NEXT: the lazy obstacle check (approved): obstacle check only on the winning route, a band
+   - IN PROGRESS, in the last snapshot commit: the lazy obstacle check (setting `lazy`, default
+     on). First result, arm 31 with the table: same share drawn, same pieces and same leftovers
+     as the full check; CPU per line 0.16 to 0.57 s at the median against 0.35 to 1.38 s.
+     Acceptance on both arms (lazy against full, table against live) was still running.
+     Lines next to a wall take many searches (up to 66); a wider checked band near walls is
+     the next lever.
+   - the rest of the lazy obstacle check (approved): obstacle check only on the winning route, a band
      around it and the alternatives; re-search when a node fails; fall back to the full check
      after a cap on rounds; accept only if shares agree within 0.5 %
    - delete the module's own tool-to-paper rule (the kernel's rule is in use) and the
