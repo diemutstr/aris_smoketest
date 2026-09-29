@@ -35,10 +35,11 @@ first, measure on the corpus, then pick from this list. Numbers marked (est.) ar
 
 10. DONE (round 1): exact capsule-to-box distance without iteration. The old 36-step search was
     ~28 % of a whole single-arm plan; the new one agrees with brute force to 1e-15.
-11. IN PROGRESS (round 1): compiled kernel, configurations in, clearance out. Measured in plain
-    numpy: 16 000 configurations per second for the real arm (33 checked capsules, 49 obstacles),
-    47 000 for a 12-capsule body. Too slow for a 0.1 s free-space search.
-12. Not yet: one bounding volume around the whole arm as a first pass per configuration; SIMD.
+11. DONE (round 1): compiled kernel, joint angles in, clearance out. Real arm 31 scene (33 checked
+    capsules, 2 178 pairs per configuration): numpy 12 700 configurations per second, compiled
+    85 000 on one thread, 600 000 to 900 000 with threads. One path check of 50 samples: 1.5 ms.
+12. Not yet: one bound around a group of obstacles (for example a parked arm's 40 capsules) as a
+    first pass; most of the remaining time is the cheap per-pair first pass, 4 ns per pair.
 
 ## IK
 

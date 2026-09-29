@@ -8,6 +8,12 @@ radii and the margin), a capsule through a plane reads the signed depth.  Capsul
 marks as fixed (the base, inside the arm's own mount) are never checked against obstacles.
 
 `path_clearance` also covers the motion between the samples of a joint path.
+
+Two engines give the same answers: the compiled module `aris_collide_native` (built from
+native/collide, used when it is importable) and plain numpy.  `backend()` says which is in use;
+every call takes `backend="numpy"` or `"native"` to choose, for tests.  The `_q` calls go from
+joint configurations straight to clearance, with the arm's chain given as a table
+(`arm_tables(arm)`), so a planner's inner loop never passes through Python per configuration.
 """
 from __future__ import annotations
 
@@ -16,51 +22,14 @@ from typing import Callable
 
 import numpy as np
 
-from aris.types import Body, Obstacles
+from aris.types import Body
+from aris.kernel import collide_native as _cn
 from aris.kernel import geometry as geo
+from aris.kernel.collide_native import (ArmTables, Packed, arm_tables, backend,  # noqa: F401
+                                        body_q, pack)
 
 _CHUNK_PAIRS = 1 << 16       # capsule-obstacle pairs handled at once; bounds memory, fits cache
 _BIG = 1e6                   # stands in for "nothing to hit" so the interval arithmetic stays finite
-
-
-# --------------------------------------------------------------------------- obstacles as arrays
-
-
-@dataclass(frozen=True)
-class _Packed:
-    box_R: np.ndarray        # (Mb, 3, 3)
-    box_c: np.ndarray        # (Mb, 3)
-    box_h: np.ndarray        # (Mb, 3)
-    box_m: np.ndarray        # (Mb,)
-    pl_n: np.ndarray         # (Mp, 3)
-    pl_off: np.ndarray       # (Mp,)
-    pl_m: np.ndarray         # (Mp,)
-    pl_pen_m: np.ndarray     # (Mp,) margin for pen capsules
-    pl_paper: np.ndarray     # (Mp,) bool
-    cap_a: np.ndarray        # (Mc, 3)
-    cap_b: np.ndarray        # (Mc, 3)
-    cap_rm: np.ndarray       # (Mc,) obstacle radius + margin
-    names: tuple[str, ...]   # boxes, then planes, then capsules: the obstacle index order
-
-
-def _pack(obs: Obstacles) -> _Packed:
-    f = lambda xs, shape: np.asarray(xs, float).reshape(shape)
-    b, p, c = obs.boxes, obs.planes, obs.capsules
-    return _Packed(
-        box_R=f([x.T_base_box[:3, :3] for x in b], (len(b), 3, 3)),
-        box_c=f([x.T_base_box[:3, 3] for x in b], (len(b), 3)),
-        box_h=f([x.half for x in b], (len(b), 3)),
-        box_m=f([x.margin for x in b], (len(b),)),
-        pl_n=f([x.normal for x in p], (len(p), 3)),
-        pl_off=f([x.offset for x in p], (len(p),)),
-        pl_m=f([x.margin for x in p], (len(p),)),
-        pl_pen_m=f([x.margin if x.pen_margin is None else x.pen_margin for x in p], (len(p),)),
-        pl_paper=np.array([x.kind == "paper" for x in p], bool).reshape(len(p)),
-        cap_a=f([x.p0 for x in c], (len(c), 3)),
-        cap_b=f([x.p1 for x in c], (len(c), 3)),
-        cap_rm=f([x.radius + x.margin for x in c], (len(c),)),
-        names=tuple(x.name for x in (*b, *p, *c)),
-    )
 
 
 # --------------------------------------------------------------------------- per-pair clearances
@@ -134,27 +103,36 @@ def _chunk_values(p0, p1, r, is_pen, P, drawing, prune):
     return np.concatenate([ob, planes, oc], axis=2)
 
 
-def _per_capsule(body: Body, obstacles: Obstacles, drawing: bool, prune: bool):
+def _caps(body: Body):
+    K = np.shape(body.p0)[1]
+    fixed = np.zeros(K, bool) if body.is_fixed is None else np.asarray(body.is_fixed, bool)
+    return np.asarray(body.radius, float), np.asarray(body.is_pen, bool), fixed
+
+
+
+def _per_capsule(body: Body, obstacles, drawing: bool, prune: bool, backend=None, threads=1):
     """(N, K) smallest clearance of each capsule over the obstacles, and (N, K) which one.
 
     Fixed capsules (`body.is_fixed`) are not checked: +inf, obstacle -1.
     """
+    P = pack(obstacles)
+    r, is_pen, fixed = _caps(body)
+    if _cn.native_on(backend):
+        val, arg = _cn._native.capsule_values(body.p0, body.p1, (r, is_pen, fixed), P.scene,
+                                          drawing, prune, threads)
+        return val, arg, P
     N, K = np.shape(body.p0)[:2]
-    fixed = np.zeros(K, bool) if body.is_fixed is None else np.asarray(body.is_fixed, bool)
     live = np.flatnonzero(~fixed)
     p0 = np.asarray(body.p0, float)[:, live]
     p1 = np.asarray(body.p1, float)[:, live]
-    r = np.asarray(body.radius, float)[live]
-    is_pen = np.asarray(body.is_pen, bool)[live]
-    P = _pack(obstacles)
     M, L = len(P.names), len(live)
     val = np.full((N, K), np.inf)
-    arg = np.full((N, K), -1, int)
+    arg = np.full((N, K), -1, np.int64)
     if M == 0 or N == 0 or L == 0:
         return val, arg, P
     step = max(1, _CHUNK_PAIRS // (L * M))
     for s in range(0, N, step):
-        v = _chunk_values(p0[s:s + step], p1[s:s + step], r, is_pen, P, drawing, prune)
+        v = _chunk_values(p0[s:s + step], p1[s:s + step], r[live], is_pen[live], P, drawing, prune)
         a = np.argmin(v, axis=2)
         arg[s:s + step, live] = a
         val[s:s + step, live] = np.take_along_axis(v, a[:, :, None], axis=2)[:, :, 0]
@@ -175,38 +153,46 @@ class ClearanceDetail:
     obstacle_names: tuple[str, ...]    # boxes, then planes, then capsules
 
 
-def capsule_clearance(body: Body, obstacles: Obstacles, drawing: bool = False,
-                      prune: bool = True) -> np.ndarray:
+def capsule_clearance(body: Body, obstacles, drawing: bool = False, prune: bool = True,
+                      backend: str | None = None, threads: int = 1) -> np.ndarray:
     """(N, K) per capsule.  Exact where a capsule holds its configuration's minimum; elsewhere
     a lower bound when `prune` is on (see `_chunk_values`)."""
-    return _per_capsule(body, obstacles, drawing, prune)[0]
+    return _per_capsule(body, obstacles, drawing, prune, backend, threads)[0]
 
 
-def clearance(body: Body, obstacles: Obstacles, drawing: bool = False,
-              prune: bool = True) -> np.ndarray:
+def clearance(body: Body, obstacles, drawing: bool = False, prune: bool = True,
+              backend: str | None = None, threads: int = 1) -> np.ndarray:
     """(N,) smallest clearance over all capsule-obstacle pairs.  At least 0 means free."""
-    return capsule_clearance(body, obstacles, drawing, prune).min(axis=1, initial=np.inf)
+    return capsule_clearance(body, obstacles, drawing, prune, backend, threads).min(
+        axis=1, initial=np.inf)
 
 
-def clearance_detail(body: Body, obstacles: Obstacles, drawing: bool = False,
-                     prune: bool = True) -> ClearanceDetail:
-    val, arg, P = _per_capsule(body, obstacles, drawing, prune)
-    N = val.shape[0]
-    k = np.argmin(val, axis=1) if val.shape[1] else np.zeros(N, int)
-    v = val[np.arange(N), k] if val.shape[1] else np.full(N, np.inf)
-    m = arg[np.arange(N), k] if val.shape[1] else np.full(N, -1)
+def _detail(val, arg, names, P) -> ClearanceDetail:
+    N, K = val.shape
+    k = np.argmin(val, axis=1) if K else np.zeros(N, np.int64)
+    v = val[np.arange(N), k] if K else np.full(N, np.inf)
+    m = arg[np.arange(N), k] if K else np.full(N, -1)
     k = np.where(np.isfinite(v), k, -1)
-    return ClearanceDetail(v, k, m, tuple(body.names), P.names)
+    return ClearanceDetail(v, k, m, tuple(names), P.names)
 
 
-def self_clearance(body: Body, pairs: np.ndarray, margin: float) -> np.ndarray:
+def clearance_detail(body: Body, obstacles, drawing: bool = False, prune: bool = True,
+                     backend: str | None = None, threads: int = 1) -> ClearanceDetail:
+    val, arg, P = _per_capsule(body, obstacles, drawing, prune, backend, threads)
+    return _detail(val, arg, body.names, P)
+
+
+def self_clearance(body: Body, pairs: np.ndarray, margin: float, backend: str | None = None,
+                   threads: int = 1) -> np.ndarray:
     """(N,) smallest clearance between the capsule pairs (i, j) of the same arm."""
-    pairs = np.asarray(pairs, int).reshape(-1, 2)
+    pairs = np.asarray(pairs, np.int64).reshape(-1, 2)
     p0, p1 = np.asarray(body.p0, float), np.asarray(body.p1, float)
     r = np.asarray(body.radius, float)
     N = p0.shape[0]
     if len(pairs) == 0:
         return np.full(N, np.inf)
+    if _cn.native_on(backend):
+        return _cn._native.self_clearance(p0, p1, r, pairs, float(margin), threads)
     i, j = pairs[:, 0], pairs[:, 1]
     out = np.empty(N)
     step = max(1, _CHUNK_PAIRS // len(pairs))
@@ -235,16 +221,17 @@ def _interval_bound(ca, cb, delta):
     return np.maximum(ca - delta * s, cb - delta * (1.0 - s))
 
 
-def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacles: Obstacles,
+def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacles,
                    reach: np.ndarray, drawing: bool = False, tol: float = 5e-4,
-                   max_depth: int = 30, max_evals: int = 200_000) -> float:
+                   max_depth: int = 30, max_evals: int = 200_000, backend: str | None = None,
+                   threads: int = 1) -> float:
     """A lower bound on the clearance along the whole piecewise-linear joint path q (N, 7).
 
     `reach` (7,) or (7, K): for joint j (and capsule k), an upper bound on the distance from
     joint j's axis to any point on the capsule's axis, over every configuration; 0 for a
-    capsule the joint does not move.  Moving the joints by dq then moves any point of capsule k
-    along a curve no longer than  sum_j reach[j, k] |dq_j|.  A capsule that does not move is
-    charged nothing.
+    capsule the joint does not move (`Arm.reach`).  Moving the joints by dq then moves any
+    point of capsule k along a curve no longer than  sum_j reach[j, k] |dq_j|.  A capsule that
+    does not move is charged nothing.
 
     Each interval between neighbouring samples is charged once, from both ends (never per
     sample and again per interval).  An interval whose bound is more than `tol` below the
@@ -253,9 +240,10 @@ def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacl
     the sampling it was handed; if `max_depth` or `max_evals` stop the halving first it is
     still a lower bound, only a looser one.
     """
+    P = pack(obstacles)
+    cc = lambda Q: capsule_clearance(body_of(Q), P, drawing, True, backend, threads)
     q = np.asarray(q, float).reshape(-1, 7)
-    body = body_of(q)
-    c = capsule_clearance(body, obstacles, drawing)                 # (N, K)
+    c = cc(q)                                                        # (N, K)
     K = c.shape[1]
     R = np.broadcast_to(np.asarray(reach, float).reshape(7, -1), (7, K))
     m = float(np.min(c, initial=np.inf))
@@ -274,9 +262,59 @@ def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacl
             break
         qa, qb, ca, cb = qa[split], qb[split], ca[split], cb[split]
         qm = 0.5 * (qa + qb)
-        cm = capsule_clearance(body_of(qm), obstacles, drawing)
+        cm = cc(qm)
         evals += len(qm)
         m = min(m, float(np.min(cm, initial=np.inf)))
         qa, qb = np.concatenate([qa, qm]), np.concatenate([qm, qb])
         ca, cb = np.concatenate([ca, cm]), np.concatenate([cm, cb])
     return min(done, m)
+
+
+# --------------------------------------------------------------------------- from joint angles
+
+
+def clearance_q(tables: ArmTables, Q, obstacles, drawing: bool = False,
+                backend: str | None = None, threads: int = 1) -> np.ndarray:
+    """(N, J) joint angles -> (N,) clearance, as `clearance(body_q(tables, Q), ...)`."""
+    Q = np.ascontiguousarray(np.asarray(Q, float).reshape(-1, len(tables.dh)))
+    P = pack(obstacles)
+    if _cn.native_on(backend):
+        return _cn._native.clearance_q(tables.chain, tables.caps, P.scene, Q, drawing, threads)
+    return clearance(body_q(tables, Q, "numpy"), P, drawing, backend="numpy")
+
+
+def clearance_detail_q(tables: ArmTables, Q, obstacles, drawing: bool = False,
+                       backend: str | None = None, threads: int = 1) -> ClearanceDetail:
+    Q = np.ascontiguousarray(np.asarray(Q, float).reshape(-1, len(tables.dh)))
+    P = pack(obstacles)
+    if _cn.native_on(backend):
+        val, arg = _cn._native.capsule_values_q(tables.chain, tables.caps, P.scene, Q, drawing, True,
+                                            threads)
+        return _detail(val, arg, tables.names, P)
+    return clearance_detail(body_q(tables, Q, "numpy"), P, drawing, backend="numpy")
+
+
+def self_clearance_q(tables: ArmTables, Q, pairs, margin: float, backend: str | None = None,
+                     threads: int = 1) -> np.ndarray:
+    Q = np.ascontiguousarray(np.asarray(Q, float).reshape(-1, len(tables.dh)))
+    pairs = np.ascontiguousarray(np.asarray(pairs, np.int64).reshape(-1, 2))
+    if _cn.native_on(backend) and len(pairs):
+        return _cn._native.self_clearance_q(tables.chain, tables.radius, Q, pairs, float(margin),
+                                        threads)
+    return self_clearance(body_q(tables, Q, "numpy"), pairs, margin, backend="numpy")
+
+
+def path_clearance_q(tables: ArmTables, reach, q, obstacles, drawing: bool = False,
+                     tol: float = 5e-4, max_depth: int = 30, max_evals: int = 200_000,
+                     backend: str | None = None, threads: int = 1) -> float:
+    """`path_clearance` with the body computed from the tables; the same method and answer."""
+    q = np.ascontiguousarray(np.asarray(q, float).reshape(-1, len(tables.dh)))
+    P = pack(obstacles)
+    K = len(tables.radius)
+    R = np.ascontiguousarray(np.broadcast_to(np.asarray(reach, float).reshape(len(tables.dh), -1),
+                                             (len(tables.dh), K)))
+    if _cn.native_on(backend):
+        return _cn._native.path_clearance_q(tables.chain, tables.caps, P.scene, R, q, drawing, tol,
+                                        max_depth, max_evals, threads)
+    return path_clearance(lambda Q: body_q(tables, Q, "numpy"), q, P, R, drawing, tol,
+                          max_depth, max_evals, backend="numpy")

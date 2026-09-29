@@ -1,4 +1,4 @@
-# Collision check (`aris/kernel/collide.py`, `aris/kernel/geometry.py`)
+# Collision check (`aris/kernel/collide.py`, `geometry.py`, `native/collide/`)
 
 ## Job
 
@@ -8,93 +8,107 @@ configurations at once. Pure geometry: it does not know what any obstacle is.
 ## In and out
 
 - **In:** the arm's body (`Body`: K capsules at each of N configurations; each capsule is a
-  line segment with a radius) and the obstacles (`Obstacles`: boxes of any orientation, flat
-  planes, capsules), each obstacle carrying the clearance it demands (its margin).
+  line segment with a radius), or the joint angles plus the arm's tables (below); and the
+  obstacles (`Obstacles`: boxes of any orientation, flat planes, capsules), each carrying the
+  clearance it demands (its margin).
 - **Out:** clearance in metres, per configuration.
 
-**Clearance** of one capsule against one obstacle = the gap between their surfaces minus that
-obstacle's margin. The clearance of a configuration is the smallest of these over all pairs.
-At least 0 means free. Below 0 means the margin is violated; a capsule cutting into a box or
-another capsule reads a gap of 0, a capsule through a plane reads how deep it goes.
+**Clearance** of one capsule against one obstacle is the gap between their surfaces minus
+that obstacle's margin. The clearance of a configuration is the smallest of these over all
+pairs. At least 0 means free. Below 0 means the margin is violated. A capsule cutting into a
+box or another capsule reads a gap of 0. A capsule through a plane reads how deep it goes.
 
 Special rules:
-- the pen capsules use the plane's `pen_margin` (if it has one) instead of its `margin`;
-- with `drawing=True` the pen is not checked against planes of kind "paper" (it is on the
-  paper on purpose);
-- capsules the body marks as fixed (`is_fixed`: the base, inside the arm's own mount) are
+- The pen capsules use the plane's `pen_margin` (if it has one) instead of its `margin`.
+- With `drawing=True` the pen is not checked against planes of kind "paper", because it is on
+  the paper on purpose.
+- Capsules the body marks as fixed (`is_fixed`: the base, inside the arm's own mount) are
   never checked against obstacles.
 
 ## The calls
 
 | call | gives |
 |---|---|
+| `pack(obstacles)` | the obstacles as flat arrays; pack once, reuse in every call |
 | `clearance(body, obstacles, drawing=False)` | (N,) clearance |
-| `clearance_detail(...)` | the same, plus which capsule and which obstacle is closest, for reasons and reports |
-| `capsule_clearance(...)` | (N, K) per capsule (exact for the closest capsule, a lower bound for the others) |
+| `clearance_detail(...)` | the same, plus which capsule and which obstacle is closest |
+| `capsule_clearance(...)` | (N, K) per capsule: exact for the closest capsule, a lower bound for the others |
 | `self_clearance(body, pairs, margin)` | (N,) the arm against itself, for the given capsule pairs |
-| `path_clearance(body_of, q, obstacles, reach, drawing=False, tol=5e-4)` | a lower bound on the clearance along a whole joint path, including the motion between samples |
+| `path_clearance(body_of, q, obstacles, reach, drawing=False, tol=5e-4)` | a lower bound on the clearance along a whole joint path, motion between samples included |
+| `arm_tables(arm)` | the arm as tables: its joint chain and its capsules |
+| `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q` | the same, from joint angles and the tables, without building a `Body` |
+| `backend()` | "native" when the compiled module is installed, otherwise "numpy" |
 
-## How the distances are computed (all exact, no search)
+Every call takes `backend="numpy"` or `"native"` (for tests) and `threads=` (compiled only; the
+default is 1). The answer does not depend on the thread count.
 
-- **Segment to segment:** the distance is smallest either at one point in the middle of both
-  segments (found by solving two linear equations) or with one end of a segment against the
-  other segment (a projection). All five candidates are computed and the smallest is kept.
-  Parallel segments are covered by the end cases.
-- **Segment to plane:** the height above the plane changes linearly along the segment, so the
-  lower end decides.
-- **Segment to box:** in the box's own frame, walk along the segment. The squared distance to
-  the box is a bowl-shaped curve made of a few parabola pieces, joined where the segment
-  crosses the plane of a face (at most six places). Its slope is known in closed form at each
-  crossing and at both ends; the lowest point lies between the last place where the slope is
-  not positive and the first where it is, and on that stretch the slope is a straight line, so
-  one interpolation finds it. This replaces the old 36-step search per capsule and box.
-- **Skipping far pairs:** first every capsule's midpoint is compared with every box and
-  obstacle capsule. That gives, per pair, a cheap lower bound (midpoint distance minus half the
-  capsule's length) and a cheap upper bound (midpoint distance). A pair whose lower bound is
-  above the best upper bound of its configuration cannot be the closest pair, so it is not
-  computed exactly. The answer is identical with and without this step; a test checks that.
+## Two engines, one answer
+
+The same method is written twice: once in numpy (`collide.py`, `geometry.py`) and once in
+C++ (`native/collide/`, installed with `pip install ./native/collide` as the package
+`aris_collide_native`). The collide module uses the compiled one when it is installed and numpy
+otherwise. The C++ is a line-by-line copy of the numpy: the same candidates, the same order of
+operations, the same choice of closest pair. On the same capsules the two engines agree bit
+for bit in the tests.
+
+The `_q` calls run the whole chain in C++: joint angles, then the forward kinematics of the
+arm (DH rows, then the flange and hand frames), then the capsule ends, then the distances. No
+Python runs per configuration. The robot's numbers are not written into the C++; they arrive
+as tables taken from the `Arm` object.
+
+## How the distances are computed (exact, no search)
+
+- **Segment to segment:** the gap is smallest either at one point in the middle of both
+  segments (from two linear equations) or with one end of a segment against the other segment
+  (a projection). All five candidates are computed and the smallest wins.
+- **Segment to plane:** the lower end decides.
+- **Segment to box:** in the box's frame the squared distance along the segment is a bowl
+  made of a few parabola pieces. They join where the segment crosses the plane of a face.
+  From the slope at those crossings and at both ends, one interpolation finds the lowest
+  point. This replaces the old 36-step search.
+- **Skipping far pairs:** each capsule's midpoint is compared with every box and obstacle
+  capsule first. That gives a cheap lower and upper bound per pair. A pair whose lower bound
+  is above the best upper bound of its configuration cannot be the closest, so it is skipped.
+  The result is identical with and without skipping.
 
 ## How the motion between samples is covered
 
-The arm moves along straight lines in joint space between the samples of a path. The caller
-passes `reach`: for each joint and capsule, how far that capsule can be from that joint's axis.
-A joint step `dq` then moves any point of the capsule by at most `sum over joints of reach x |dq|`.
-Clearance cannot change faster than the capsule moves, so on each interval the clearance is at
-least what both ends allow once that travel is charged (each interval is charged once, from
-both ends, and a capsule that does not move is charged nothing). Where this bound is more than
-`tol` below the smallest clearance seen at any sample, the interval is halved and both halves
-are measured again. At the end the answer lies at most `tol` below the true minimum, whatever
-the sampling the path came in: the same path handed over coarse or fine gives the same answer
-within `tol`. A cap on halvings keeps it finite; hitting the cap only makes the bound looser,
-never wrong.
+Between samples the arm moves along straight lines in joint space. `Arm.reach` says, per joint
+and capsule, how far the capsule can be from that joint's axis. So a joint step moves every
+point of the capsule by at most `sum of reach × |step|`, and clearance cannot drop faster than
+that. Each interval is charged once, from both ends. A capsule that does not move is charged
+nothing. Where this bound falls more than `tol` below the smallest clearance measured at any
+sample, the interval is halved and measured again. The answer ends up at most `tol` below the
+true minimum, however coarse or fine the path came in.
 
 ## What it cannot do
 
-- It does not model the arm; `reach` must come from the arm model (not yet provided by
-  `kernel/arm.py`; the tests compute it from the FR3 link lengths).
-- A capsule inside a box or another capsule reads 0 gap, not how deep it is.
-- `path_clearance` covers straight joint-space motion only, not a timed curve between samples.
-- One configuration at a time is slow (about 0.3 ms of Python overhead per call): ask in batches.
+- A capsule inside a box or another capsule reads a gap of 0, not how deep it is.
+- `path_clearance` covers straight joint-space motion between samples, not a timed curve.
+- One configuration at a time costs Python overhead (numpy about 0.3 ms per call, compiled
+  about 20 µs). Ask in batches.
 
-## Measured (one core of a Ryzen 9 7950X3D, numpy)
+## Measured
 
-Exactness, 10 000 random pairs each including crossing, touching, parallel, nearly parallel and
-point-like cases, against brute force (dense sampling with zoom): segment-segment 1.6e-13 m,
-segment-box 3.3e-16 m. Against the old code: its box search is up to 3.9e-10 m too high (a
-search can only overshoot; this module agrees with brute force to 2e-16); its segment-segment
-distance agrees to 4e-16 m.
+The exact distances were checked against brute force on 10 000 random pairs each, including
+crossing, touching, parallel and point cases. Segment to segment is within 1.6e-13 m;
+segment to box is within 3.3e-16 m. The old code's box search was up to 3.9e-10 m too high.
+Compiled against numpy: 0 difference on the distance cases, forward kinematics within 5e-16 m
+of `Arm.body`, path bounds within 6e-17 m.
 
-Path bound: the same path at four sampling densities gives answers 0.1 mm apart at most
-(tolerance 0.5 mm), and never above the densely sampled minimum.
+Speed of arm 31 in phase 2: the real FR3 body (33 checked capsules) against 23 steel boxes,
+the paper, walls to arms 17 and 97, and parked arm 71's 40 capsules, which is 2 178 pairs. The
+machine was heavily loaded by other jobs (load average 50 to 75 on 32 cores), so the figures
+are the better of two runs and may be low.
 
-Speed, 12 capsules against 32 boxes, 3 planes and 14 capsules (588 pairs per configuration):
+| batch | numpy, configurations/s | compiled, 1 thread | compiled, 8 threads | compiled, 32 threads |
+|---|---|---|---|---|
+| 1 | 1 600 | 47 000 | | |
+| 100 | 8 400 | 60 000 | | |
+| 10 000 | 12 700 | 85 000 (186 M pairs/s) | 590 000 | 880 000 |
 
-| batch | configurations/s | capsule-obstacle pairs/s |
-|---|---|---|
-| 1 | about 3 000 | 1.8 M |
-| 100 | about 46 000 | 27 M |
-| 10 000 | about 46 000 | 27 M |
-
-Without the skipping step, about 10 000 configurations/s (6 M pairs/s). The real FR3 body (33
-checked capsules, 1 617 pairs) runs at about 18 000 configurations/s in batches. A path check on
-the real arm takes 4 to 8 ms and 50 to 400 body evaluations.
+One path check over a 50-sample path takes 10 to 20 ms in numpy and 1.3 to 1.8 ms compiled.
+The 12-capsule case from the first measurement (588 pairs) runs at 45 000 per second in numpy
+and 275 000 compiled on 1 thread, and 1.9 to 2.3 million on 8 to 32 threads. With the compiled
+engine, the first pass (midpoint against every obstacle, about 4 ns per pair) is most of the
+time. Fewer than 4 pairs per configuration need the exact distance.

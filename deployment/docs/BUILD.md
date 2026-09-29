@@ -57,7 +57,7 @@ Types are in `aris/types.py`. The calls:
 | module | call | returns |
 |---|---|---|
 | kernel.arm | `Arm(tool)`, then `limits`, `self_pairs`, `reach`, `fk(Q)`, `tip(Q)`, `body(Q)`, `ik(T_base_hand, q7)`, `hand_pose(tip, normal, spin, lean)`, `sigma_min(Q)`, `limit_margin(Q)` | arrays, `Body`, `Limits` |
-| kernel.collide | `clearance(body, obstacles, drawing=False)`, `self_clearance(body, pairs, margin)`, `path_clearance(arm.body, q, obstacles, arm.reach, drawing=False)` (a lower bound that also covers the motion between samples) | metres beyond the demanded margin; at least 0 means free |
+| kernel.collide | from capsules: `clearance(body, obstacles, drawing=False)`, `clearance_detail(...)`, `self_clearance(body, pairs, margin)`, `path_clearance(arm.body, q, obstacles, arm.reach)`. From joint angles, in one compiled call: `pack(obstacles)`, `arm_tables(arm)`, then `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q`. `backend()` says whether the compiled engine is in use | metres beyond the demanded margin; at least 0 means free. `path_clearance` is a lower bound that also covers the motion between samples |
 | kernel.retime | `retime(path, limits, rules, s=None)` (with `s`, the arc length per sample, for drawing motions), `sample(traj, t)`, `check(traj, limits)` | `Trajectory` or `Refusal`, arrays, a report |
 | rig | `Rig.load(config_dir)`, `to_base(arm_id, line)`, `obstacles(arm_id, parked, walls)`, `wall_between(a, b)`, `arm(arm_id)` | `Line`, `Obstacles`, `Plane`, `Arm` |
 | local | `plan(arm, lines, obstacles, rules)` | `list[Bunch]`, `list[Leftover]` |

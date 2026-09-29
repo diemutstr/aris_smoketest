@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pytest
 
-from aris.kernel import collide, geometry as geo
+from aris.kernel import collide, collide_native, geometry as geo
 from aris.types import Body, Box, Capsule, Obstacles, Plane
 
 DATA = Path(__file__).parent / "data"
@@ -490,24 +490,7 @@ def test_speed_report():
 
 
 # --------------------------------------------------------------------------- the real arm
-# Only if kernel/arm.py is installed.  `reach` is computed here from the DH table because the
-# Arm does not provide it yet (requested from the orchestrator): the distance from joint j's
-# axis to any point of a capsule on frame f is at most the distance from frame j+1's origin
-# (on that axis) to the capsule's ends, which by the triangle inequality is at most the sum of
-# the frame-to-frame offsets from j+1 to f plus the end's distance from frame f's origin.
-
-
-def _fr3_reach(arm):
-    from aris.kernel import fr3
-    step = [np.hypot(a, d) for _, a, d in fr3.DH] + [fr3.D_FLANGE, 0.0]      # frame i -> i+1
-    f = arm._cap_frame
-    end = np.maximum(np.linalg.norm(arm._cap_a, axis=1), np.linalg.norm(arm._cap_b, axis=1))
-    R = np.zeros((7, len(f)))
-    for j in range(7):
-        for k in range(len(f)):
-            if f[k] >= j + 1:
-                R[j, k] = sum(step[j + 1:f[k]]) + end[k]
-    return R
+# Only if kernel/arm.py is installed.  `Arm.reach` bounds how far each capsule moves per joint.
 
 
 def _real_arm():
@@ -532,7 +515,7 @@ def _real_scene(arm, q_paths):
 
 def test_real_arm_path_clearance():
     arm = _real_arm()
-    reach = _fr3_reach(arm)
+    reach = arm.reach
     rng = np.random.default_rng(13)
     home = np.array([0.0, -0.3, 0.0, -2.2, 0.0, 2.0, 0.8])
     paths = []
@@ -566,3 +549,18 @@ def test_real_arm_speed_report():
             collide.clearance(body, obs)
         dt = (time.perf_counter() - t) / reps
         print(f"  batch {N:6d}: {N / dt:9.0f} configurations/s, {N * pairs / dt / 1e6:6.2f} M pairs/s")
+
+
+def test_without_the_compiled_module(monkeypatch):
+    """With aris_collide_native missing, everything runs on numpy; asking for native refuses."""
+    monkeypatch.setattr(collide_native, "_native", None)
+    assert collide.backend() == "numpy"
+    rng = np.random.default_rng(15)
+    obs, body = _cage_scene(rng), _chain_body(rng, 50)
+    assert collide.clearance(body, obs).shape == (50,)
+    with pytest.raises(ValueError):
+        collide.clearance(body, obs, backend="native")
+    arm = _real_arm()
+    T = collide.arm_tables(arm)
+    Q = np.tile(np.array([0.0, -0.3, 0.0, -2.2, 0.0, 2.0, 0.8]), (3, 1))
+    assert np.array_equal(collide.clearance_q(T, Q, obs), collide.clearance(arm.body(Q), obs))
