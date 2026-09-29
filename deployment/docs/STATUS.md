@@ -19,7 +19,7 @@ pytest tests -q -m "not slow"`, under a minute).
 | `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; limits hold at any sampling rate; pen within 0.1 mm |
 | `check` | done | agrees with the kernel to 1e-15 on 60 000 configurations; 14 built-in faults caught; 0.2 s for a 7 s motion |
 | `free` | done; target met on a quiet machine | 2 000 of 2 000 test pairs solved; CPU per plan at machine load 8 (arm 13 / arm 31): tree needed 48 / 75 ms median, 118 / 177 ms at the 95th percentile; straight move 9 / 12 ms; all plans 37 / 53 ms. At load 58 the tree case is 106 / 191 ms |
-| `local` | works; measurements and speed work IN PROGRESS | arm 31, paper only: random lines and curves 100 %, corpus 98 %, word 93 % (the rest is beyond the 0.784 m reach); about 9 in 10 random lines without a lift; 0.7 to 2.8 s of CPU per line |
+| `local` | done and measured on both arms; speed still ten times above target | paper only: random lines and curves 100 %, corpus 98-99 %, word 93 % (the rest is beyond the reach); CPU per line at the median with the table 0.14 to 0.40 s |
 | `sequencer`, `arm_planner` | not started (round 3) | |
 | `system` | not started (round 4) | |
 | `execute`, `server`, `cli` | not started (round 5) | |
@@ -68,13 +68,19 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
      leftovers identical), but on the same kernel it is 10 to 50 % SLOWER at the median: it
      checks 4 to 5 times fewer nodes and pays for it with many more searches along the walls
      (up to 66 per line). An earlier note that it halved the time compared it with a run on the
-     slower kernel; that was wrong. Make `lazy=False` the default (it was still True in
-     `settings.py` at the end of the session); keep the setting.
-   - CURRENT SPEED, full check with the table, arm 31, CPU per line at the median: word 0.14 s,
-     corpus 0.39 s, lines 0.30 s, curves 0.40 s (95th percentile 0.3 to 1.9 s). Mean split:
-     graph 0.07-0.39 s, search 0.02-0.12, exact-path check 0.04-0.10, timing 0.02-0.03.
-     Target is tens of milliseconds. Next levers: the graph (obstacle check of the surviving
-     nodes; fewer nodes), and the repeated full-line search after a failed exact path.
+     slower kernel; that was wrong. `lazy=False` is the default and the setting is kept.
+     Confirmed on both arms: identical drawing in all 16 comparisons.
+   - CURRENT SPEED, full check with the table, CPU per line at the median (arm 31 / arm 13):
+     word 0.14 / 0.14 s, corpus 0.39 / 0.40, lines 0.30 / 0.22, curves 0.40 / 0.29. Mean split:
+     graph 0.06-0.39 s, search 0.02-0.12, exact-path check 0.03-0.11, timing 0.02-0.03.
+     Target is tens of milliseconds. Next levers, none built: fewer whole-line searches after a
+     failed exact path; a cheaper way to open the lean (it multiplies the nodes by 13); sharing
+     work between lines.
+   - the table moves the share drawn IN ONE PIECE by up to 2.3 % (it blends between tabulated
+     distances from the axis, which can move a lift); the share drawn agrees within 0.2 %
+     except on the word (0.5 to 0.8 %). Decide whether that is acceptable or refine the table.
+   - run the slow fixed-set test once (`pytest tests/test_local.py -m slow`); it has not been
+     run since the last changes
    - delete the module's own tool-to-paper rule (the kernel's rule is in use) and the
      corner-to-corner timing workaround (retime handles a whole drawing in one call; use
      `tip_budget_m` with `tip_of=arm.tip`)
