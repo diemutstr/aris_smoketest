@@ -26,30 +26,34 @@ pytest tests -q -m "not slow"`, under a minute).
 | `calib` | not started (round 6); Pete builds the hardware (dimple plates, pin) | |
 | `gui` | not started (round 7) | |
 
-## Local planner against the old planner (arm 31, measured 2026-09-29)
+## Local planner against the old planner (both arms, measured 2026-09-29)
 
 Share of line length drawn. "Paper only" is the fair comparison, because the old planner knows
 no walls. Old planner: `stroke_api.plan_stroke`, tilt 15, the rest of a line re-offered after
-every split.
+every split. CPU per line is the median on a loaded machine.
 
-| set | length | new, real obstacles | new, paper only | old |
-|---|---|---|---|---|
-| word "unknown" | 2.59 m | 0.929 | 0.929 | 0.679 |
-| corpus, within 0.80 m | 33.75 m | 0.889 | 0.982 | 0.733 |
-| random lines | 90.0 m | 0.951 | 1.000 | 0.932 |
-| random curves | 60.7 m | 0.822 | 1.000 | 0.857 |
+| arm, set | new, real obstacles | new, paper only | old | CPU s/line new (live / table) | CPU s/line old |
+|---|---|---|---|---|---|
+| 31 word | 0.929 | 0.929 | 0.679 | 0.43 / 0.35 | 0.3 |
+| 31 corpus | 0.889 | 0.982 | 0.733 | 1.61 / 1.10 | 7.1 |
+| 31 lines | 0.951 | 1.000 | 0.932 | 1.25 / 0.95 | 1.4 |
+| 31 curves | 0.822 | 1.000 | 0.857 | 1.77 / 1.38 | 4.6 |
+| 13 word | 0.926 | 0.929 | 0.679 | 0.37 / 0.32 | 1.7 |
+| 13 corpus | 0.951 | 0.991 | 0.947 | 1.61 / 1.07 | 4.4 |
+| 13 lines | 0.955 | 1.000 | 0.929 | 0.77 / 0.50 | 1.5 |
+| 13 curves | 0.877 | 1.000 | 0.848 | 1.00 / 0.73 | 1.4 |
 
 - With only the paper, the new planner draws at least as much as the old one on EVERY line, and
-  more on 124 of them. What it does not draw lies beyond the arm's reach of 0.784 m.
-- With the real obstacles, what it draws less than the old planner is, to the centimetre, what
-  it reports as blocked by the two phase walls.
-- Lines drawn without a lift, paper only: word 92 %, corpus 51 %, lines 92 %, curves 96 %.
-- CPU per line, median (loaded machine): new 0.4 to 1.8 s with real obstacles, 0.2 to 0.6 s with
-  only the paper; old 0.3 to 7 s, with a 95th percentile of 120 to 390 s and a worst case of
-  1 677 s. The new planner's 95th percentile is 1 to 6 s.
-- The kinematic table agrees with the live solve within 0.5 % of the share drawn (0.52 % on the
-  word: 13 mm at the rim) and cuts the graph time by about 30 %. What remains is the obstacle
-  check on every surviving node: 73 to 78 % of the CPU is the graph.
+  more on 246 of the 765. What it does not draw lies beyond the arm's reach (0.784 m).
+- With the real obstacles, every line where it draws less is covered by a stretch it reports as
+  blocked by a wall or a parked arm.
+- The old planner's slowest lines: 80 to 390 s at the 95th percentile, 1 677 s worst.
+- The kinematic table (181 MB, built in 14 s) agrees with the live solve within 0.5 % of the
+  share drawn except on the word (0.52 % and 0.78 %: 13 and 20 mm at the rim), cuts the IK solves
+  per line from 8 000-26 000 to 450-1 800 and the CPU per line by 20 to 35 %.
+- Where the CPU goes: graph 73-78 % (now mostly the obstacle check on every surviving node),
+  exact-path check 12-17 %, search 4-6 %, timing 1-4 %.
+- 795 pieces: 78 % have four alternative plans, 95 % at least two.
 
 ## Work that was running when the session ended
 
@@ -57,13 +61,9 @@ Agents belong to the session that started them; assume they stopped with it. The
 disk and in the snapshot commit. Restart these three tasks from the descriptions below.
 
 1. **Local planner** (`aris/local/`). To do, in order:
-   - run the fixed set for both arms (real obstacles, paper only, with the table) on frozen code:
-     `tests/local_cases.py`; fill the floors in `tests/test_local.py` (only one is real, the rest
-     are placeholders) and the "Measured" section of `docs/modules/local.md`
-   - table against live solve: share drawn must agree within 0.5 % (on 43 lines it did: 0.9702
-     against 0.9709, CPU 0.76 against 1.07 s per line)
-   - the comparison with the old planner: `tests/data/local_reference.npz` exists now
-   - then the lazy obstacle check (approved): obstacle check only on the winning route, a band
+   - DONE: fixed set for both arms, floors in the tests, "Measured" section of the module page,
+     table against live, comparison with the old planner (see the table above)
+   - NEXT: the lazy obstacle check (approved): obstacle check only on the winning route, a band
      around it and the alternatives; re-search when a node fails; fall back to the full check
      after a cap on rounds; accept only if shares agree within 0.5 %
    - delete the module's own tool-to-paper rule (the kernel's rule is in use) and the

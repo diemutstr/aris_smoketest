@@ -27,9 +27,13 @@ WORKERS = max(1, min(32, (os.cpu_count() or 2) - 2))
 
 # Floors: the shares measured on the fixed set (docs/modules/local.md), rounded down.  A
 # change that draws less than this is a regression.
-FLOOR_DRAWN = {(31, "word"): 0.92, (31, "corpus"): 0.0, (31, "lines"): 0.0, (31, "curves"): 0.0,
-               (13, "word"): 0.0, (13, "corpus"): 0.0, (13, "lines"): 0.0, (13, "curves"): 0.0}
-FLOOR_SINGLE = {k: 0.0 for k in FLOOR_DRAWN}
+# Measured 2026-09-29 (real obstacles, no table; docs/modules/local.md): drawn 0.929 / 0.889 /
+# 0.951 / 0.822 for arm 31 and 0.926 / 0.951 / 0.955 / 0.877 for arm 13; length drawn whole in
+# one piece 0.918 / 0.261 / 0.710 / 0.595 and 0.918 / 0.797 / 0.745 / 0.700.
+FLOOR_DRAWN = {(31, "word"): 0.92, (31, "corpus"): 0.88, (31, "lines"): 0.94, (31, "curves"): 0.81,
+               (13, "word"): 0.92, (13, "corpus"): 0.94, (13, "lines"): 0.95, (13, "curves"): 0.87}
+FLOOR_SINGLE = {(31, "word"): 0.91, (31, "corpus"): 0.25, (31, "lines"): 0.70, (31, "curves"): 0.58,
+                (13, "word"): 0.91, (13, "corpus"): 0.79, (13, "lines"): 0.74, (13, "curves"): 0.69}
 
 
 def _problem(arm_id=31):

@@ -383,7 +383,7 @@ def figure(rig, arm_id: int, line_table: Line, path) -> None:
             graph.scatter(np.full(same.sum(), s[k]), lat.q7s[L.q7[same]],
                           c=np.where(L.free[same], "#9ab", "#e9b"), s=14, lw=0, zorder=1)
             q7_route.append(lat.q7s[L.q7[node]])
-        spins = [np.rad2deg(lat.params(k, run.nodes[j:j + 1])[0][0])
+        spins = [np.rad2deg(lat.params(k, run.nodes[j:j + 1])[0][0]) % 360
                  for j, k in enumerate(range(run.k0, run.k1 + 1))]
         graph.plot(s[run.k0:run.k1 + 1], q7_route, "-o", color=colours[i % 10], ms=4, lw=2,
                    zorder=2, label=f"route, piece {i + 1}: IK slot {int(slot[0])}, spin "
