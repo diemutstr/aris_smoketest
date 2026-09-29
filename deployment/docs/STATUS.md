@@ -63,15 +63,18 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
 1. **Local planner** (`aris/local/`). To do, in order:
    - DONE: fixed set for both arms, floors in the tests, "Measured" section of the module page,
      table against live, comparison with the old planner (see the table above)
-   - IN PROGRESS, in the last snapshot commit: the lazy obstacle check (setting `lazy`, default
-     on). First result, arm 31 with the table: same share drawn, same pieces and same leftovers
-     as the full check; CPU per line 0.16 to 0.57 s at the median against 0.35 to 1.38 s.
-     Acceptance on both arms (lazy against full, table against live) was still running.
-     Lines next to a wall take many searches (up to 66); a wider checked band near walls is
-     the next lever.
-   - the rest of the lazy obstacle check (approved): obstacle check only on the winning route, a band
-     around it and the alternatives; re-search when a node fails; fall back to the full check
-     after a cap on rounds; accept only if shares agree within 0.5 %
+   - BUILT AND MEASURED, NOT WORTH IT RIGHT NOW: the lazy obstacle check (setting `lazy`). On
+     arm 31 with the table it draws exactly what the full check draws (shares, pieces and
+     leftovers identical), but on the same kernel it is 10 to 50 % SLOWER at the median: it
+     checks 4 to 5 times fewer nodes and pays for it with many more searches along the walls
+     (up to 66 per line). An earlier note that it halved the time compared it with a run on the
+     slower kernel; that was wrong. Make `lazy=False` the default (it was still True in
+     `settings.py` at the end of the session); keep the setting.
+   - CURRENT SPEED, full check with the table, arm 31, CPU per line at the median: word 0.14 s,
+     corpus 0.39 s, lines 0.30 s, curves 0.40 s (95th percentile 0.3 to 1.9 s). Mean split:
+     graph 0.07-0.39 s, search 0.02-0.12, exact-path check 0.04-0.10, timing 0.02-0.03.
+     Target is tens of milliseconds. Next levers: the graph (obstacle check of the surviving
+     nodes; fewer nodes), and the repeated full-line search after a failed exact path.
    - delete the module's own tool-to-paper rule (the kernel's rule is in use) and the
      corner-to-corner timing workaround (retime handles a whole drawing in one call; use
      `tip_budget_m` with `tip_of=arm.tip`)
