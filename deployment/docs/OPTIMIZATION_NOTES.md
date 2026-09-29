@@ -50,3 +50,15 @@ first, measure on the corpus, then pick from this list. Numbers marked (est.) ar
 | 59 % | pen-up routing between strokes |
 | 37 % | certification pass |
 | 3 % | stroke planner |
+
+## System planner
+
+15. **Smaller footprints, more for the follower.** Split a phase into chunks with a stop between
+    them; the leader's footprint per chunk is smaller than for the whole phase. Needs only a
+    "both done with chunk k" confirmation, not continuous timing.
+16. **Tidy leaders.** Make the leader's free-space moves prefer its own side, so the footprint
+    does not grow through an RRT detour.
+17. **Footprint as a voxel distance grid.** The follower's check against the leader becomes a
+    lookup. Conservative by one voxel.
+18. **Six independent blocks as a first phase** (walls between rows and between columns): all six
+    arms start at once with no dependency at all. Audit lower bound: 57 % of the canvas.
