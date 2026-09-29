@@ -162,6 +162,18 @@ rest of a line again after each refusal; it knows no walls and no parked arms.
   IK poses per line drop from 8 000-26 000 to 450-1 800. What is left of the graph's time is the
   check of every surviving node against the obstacles.
 
+- **Lazy obstacle check** (`Settings(lazy=True)`, off by default): the search runs on nodes that
+  passed the cheap gates; only the winning route, a band of its neighbours and the kept
+  alternatives are checked against the obstacles, and the search runs again when one fails
+  (after 12 searches every node is checked). Undrawn stretches are checked in full, so their
+  reasons stay right. Same drawing as checking every node, to 4 digits, on every set of both
+  arms, with the same leftovers. But with today's collision kernel (graph time down 1.5 to 4
+  times since the numbers above) it is not faster: it checks 4 to 6 times fewer nodes, and needs
+  up to 66 searches on lines along a wall. CPU per line, median, with the table, checking every
+  node / lazy: 0.14 / 0.16, 0.39 / 0.57, 0.30 / 0.35, 0.40 / 0.44 (arm 31); 0.14 / 0.12, 0.40 /
+  0.37, 0.22 / 0.22, 0.29 / 0.29 (arm 13). Without the table, checking every node: 0.15, 0.44,
+  0.37, 0.53 (arm 31); 0.13, 0.61, 0.28, 0.39 (arm 13).
+
 Tests: `pytest tests/test_local.py -m "not slow"` (under a minute): degenerate lines, the search
 on a toy graph, a simple line, same answer with 1 and 8 workers and from a fresh process. Slow:
 the whole fixed set (every line covered exactly once, every plan and its reverse verified

@@ -33,7 +33,9 @@ class Settings:
     table_r_max: float = 0.95      # m, the farthest tabulated distance
 
     # ---- the lazy obstacle check (optimisation note 4)
-    lazy: bool = True              # check nodes against the obstacles only on the routes used
+    # Measured 2026-09-29: same drawing either way; with the fast collision kernel checking every
+    # surviving node is cheaper than the extra searches the lazy check needs along walls.
+    lazy: bool = False             # check nodes against the obstacles only on the routes used
     lazy_rounds: int = 12          # searches per route before every surviving node is checked
 
     # ---- the search
