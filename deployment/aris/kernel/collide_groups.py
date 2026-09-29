@@ -32,12 +32,10 @@ def enclosing_capsule(points: np.ndarray, radii: np.ndarray):
     P = np.asarray(points, float).reshape(-1, 3)
     r = np.asarray(radii, float).reshape(-1)
     c = P.mean(axis=0)
-    if len(P) > 1 and np.ptp(P, axis=0).max() > 0.0:
-        u = np.linalg.svd(P - c, full_matrices=False)[2][0]
-    else:
-        u = np.array([1.0, 0.0, 0.0])
-    t = (P - c) @ u
-    off = np.linalg.norm(P - c - t[:, None] * u, axis=1)
+    X = P - c
+    u = np.linalg.eigh(X.T @ X)[1][:, -1] if len(P) > 1 else np.array([1.0, 0.0, 0.0])
+    t = X @ u
+    off = np.linalg.norm(X - t[:, None] * u, axis=1)
     # a hair of slack so rounding can never leave a member poking out
     R = float(np.max(off + r)) * (1 + 1e-12) + 1e-12
     return c + t.min() * u, c + t.max() * u, R

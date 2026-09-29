@@ -206,7 +206,7 @@ def test_speed_report_arm31():
     rng = np.random.default_rng(27)
     r = _speed_rows("arm 31, phase 2 (walls to 17 and 97, arm 71 parked)", arm.body, T, obs,
                     int((~T.is_fixed).sum()), rng, arm.limits.q_min, arm.limits.q_max)
-    assert r > 2_000                                    # ten times below the 22 000/s measured (62-capsule arm)
+    assert r > 20_000                                   # ten times below the 244 000/s measured
     # one path of 50 samples through the free space
     q_free = rng.uniform(arm.limits.q_min, arm.limits.q_max, (4000, 7))
     q_free = q_free[collide.clearance_q(T, q_free, obs) > 0.0][:2]
@@ -234,7 +234,7 @@ def test_speed_report_synthetic12():
     body_of = lambda Q: collide.body_q(T, Q, "numpy")
     r = _speed_rows("12 capsules (first report's case)", body_of, T, obs, 12, rng,
                     arm.limits.q_min, arm.limits.q_max)
-    assert r > 15_000                                   # ten times below the 155 000/s measured
+    assert r > 40_000                                   # ten times below the 470 000/s measured
 
 
 # --------------------------------------------------------------------------- batches of edges
@@ -322,7 +322,7 @@ def test_edges_speed_report():
             worst = max(worst, dt / len(Qa))
             rows.append(f"{label} {len(Qa) / dt:8.0f}/s")
         print(f"  {length:4.2f} rad: " + "  ".join(rows))
-    assert worst < 10 * 3e-3                            # generous: ten times the slowest seen
+    assert worst < 10 * 4e-4                            # generous: ten times the slowest seen
 
 
 def test_q_calls_with_nothing_to_hit():
@@ -334,3 +334,63 @@ def test_q_calls_with_nothing_to_hit():
                                         backend=backend) == np.inf
         assert np.all(collide.edges_clearance_q(T, arm.reach, Qa, Qb, Obstacles(), floor=None,
                                                 backend=backend) == np.inf)
+
+
+# --------------------------------------------------------------------------- the group skip
+
+
+MODES = [dict(prune=False, groups=False), dict(prune=True, groups=False),
+         dict(prune=True, groups=True)]
+
+
+def test_group_skip_changes_nothing_arm31():
+    """Every engine and every skipping mode: the same clearance, closest pair, self clearance,
+    per-capsule values (for a given span), path bounds and edge bounds."""
+    arm, T, P = _arm31()
+    Q = _q(arm, 400, 40)
+    pairs = arm.self_pairs
+    ref = collide.clearance_detail_q(T, Q, P, backend="numpy", groups=False)
+    ref_self = collide.self_clearance_q(T, Q, pairs, 0.023, backend="numpy")
+    body = arm.body(Q)
+    full = collide.capsule_clearance(body, P, prune=False, backend="numpy")
+    for backend in ("native", "numpy"):
+        for md in MODES:
+            d = collide.clearance_detail(body, P, backend=backend, **md)
+            _same(d, ref)
+            assert np.abs(collide.clearance(body, P, backend=backend, **md) - ref.value).max() <= TOL
+            s = collide.self_clearance(body, pairs, 0.023, backend=backend, **md)
+            assert np.abs(s - ref_self).max() <= TOL
+            for span in (0.0, 0.05):
+                c = collide.capsule_clearance(body, P, span=span, backend=backend, **md)
+                want = np.where(T.is_fixed, np.inf, np.minimum(full, ref.value[:, None] + span))
+                assert np.array_equal(np.isinf(c), np.isinf(want))
+                with np.errstate(invalid="ignore"):
+                    assert np.abs(np.where(np.isfinite(want), c - want, 0)).max() <= TOL
+        for groups in (True, False):
+            _same(collide.clearance_detail_q(T, Q, P, backend=backend, groups=groups), ref)
+            assert np.abs(collide.self_clearance_q(T, Q, pairs, 0.023, backend=backend,
+                                                   groups=groups) - ref_self).max() <= TOL
+    Qa, Qb = _edges(arm, T, P, 6, 0.3, 41)
+    for i in range(len(Qa)):
+        q = Qa[i] + np.linspace(0, 1, 6)[:, None] * (Qb[i] - Qa[i])
+        b = [collide.path_clearance_q(T, arm.reach, q, P, backend=be, groups=g)
+             for be in ("native", "numpy") for g in (True, False)]
+        s = [collide.path_self_clearance_q(T, arm.reach, q, pairs, 0.023, backend=be, groups=g)
+             for be in ("native", "numpy") for g in (True, False)]
+        assert max(b) - min(b) <= TOL and max(s) - min(s) <= TOL
+    e = [collide.edges_clearance_q(T, arm.reach, Qa, Qb, P, floor=f, self_pairs=pairs,
+                                   self_margin=0.023, backend=be, groups=g)
+         for f in (None, 0.0) for be in ("native", "numpy") for g in (True, False)]
+    for f in (0, 1):
+        grp = np.array(e[4 * f:4 * f + 4])
+        assert np.abs(grp - grp[0]).max() <= TOL
+
+
+def test_exact_evaluations_counted():
+    arm, T, P = _arm31()
+    Q = _q(arm, 2000, 42)
+    n = {md: collide.exact_count_q(T, Q, P, prune=md[0], groups=md[1]) / len(Q)
+         for md in ((False, False), (True, False), (True, True))}
+    print(f"\nexact pair distances per configuration, arm 31: none skipped {n[(False, False)]:.0f}, "
+          f"midpoint skip {n[(True, False)]:.1f}, groups + midpoint {n[(True, True)]:.1f}")
+    assert n[(True, True)] < 0.01 * n[(False, False)]

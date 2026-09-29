@@ -482,11 +482,11 @@ def test_pruning_changes_nothing_rig_like():
 @pytest.mark.slow
 def test_speed_report():
     rng = np.random.default_rng(8)
-    scenes = {"rig-like (98 % free)": (_cage_scene(rng), lambda n: _chain_body(rng, n)),
-              "crowded (all in contact)": (_scene(rng), lambda n: _random_body(rng, n))}
+    scenes = {"rig-like (98 % free)": (collide.pack(_cage_scene(rng)), lambda n: _chain_body(rng, n)),
+              "crowded (all in contact)": (collide.pack(_scene(rng)), lambda n: _random_body(rng, n))}
     rows = []
     for label, (obs, make) in scenes.items():
-        pairs = 12 * (len(obs.boxes) + len(obs.planes) + len(obs.capsules))
+        pairs = 12 * len(obs.names)
         for prune in (False, True):
             for N in (1, 100, 10_000):
                 body = make(N)
@@ -551,9 +551,9 @@ def test_real_arm_path_clearance():
 def test_real_arm_speed_report():
     arm = _real_arm()
     rng = np.random.default_rng(14)
-    obs = _cage_scene(rng)
+    obs = collide.pack(_cage_scene(rng))
     live = int((~arm.body(np.zeros((1, 7))).is_fixed).sum())
-    pairs = live * (len(obs.boxes) + len(obs.planes) + len(obs.capsules))
+    pairs = live * len(obs.names)
     print(f"\nnumpy, real FR3 body ({live} capsules checked) vs 32 boxes + 3 planes + 14 capsules = {pairs} pairs")
     for N in (1, 100, 10_000):
         Q = rng.uniform(arm.limits.q_min, arm.limits.q_max, (N, 7))

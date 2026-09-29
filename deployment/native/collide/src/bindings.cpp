@@ -24,7 +24,7 @@ struct SceneIn {  // keeps the converted arrays alive while the pointers are in 
     Arr bR, bc, bh, bm, pn, po, pm, ppm, ca, cb, crm, ptm, ga, gb, gr, gm;
     IArr gs, gmem;
     BArr pp;
-    std::vector<double> box_soa, cap_soa;
+    std::vector<double> box_soa, cap_soa, og_soa;
     acol::Scene s;
     explicit SceneIn(const py::tuple& t)
         : bR(t[0].cast<Arr>()), bc(t[1].cast<Arr>()), bh(t[2].cast<Arr>()), bm(t[3].cast<Arr>()),
@@ -56,7 +56,8 @@ struct SceneIn {  // keeps the converted arrays alive while the pointers are in 
         }
         s.og_start = gs.data(); s.og_members = gmem.data();
         s.og_a = ga.data(); s.og_b = gb.data(); s.og_r = gr.data(); s.og_margin = gm.data();
-        acol::make_soa(s, box_soa, cap_soa);
+        acol::make_soa(s, box_soa, cap_soa, og_soa);
+        s.og_soa = og_soa.data();
         s.box_soa = box_soa.data();
         s.cap_soa = cap_soa.data();
     }

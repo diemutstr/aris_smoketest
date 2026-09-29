@@ -1,4 +1,4 @@
-# Collision check (`aris/kernel/collide.py`, `collide_path.py`, `collide_native.py`, `geometry.py`, `native/collide/`)
+# Collision check (`aris/kernel/collide.py`, `collide_path.py`, `collide_native.py`, `collide_groups.py`, `geometry.py`, `native/collide/`)
 
 ## Job
 
@@ -31,10 +31,10 @@ Special rules:
 
 | call | gives |
 |---|---|
-| `pack(obstacles)` | the obstacles as flat arrays; pack once, reuse in every call |
+| `pack(obstacles)` | the obstacles as flat arrays, with their groups; pack once (about 1 ms), reuse in every call |
 | `clearance(body, obstacles, drawing=False)` | (N,) clearance |
 | `clearance_detail(...)` | the same, plus which capsule and which obstacle is closest |
-| `capsule_clearance(...)` | (N, K) per capsule: exact for the closest capsule, a lower bound for the others |
+| `capsule_clearance(..., span=inf)` | (N, K) per capsule: its clearance, but never more than the configuration's minimum plus `span`. With the default `span` every capsule is exact; with a small `span` only the capsules near the minimum are, the others are lower bounds, and it is faster |
 | `self_clearance(body, pairs, margin)` | (N,) the arm against itself, for the given capsule pairs |
 | `path_clearance(body_of, q, obstacles, reach, drawing=False, tol=5e-4)` | a lower bound on the clearance along a whole joint path, motion between samples included |
 | `arm_tables(arm)` | the arm as tables: its joint chain and its capsules |
@@ -70,10 +70,38 @@ as tables taken from the `Arm` object.
   made of a few parabola pieces. They join where the segment crosses the plane of a face.
   From the slope at those crossings and at both ends, one interpolation finds the lowest
   point. This replaces the old 36-step search.
-- **Skipping far pairs:** each capsule's midpoint is compared with every box and obstacle
-  capsule first. That gives a cheap lower and upper bound per pair. A pair whose lower bound
-  is above the best upper bound of its configuration cannot be the closest, so it is skipped.
-  The result is identical with and without skipping.
+- **Skipping far groups, then far pairs.** Most pairs are nowhere near the minimum, so they
+  are ruled out in two steps before any exact distance is taken.
+  - The body is split into groups by name: one per link, and one per part of the tool (hand,
+    each finger, holder, pen). Each configuration puts a sphere around each group.
+  - `pack` splits the obstacles into groups. A parked arm becomes one group per link and tool
+    part (about a dozen), because its capsules never move. The steel boxes are gathered
+    greedily: a box joins a group whose first box is within 0.4 m. Other capsules are grouped
+    by a 0.5 m grid. Every group gets one fat capsule that contains all its members; this is
+    the coarse stand-in used for the far test. The planes are always checked one by one; they
+    are cheap. Changing margins with `dataclasses.replace` is fine, because the groups follow
+    the margins. Moving an obstacle needs a new `pack`.
+  - First the closest pair of groups is measured in full, which gives a good current best.
+    Then any pair of groups whose sphere and fat capsule are further apart than that best is
+    skipped whole. Inside the remaining groups, each capsule's midpoint gives a cheap bound
+    per pair. Only pairs that could still be the closest get the exact distance.
+  - The arm against itself works the same way: its pairs are grouped by the two capsules'
+    groups, and the spheres rule out links that are far apart.
+- **What "the same answer" means.** A skipped pair is proven to be above the configuration's
+  minimum plus `span`. So every capsule's value is defined exactly: its true clearance, cut
+  off at the minimum plus `span` (`span` is 0 for `clearance`). Skipping more or less, or
+  switching engines, cannot change it. `clearance`, `clearance_detail` (value and closest
+  pair), `self_clearance`, the path bounds and the edge batch are identical, to 1e-12, with
+  the groups on or off (`groups=False`, `prune=False` in the tests), in both engines.
+- **What did change on 2026-09-29.** Per-capsule values for capsules that are not the closest
+  are now cut off at the minimum plus `span`. Before, they were cheap midpoint lower bounds.
+  Along a path each capsule is kept exact to 0.05 m above the minimum of its sample
+  (`collide.SPAN`). The path and edge bounds therefore moved by up to 0.35 mm, nearly always
+  upward (at most 0.01 mm down), within `tol`; they are still lower bounds within `tol` of
+  the truth. No caller in `aris/`
+  reads per-capsule values of capsules that are not the closest. `local/gates.py` uses
+  `capsule_clearance` only in a fallback branch that is off for the real arm, and there the
+  new default makes every capsule exact.
 
 ## How the motion between samples is covered
 
@@ -119,30 +147,36 @@ of `Arm.body`, path bounds within 6e-17 m.
 
 Speed of arm 31 in phase 2: the real FR3 body (62 capsules, 55 checked, 33 of them on the tool)
 against 23 steel boxes, the paper, walls to arms 17 and 97, and parked arm 71's 62 capsules,
-which is 4 840 pairs. The arm has 784 self pairs. Speeds were measured in CPU time while other
-jobs loaded the machine heavily (load average about 60 on 32 cores), so the figures may be low.
-The threaded rows are wall clock and suffer most from the load.
+which is 4 840 pairs. The arm has 784 self pairs. Everything is CPU time on one thread unless
+it says otherwise. "Before" is the midpoint pass alone, measured at machine load about 11;
+"after" adds the group skip, measured at load about 8, on the same configurations and paths.
 
-| batch | numpy, configurations/s | compiled, 1 thread | compiled, 8 threads | compiled, 32 threads |
-|---|---|---|---|---|
-| 1 | 1 100 | 19 000 | | |
-| 100 | 4 100 | 22 000 | | |
-| 10 000 | 4 100 | 22 000 (106 M pairs/s) | 66 000 | 109 000 |
+| | before | after |
+|---|---|---|
+| compiled, batch 1, configurations/s | 33 000 | 44 000 |
+| compiled, batch 100 | 36 000 | 300 000 |
+| compiled, batch 10 000 | 35 000 | 244 000 (1 180 M pairs/s) |
+| compiled, batch 10 000, 8 / 32 threads (wall clock) | 66 000 / 109 000 (at load 60) | 1.7 M / 2.6 M |
+| numpy, batch 1 / 100 / 10 000 | 1 800 / 3 700 / 5 000 | 1 000 / 3 600 / 4 500 |
+| self check, 784 pairs, compiled, batch 10 000 | 47 000 | 226 000 |
+| 50-sample path check, compiled, median of 20 (mean) | 6.2 ms (6.9) | 0.9 ms (1.2) |
+| 50-sample path check, numpy | 29 ms | 28 ms |
+| exact distances per configuration (of 4 675 box and capsule pairs) | 3.9 | 3.1 |
 
-Edges on arm 31, one thread, CPU time, per second. The old way calls `path_clearance_q` in a
-Python loop, which gives the same numbers as `floor=None`:
+The exact distances were already few before. The gain comes from the first pass: about 300
+group tests and a few hundred midpoint tests per configuration, where there used to be 4 675
+midpoint tests. Batch 1 is held back by the Python call itself, about 20 µs.
+
+Edges on arm 31, one thread, CPU time, per second (after). The Python loop calls
+`path_clearance_q` once per edge, which gives the same numbers as `floor=None`:
 
 | edge length | floor 0 | floor 0, with self check | floor None | Python loop |
 |---|---|---|---|---|
-| 0.05 rad | 8 100 | 4 700 | 4 200 | 3 600 |
-| 0.3 rad | 3 600 | 1 900 | 1 200 | 1 200 |
-| 1.0 rad | 1 700 | 1 200 | 390 | 440 |
+| 0.05 rad | 70 000 | 20 000 | 32 000 | 17 000 |
+| 0.3 rad | 26 000 | 8 500 | 10 000 | 8 000 |
+| 1.0 rad | 13 000 | 4 600 | 2 800 | 2 700 |
 
-Most of the gain comes from stopping early at the floor. Once an edge has to be refined all
-the way, the refinement dominates and the Python loop costs little extra.
+Before the group skip these were about 8 100, 3 600 and 1 700 per second with floor 0.
 
-One path check over a 50-sample path takes 29 ms in numpy and 4.1 ms compiled. For
-comparison, 12 capsules against 49 obstacles (588 pairs) runs at 31 000 per second in numpy
-and 146 000 compiled on 1 thread. With the compiled engine, most of the time goes to the
-first pass (each capsule's midpoint against every obstacle, a few nanoseconds per pair). Only
-a handful of pairs per configuration need the exact distance.
+For comparison, 12 capsules against 49 obstacles (588 pairs) runs at 37 000 per second in
+numpy and 470 000 compiled on one thread.

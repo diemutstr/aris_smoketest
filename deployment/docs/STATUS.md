@@ -15,7 +15,7 @@ pytest tests -q -m "not slow"`, under a minute).
 | `aris/types.py` | the contracts; changed by the orchestrator only | |
 | `rig` | done | poses match the old model to 1e-16; 37 steel boxes; diagonal walls 678 mm from both bases, 26.75 degrees |
 | `kernel/arm` + `native/fr3_ik` | done | new IK: round trip 100 % (old solver 66 %); body 62 capsules, all meshes inside; holder 14.7 mm above the paper upright, 9.4 mm at 15 degrees lean |
-| `kernel/collide` + `native/collide` | done; two-level check IN PROGRESS | exact distances; real arm 31 scene 22 000 configurations per second on one thread since the tool refit (85 000 before it); target 100 000 |
+| `kernel/collide` + `native/collide` | done, two-level check included | exact distances; real arm 31 scene (55 checked capsules, 88 obstacles) on one thread: 244 000 configurations per second, a 50-sample path check in 0.9 ms, 26 000 edges of 0.3 rad per second; 1.7 to 2.6 million configurations per second with threads |
 | `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; limits hold at any sampling rate; pen within 0.1 mm |
 | `check` | done | agrees with the kernel to 1e-15 on 60 000 configurations; 14 built-in faults caught; 0.2 s for a 7 s motion |
 | `free` | done; target met on a quiet machine | 2 000 of 2 000 test pairs solved; CPU per plan at machine load 8 (arm 13 / arm 31): tree needed 48 / 75 ms median, 118 / 177 ms at the 95th percentile; straight move 9 / 12 ms; all plans 37 / 53 ms. At load 58 the tree case is 106 / 191 ms |
@@ -89,17 +89,16 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
    compiled batch of edges. 94 % of what remains is inside the kernel's edge call. A refusal
    "no free path" costs the full cap of 20 000 edges, 10 to 30 s. The fixed test set still comes
    from random lift-off configurations; regenerate it from the local planner's alternatives.
-3. **Collision, two-level check** (`aris/kernel/collide*.py`, `native/collide/`): bounds per link
-   and per parked arm first, exact capsules only for what is close; same answers to 1e-12;
-   target 100 000 configurations per second on the real arm 31 scene, one thread.
-   The code is in the snapshot commit and the tests pass, but its owner had not reported or
-   measured when the session ended: measure it first.
-   Also asked for by the free-space planner: a tighter bound on how far the arm moves along an
-   edge. The kernel charges each joint its largest possible lever arm and needs about 55 body
-   evaluations per edge; a bound from the joints' actual speeds at the two ends of the edge plus
-   a reach-based change term needed 17 to 20 (measured by the free-space planner's owner before
-   that code was deleted; see git history of `aris/free/bound.py`). That is a 2.5 to 3 times
-   cut for both planners.
+3. **Collision kernel** (`aris/kernel/collide*.py`, `native/collide/`): the two-level check is
+   DONE and committed (groups per link and per parked arm; same answers to 1e-12; path and edge
+   bounds moved by at most 0.35 mm, inside their tolerance). Still open, asked for by the
+   free-space planner: a tighter bound on how far the arm moves along an edge. The kernel
+   charges each joint its largest possible lever arm and needs about 55 body evaluations per
+   edge; a bound from the joints' actual speeds at the two ends of the edge plus a reach-based
+   change term needed 17 to 20 (see the git history of `aris/free/bound.py`). Both planners
+   would gain from it.
+   After this kernel change, re-measure both planners: the local planner's and the free-space
+   planner's speed tables were taken before the two-level check was finished.
 
 ## If the tests fail right after picking up
 
