@@ -107,16 +107,31 @@ what they can do without interfering with the leaders; then the roles swap; then
 
 **Leaders can reach each other.** The diagonal pairs (13-71 and 71-2) hang 1.36 m apart and each
 arm reaches about 0.9 m, so they can touch; the audit found 0.7 % of their pose pairs closer than
-the margin. The two outer leaders of one column (2.42 m apart) cannot. The row walls are what
-turns "almost never" into "never", and the independent checker confirms it afterwards by
-measuring the distance between the leaders' footprints.
+the margin. The two outer leaders of one column (2.42 m apart) cannot.
 
-**Rows.** The rig is three rows of two arms. A wall between neighbouring rows (a plane in the
-table frame; every arm stays on its own side, half the arm-to-arm margin away) makes the three
-rows independent of each other by construction. Each row is then a pair: one leader, one follower.
+**Diagonal walls between the leaders** (Pete, 2026-09-29; figure: `figures/leader_walls.png`).
+A wall is a vertical plane in the table frame. An arm keeps its whole body, pen included, on its
+own side and half the arm-to-arm margin away, so two arms on opposite sides are clear of each
+other by construction. The wall between two leaders is the plane halfway between their bases and
+square to the line joining them:
+- it passes through the table centre line at y = -605 mm and y = +605 mm, turned 26.7 degrees from
+  the row direction
+- it is 678 mm from both bases, further than a row wall would be (605 mm), so each leader loses less
+- each leader's region is the part of the canvas nearest to it
+- in phase 2 the walls are the mirror image, so they cross the phase 1 walls at one point each.
+  A line that crosses a wall in phase 1 is, almost always, whole inside one region in phase 2.
+  With row walls the two phases would share the same walls and the swap would gain nothing.
+
+The independent checker confirms the separation afterwards by measuring the distance between the
+leaders' footprints.
+
+**Parked followers.** Each parked follower stands inside the region of the leader of its own row,
+403 mm from the nearest wall, and is a plain obstacle for that leader.
+
+**Step 2: followers.** The rig is three rows of two arms; inside a row the leader has priority.
 
 **Inside a row, per phase**
-1. The leader plans first. Its only obstacles are the row walls, the frame, the paper and the
+1. The leader plans first. Its only obstacles are the walls, the frame, the paper and the
    follower standing parked. It takes the space it needs.
 2. The leader's **footprint** is everywhere its body goes during the phase, drawing and free-space
    moves together. It is handed to the follower as one more obstacle.
@@ -131,13 +146,13 @@ rows independent of each other by construction. Each row is then a pair: one lea
 |---|---|---|
 | 1 | 13, 71, 2 (1-2-1) | 17, 31, 97 |
 | 2 | 17, 31, 97 (2-1-2) | 13, 71, 2 |
-| 3 fill | what is left: lines that cross a row wall, and lines neither turn could draw |
+| 3 fill | what is left: lines that cross a wall in both phases, and lines neither turn could draw |
 
 Every arm gets one turn with priority, so every line is offered once to an arm that is not
 restricted by its partner.
 
 **Allocation.** Each line goes to the arm in its row that reaches it best; where both reach it
-equally, to the leader. A line that crosses a row wall waits for the fill phase. Lines are not
+equally, to the leader. A line that crosses a wall waits for the next phase. Lines are not
 cut unless no arm can draw them whole; a cut gets an overlap at the joint.
 
 **Running a phase.** The three leaders plan in parallel and start moving as soon as their first
@@ -166,5 +181,5 @@ An independent check of everything that goes to a robot. It shares no code with 
   press depth, so it depends on calibration and contact-finding
 - how much a follower can draw next to a leader's footprint, measured on the corpus
 - how the footprint is represented (swept capsules or a voxel grid)
-- what the fill phase looks like (row walls shifted, or one arm at a time)
-- how lines that cross a row wall are cut, and whether the two halves overlap
+- what the fill phase looks like (walls shifted, or one arm at a time)
+- how a line that crosses a wall in both phases is cut, and whether the two halves overlap
