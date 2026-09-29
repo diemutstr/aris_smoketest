@@ -154,6 +154,9 @@ class DrawPlan:
     tip_base: np.ndarray               # (N, 3)
     score: float                       # worst margin along the path; higher is better
     joint_travel: float                # radians summed over joints and samples
+    draw_time: float = 0.0             # seconds the timed motion takes; 0 if not timed yet
+    spin: np.ndarray | None = None     # (N,) hand spin about the paper normal, for inspection
+    lean: np.ndarray | None = None     # (N, 2) pen lean, for inspection
 
     @property
     def q_start(self) -> np.ndarray:
