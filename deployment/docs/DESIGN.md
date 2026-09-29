@@ -242,6 +242,53 @@ through the same executors.
 **Where it runs.** The server and the planners run on the planning machine. The executors run on
 the operator PC next to the arms. Only motions and status messages cross between the two.
 
+## 6. Calibration
+
+PROPOSAL (2026-09-29). A job of the drawing server. Starting point: each arm's pose is known to
+a few millimetres, at worst a centimetre, and its orientation may be off.
+
+**What has to be found, per arm**
+
+| unknown | why it matters | how it is measured |
+|---|---|---|
+| paper height and arm tilt | pen digs in or hovers; 1 degree of tilt is 14 mm of height at 0.8 m | touch the paper at a grid of points |
+| pen tip relative to the hand | every line is shifted, differently for every hand spin | spin test: draw the same small cross from four hand spins |
+| arm position and turn on the table | drawings of neighbouring arms do not line up; 1 degree of turn is 14 mm at 0.8 m | registration crosses shared with the neighbours |
+
+The order is fixed: height first (needed to draw at all), then the tip (needed before positions
+mean anything), then the position on the table.
+
+**1. Touch the paper.** Start well above the expected paper, lower slowly until contact, stop,
+record. About 25 points over the arm's area. The fit gives the tilt and the height; what is left
+over is the unevenness of the paper and table, kept as a height map.
+
+**2. Spin test.** The arm draws one small cross four times at the same spot, with the hand turned
+0, 90, 180 and 270 degrees around the pen tip. If the tip is where we think, the four crosses
+coincide. If not, they sit on a small circle; its radius and direction are the tip error. This
+needs no knowledge of where the arm is on the table.
+
+**3. Registration crosses.** Every arm draws crosses at known positions spread over its area, some
+of them in the zones it shares with a neighbour, where the neighbour draws its own. The offset
+between two arms' crosses at the same place is exactly the error that shows up in a drawing. All
+six poses are solved together from these offsets, with one arm as the reference.
+
+**4. Check.** Apply the corrections, draw the crosses again, accept when every pair of
+neighbouring crosses is closer than 1 mm. Otherwise refuse to draw.
+
+**Pen length.** The pen leans 23 degrees in the holder, so 1 mm more length lowers the tip by
+0.9 mm and moves it 0.4 mm sideways.
+- new pen: mounted with a setting gauge so it always sticks out the same amount; the spin test
+  confirms it
+- before every job: one touch on the paper. The arm's height is known by then, so the touch gives
+  the pen length directly, and with it the sideways correction
+- while drawing: the controller finds the paper by contact at each pen-down
+
+**Measuring the crosses.** A camera makes this automatic (overhead, or a phone photo with a
+printed scale in the picture). Without one, a caliper works; the routine is the same.
+
+**Output.** One dated file per arm: pose, tip, height map, the residuals, pass or fail. The
+drawing server refuses to draw without a passing calibration.
+
 ## Checker
 
 An independent check of everything that goes to a robot. It shares no code with the planners.
