@@ -22,6 +22,8 @@ Files: `aris/kernel/arm.py` (the `Arm` class), `aris/kernel/fr3.py` (the robot's
 | `body(Q)` | joints | `Body`: 40 capsules per configuration |
 | `self_pairs` | | which capsule pairs to check against each other (366 pairs); the margin is the rig's (`Gates.self_margin`) |
 | `reach` | | (7,40): how far each capsule can be from each joint's axis, for bounding motion between samples |
+| `capsule_table()` | | the 40 capsules as data: frame index, two ends in that frame, radius, is_pen, is_fixed, name |
+| `chain_table()` | | the chain as data: the 7 DH rows, then the fixed flange and hand frames (parent, rotation, translation); with `capsule_table()` enough to rebuild `body` exactly (tested to 1e-12) |
 | `ik(T_base_hand, q7, with_flags=False)` | poses (M,4,4), joint-7 angle (M,) | joints (M,8,7), valid (M,8), and flags if asked |
 | `hand_pose(tip, normal, spin, lean)` | tips (M,3), paper normal (3,), spin (M,), lean (M,2) | hand poses (M,4,4) |
 | `sigma_min(Q)`, `tip_jacobian(Q)` | joints | smallest singular value of the tip Jacobian (N,); the Jacobian (N,3,7) |

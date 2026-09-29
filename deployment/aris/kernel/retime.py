@@ -31,9 +31,12 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import correlate1d, minimum_filter1d
 
-from aris.kernel.spline import (SmoothPath, hermite, path_at, polyline_at,
+from aris.kernel.spline import (SmoothPath, box3_kernel, hermite, path_at, polyline_at,
                                 rest_to_rest_velocities, smooth_path)
-from aris.types import DrawRules, JointPath, Limits, Trajectory
+from aris.types import DrawRules, JointPath, Limits, Refusal, Trajectory
+
+# Refusal reasons: too_few_samples, not_finite, outside_limits, no_motion, bad_arc_length,
+# bad_rules, cannot_smooth (over the deviation budget), leaves_limits
 
 # How much of each target the speed choice (step 2) may plan with.  The rest is headroom for the
 # softening of step 3 and the terms the sweeps do not model; the measured result must still be
@@ -43,19 +46,13 @@ PLAN_CURVE = 0.7      # of the acceleration target, for the curvature term alone
 PLAN_JERK = 0.35      # of the jerk target, for the path-bending term alone
 TURN_ANGLE = 0.05     # rad; a path "turns" where its direction changes this much in one window
 TURN_TIME = 0.02      # s, the shortest time a turn may take
+TURN_MINOR = 0.1      # of the acceleration and jerk targets: turns weaker than this are exempt
 KNOT_TURN = 0.05      # rad of direction change between two output samples, at most
 KNOT_MIN_DT = 0.002   # s, but never closer than this (a turn lasts at least TURN_TIME)
 POSITION_TOL = 1e-7   # rad, the driver's own tolerance on the position box
 MAX_CELLS = 20_000    # cells of the speed sweeps; each cell takes its worst point
 FINE_DT = 5e-4        # s, time grid of step 3
-
-
-@dataclass(frozen=True)
-class RetimeRefusal:
-    """The path cannot be timed; nothing was produced."""
-    reason: str      # too_few_samples, not_finite, outside_limits, no_motion, bad_arc_length,
-                     # bad_rules, cannot_smooth (over the deviation budget), leaves_limits
-    detail: str = ""
+TIP_TRIES = 12        # tightenings of the joint budget to meet a tip budget
 
 
 @dataclass(frozen=True)
@@ -78,57 +75,94 @@ class RetimeResult:
     traj: Trajectory
     s: np.ndarray | None     # drawing: arc length along the line at each sample; else None
     deviation: float         # rad, largest joint-space distance from the input at equal path position
-    width: float             # the corner-rounding window, in path units (rad, or m for drawing)
+    tip_deviation: float | None  # m, largest pen-tip distance from the input's tip polyline, if asked
+    width: float             # the narrowest corner-rounding window used, in path units (rad, or m)
     stretch: float           # the final clock slow-down of step 4; 1.0 means none was needed
     report: CheckReport      # at 1 kHz, against the full limits
 
 
 def retime(path: JointPath, limits: Limits, rules: DrawRules, s: np.ndarray | None = None,
-           **options) -> Trajectory | RetimeRefusal:
-    """Timed trajectory for `path`; with `s` (arc length per sample, m) a drawing motion."""
-    result = retime_detailed(path, limits, rules, s, **options)
-    return result if isinstance(result, RetimeRefusal) else result.traj
+           tip_budget_m: float | None = None, tip_of=None, **options) -> Trajectory | Refusal:
+    """Timed trajectory for `path`; with `s` (arc length per sample, m) a drawing motion.
+
+    With `tip_of` (Q -> pen tips), the pen tip stays within `tip_budget_m` of the input's tip
+    polyline (default 0.1 mm for drawing).  Other options: see `retime_detailed`.
+    """
+    result = retime_detailed(path, limits, rules, s, tip_budget_m=tip_budget_m, tip_of=tip_of,
+                             **options)
+    return result if isinstance(result, Refusal) else result.traj
 
 
 def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     s: np.ndarray | None = None, *, deviation: float = 1.5e-4,
+                    tip_budget_m: float | None = None, tip_of=None,
                     accel_fraction: float = 0.9, jerk_fraction: float = 0.9,
                     blend_time: float = 0.025, knot_dt: float = 0.005
-                    ) -> RetimeResult | RetimeRefusal:
+                    ) -> RetimeResult | Refusal:
     """`retime`, plus what it did.
 
     deviation       rad, joint-space distance allowed between the flown path and the input at
                     the same path position.  1.5e-4 rad keeps the pen tip within 0.2 mm: the
                     largest singular value of the FR3 tip Jacobian over the whole joint box is
                     1.28 m/rad (20 000 random configurations, lateral pen).
+    tip_budget_m    m, pen-tip distance allowed between the flown tip and the input's tip
+                    polyline at the same path position.  Needs `tip_of` (Q (N,7) -> tips (N,3)).
+                    Default with `tip_of`: 0.1 mm for drawing motions, none for free motions.
+                    The joint budget is tightened until the tip is inside it.
     accel_fraction  of the acceleration limit, the most the result may use at 1 kHz.
     jerk_fraction   of the jerk limit, likewise.  Velocity uses rules.speed_fraction.
     blend_time      s, length of each of the three box averages that soften speed changes.
     knot_dt         s, the longest gap between output samples.
     """
     prepared = _prepare(path, limits, rules, s)
-    if isinstance(prepared, RetimeRefusal):
+    if isinstance(prepared, Refusal):
         return prepared
+    if tip_budget_m is not None and tip_of is None:
+        return Refusal("bad_rules", "tip_budget_m needs tip_of")
+    if tip_of is not None and tip_budget_m is None and s is not None:
+        tip_budget_m = 1e-4
     u_knots, q_knots = prepared
+    targets = (rules.speed_fraction * limits.qd_max, accel_fraction * limits.qdd_max,
+               jerk_fraction * limits.qddd_max)
+    cap = rules.draw_speed if s is not None else None
+    tips_in = tip_of(q_knots) if tip_budget_m is not None else None
+    for _ in range(TIP_TRIES):
+        out = _attempt(u_knots, q_knots, deviation, targets, cap, blend_time, knot_dt)
+        if isinstance(out, Refusal):
+            return out
+        traj, knots, t_fine, u_fine, dev, width = out
+        if tips_in is None:
+            tip_dev = None
+            break
+        q_flown = hermite(traj.t, traj.q, traj.qd, t_fine)[0]
+        tip_dev = float(np.max(np.linalg.norm(tip_of(q_flown)
+                                              - polyline_at(u_knots, tips_in, u_fine), axis=1)))
+        if tip_dev <= tip_budget_m:
+            break
+        deviation = min(deviation, dev) * max(0.2, 0.9 * tip_budget_m / tip_dev)
+    else:
+        return Refusal("cannot_smooth", f"pen tip {tip_dev * 1e3:.3g} mm from the line after "
+                       f"{TIP_TRIES} tightenings (budget {tip_budget_m * 1e3:.3g} mm)")
+    traj, stretch, report = _enforce(traj, limits, *targets)
+    if not _positions_inside(report, limits):
+        return Refusal("leaves_limits", "the rounded path leaves the joint limits")
+    s_out = (u_fine[knots] + float(s[0])) if s is not None else None
+    return RetimeResult(traj, s_out, dev, tip_dev, width, stretch, report)
+
+
+def _attempt(u_knots, q_knots, deviation, targets, cap, blend_time, knot_dt):
+    """Steps 1 to 4 (before the final check) for one joint-space deviation budget."""
     smooth = smooth_path(u_knots, q_knots, 0.9 * deviation)
     if isinstance(smooth, str):
-        return RetimeRefusal("cannot_smooth", smooth)
-    v_max = rules.speed_fraction * limits.qd_max
-    a_max = accel_fraction * limits.qdd_max
-    j_max = jerk_fraction * limits.qddd_max
-    cap = rules.draw_speed if s is not None else None
-    u_nodes, x_nodes = _speed_profile(smooth, v_max, a_max, j_max, cap, blend_time)
+        return Refusal("cannot_smooth", smooth)
+    u_nodes, x_nodes = _speed_profile(smooth, *targets, cap, blend_time)
     t_fine, u_fine = _time_law(u_nodes, x_nodes, blend_time)
     traj, knots = _to_trajectory(smooth, q_knots, t_fine, u_fine, knot_dt)
     q_flown = hermite(traj.t, traj.q, traj.qd, t_fine)[0]
     dev = float(np.max(np.linalg.norm(q_flown - polyline_at(u_knots, q_knots, u_fine), axis=1)))
     if dev > deviation:
-        return RetimeRefusal("cannot_smooth", f"flown path is {dev:.3g} rad from the input")
-    traj, stretch, report = _enforce(traj, limits, v_max, a_max, j_max)
-    if not _positions_inside(report, limits):
-        return RetimeRefusal("leaves_limits", "the rounded path leaves the joint limits")
-    s_out = (u_fine[knots] + float(s[0])) if s is not None else None
-    return RetimeResult(traj, s_out, dev, smooth.width, stretch, report)
+        return Refusal("cannot_smooth", f"flown path is {dev:.3g} rad from the input")
+    return traj, knots, t_fine, u_fine, dev, float(smooth.width.min())
 
 
 def sample(traj: Trajectory, t) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -162,15 +196,15 @@ def _prepare(path: JointPath, limits: Limits, rules: DrawRules, s):
     """Path parameter u per sample (starting at 0, strictly increasing) and the samples."""
     q = np.asarray(path.q, dtype=float)
     if q.ndim != 2 or q.shape[1] != 7 or len(q) < 2:
-        return RetimeRefusal("too_few_samples", f"need at least two 7-joint samples, got {q.shape}")
+        return Refusal("too_few_samples", f"need at least two 7-joint samples, got {q.shape}")
     if not np.all(np.isfinite(q)):
-        return RetimeRefusal("not_finite", "the path contains NaN or infinity")
+        return Refusal("not_finite", "the path contains NaN or infinity")
     outside = np.any((q < limits.q_min) | (q > limits.q_max), axis=1)
     if outside.any():
-        return RetimeRefusal("outside_limits",
+        return Refusal("outside_limits",
                              f"sample {int(np.argmax(outside))} is outside the joint limits")
     if not (0.0 < rules.speed_fraction <= 1.0) or (s is not None and not rules.draw_speed > 0.0):
-        return RetimeRefusal("bad_rules", "speed_fraction must be in (0, 1], draw_speed > 0")
+        return Refusal("bad_rules", "speed_fraction must be in (0, 1], draw_speed > 0")
     step = np.linalg.norm(np.diff(q, axis=0), axis=1)
     if s is None:
         keep = np.concatenate([[True], step > 1e-12])
@@ -179,17 +213,17 @@ def _prepare(path: JointPath, limits: Limits, rules: DrawRules, s):
     else:
         s = np.asarray(s, dtype=float)
         if s.shape != (len(q),) or not np.all(np.isfinite(s)):
-            return RetimeRefusal("bad_arc_length", "s must be finite, one value per sample")
+            return Refusal("bad_arc_length", "s must be finite, one value per sample")
         ds = np.diff(s)
         if np.any(ds < 0.0):
-            return RetimeRefusal("bad_arc_length", "s decreases; the pen would go backwards")
+            return Refusal("bad_arc_length", "s decreases; the pen would go backwards")
         if np.any((ds == 0.0) & (step > 1e-12)):
-            return RetimeRefusal("bad_arc_length",
+            return Refusal("bad_arc_length",
                                  "the joints move where s does not; the pen would have to stop")
         keep = np.concatenate([[True], ds > 0.0])
         q, u = q[keep], s[keep] - s[0]
     if len(q) < 2 or u[-1] <= 0.0:
-        return RetimeRefusal("no_motion", "all samples are the same")
+        return Refusal("no_motion", "all samples are the same")
     return u, q
 
 
@@ -220,8 +254,14 @@ def _speed_profile(path: SmoothPath, v_max, a_max, j_max, cap, blend_time):
                     np.min((PLAN_JERK * j_max / c3) ** (2.0 / 3.0), axis=1)]
     # Wherever the path turns noticeably within one rounding window, pass slowly enough that the
     # turn lasts at least TURN_TIME: then a 1 kHz measurement sees the whole turn, not a blip.
-    turning = np.any(c2 * path.width > TURN_ANGLE * np.maximum(c1, 1e-12), axis=1)
-    ceilings.append(np.where(turning, (path.width / TURN_TIME) ** 2, np.inf))
+    # A turn so gentle at this speed that its acceleration and jerk stay under TURN_MINOR of the
+    # targets is exempt: misreading it by a sampling phase cannot matter.
+    w_cell = np.minimum(np.minimum.reduceat(path.width, starts), path.width[ends])
+    turning = np.any(c2 * w_cell[:, None] > TURN_ANGLE * np.maximum(c1, 1e-12), axis=1)
+    with np.errstate(divide="ignore"):
+        minor = np.minimum(np.min(TURN_MINOR * a_max / c2, axis=1),
+                           np.min((TURN_MINOR * j_max / c3) ** (2.0 / 3.0), axis=1))
+    ceilings.append(np.where(turning, np.maximum((w_cell / TURN_TIME) ** 2, minor), np.inf))
     x_cell = np.minimum.reduce(ceilings)
     if cap is not None:
         x_cell = np.minimum(x_cell, cap ** 2)
@@ -298,9 +338,7 @@ def _time_law(u_nodes, x_nodes, blend_time):
     dt = max(FINE_DT, T / 4e6)
     n = int(np.ceil(T / dt))
     n_box = max(1, int(round(blend_time / dt))) | 1
-    kernel = np.ones(n_box)
-    kernel = np.convolve(np.convolve(kernel, kernel), kernel)
-    kernel /= kernel.sum()
+    kernel = box3_kernel(n_box)
     half = len(kernel) // 2
     t = np.arange(-2 * half, n + 2 * half + 1) * dt
     # Within a cell the path acceleration is constant, so position is exactly quadratic in time.

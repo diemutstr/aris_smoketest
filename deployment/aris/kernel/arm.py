@@ -9,6 +9,8 @@ Frames (see fr3.py): the base frame is link0; the hand frame is the stock Franka
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from aris.kernel import fr3
@@ -21,11 +23,37 @@ except ImportError as e:        # an installation fault, not a refusal
     raise ImportError("the FR3 IK is not installed; from deployment/ run "
                       "`../.venv/bin/pip install ./native/fr3_ik`") from e
 
-__all__ = ["Arm", "default_tool"]
+__all__ = ["Arm", "CapsuleTable", "ChainTable", "default_tool"]
 
 N_BRANCH = aris_fr3_ik.N_SOL   # 8: two elbow roots x two forearm roots x two shoulder roots
 IK_TOL = 1e-7           # m, and Frobenius norm on the rotation; answers land within ~1e-9,
                         # near singularities within 1e-6; a wrong answer misses by far more
+
+
+@dataclass(frozen=True)
+class CapsuleTable:
+    """The K body capsules as data: capsule k runs from a[k] to b[k] in frame `frame[k]`
+    (frame indices as in `ChainTable`)."""
+    frame: np.ndarray        # (K,) int
+    a: np.ndarray            # (K,3)
+    b: np.ndarray            # (K,3)
+    radius: np.ndarray       # (K,)
+    is_pen: np.ndarray       # (K,) bool
+    is_fixed: np.ndarray     # (K,) bool
+    names: tuple
+
+
+@dataclass(frozen=True)
+class ChainTable:
+    """The kinematic chain as data.  Frame 0 is the base.  Frame i+1 (i = 0..6) is
+    frame i @ RotX(dh[i,0]) @ TransX(dh[i,1]) @ RotZ(q[i]) @ TransZ(dh[i,2]) (modified DH).
+    Then the fixed frames 8 + f (the flange, the hand): frame parent[f] @ [R[f], t[f]].
+    The tool is not a frame of its own; its capsules sit in the hand frame (9)."""
+    dh: np.ndarray           # (7,3) alpha, a, d
+    parent: np.ndarray       # (F,) int
+    R: np.ndarray            # (F,3,3)
+    t: np.ndarray            # (F,3)
+    names: tuple             # the F fixed frames' names
 
 
 class Arm:
@@ -52,6 +80,23 @@ class Arm:
             [(i, j) for i in range(len(rows)) for j in range(i + 1, len(rows))
              if abs(pos[i] - pos[j]) >= fr3.SELF_CHAIN_GAP], int).reshape(-1, 2)
         self.reach = _joint_reach(self._cap_frame, self._cap_a, self._cap_b, self._radius)
+
+    # ------------------------------------------------------------ the model as data
+
+    def capsule_table(self) -> CapsuleTable:
+        """The body capsules as plain arrays (copies), for code that builds its own `body`."""
+        return CapsuleTable(frame=self._cap_frame.copy(), a=self._cap_a.copy(),
+                            b=self._cap_b.copy(), radius=self._radius.copy(),
+                            is_pen=self._is_pen.copy(), is_fixed=self._is_fixed.copy(),
+                            names=self._names)
+
+    def chain_table(self) -> ChainTable:
+        """The kinematic chain as plain arrays (copies); see `ChainTable`."""
+        c, s = np.cos(fr3.HAND_TWIST), np.sin(fr3.HAND_TWIST)
+        R = np.array([np.eye(3), [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]])
+        t = np.array([[0.0, 0.0, fr3.D_FLANGE], [0.0, 0.0, 0.0]])
+        return ChainTable(dh=np.array(fr3.DH, float), parent=np.array([7, 8]), R=R, t=t,
+                          names=("flange", "hand"))
 
     # ------------------------------------------------------------ forward kinematics
 

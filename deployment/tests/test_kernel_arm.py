@@ -389,6 +389,35 @@ def test_fixed_capsules_do_not_move(arm):
     assert np.all(moved[~b.is_fixed] > 1e-3)
 
 
+def test_tables_reproduce_body(arm):
+    """A forward kinematics written from chain_table() and capsule_table() alone."""
+    ch, cp = arm.chain_table(), arm.capsule_table()
+    q = random_q(arm, 1000, 31)
+    n = len(q)
+    T = [np.tile(np.eye(4), (n, 1, 1))]
+    for i, (al, a, d) in enumerate(ch.dh):
+        X = np.eye(4)
+        X[1:3, 1:3] = [[np.cos(al), -np.sin(al)], [np.sin(al), np.cos(al)]]
+        X[0, 3] = a
+        Z = np.tile(np.eye(4), (n, 1, 1))
+        Z[:, 0, 0], Z[:, 0, 1] = np.cos(q[:, i]), -np.sin(q[:, i])
+        Z[:, 1, 0], Z[:, 1, 1] = np.sin(q[:, i]), np.cos(q[:, i])
+        Z[:, 2, 3] = d
+        T.append(T[-1] @ X @ Z)
+    for p, R, t in zip(ch.parent, ch.R, ch.t):
+        F = np.eye(4)
+        F[:3, :3], F[:3, 3] = R, t
+        T.append(T[p] @ F)
+    T = np.stack(T, 1)
+    Tk = T[:, cp.frame]
+    p0 = np.einsum("nkij,kj->nki", Tk[..., :3, :3], cp.a) + Tk[..., :3, 3]
+    p1 = np.einsum("nkij,kj->nki", Tk[..., :3, :3], cp.b) + Tk[..., :3, 3]
+    b = arm.body(q)
+    assert np.abs(p0 - b.p0).max() < 1e-12 and np.abs(p1 - b.p1).max() < 1e-12
+    assert np.array_equal(cp.radius, b.radius) and cp.names == b.names
+    assert np.array_equal(cp.is_pen, b.is_pen) and np.array_equal(cp.is_fixed, b.is_fixed)
+
+
 def test_self_pairs_can_separate(arm):
     """Every watched pair clears the margin somewhere: none is overlapping by construction."""
     margin = Gates().self_margin

@@ -6,9 +6,8 @@ import time
 import numpy as np
 import pytest
 
-from aris.kernel.retime import (RetimeRefusal, RetimeResult, check, retime, retime_detailed,
-                                sample)
-from aris.types import DrawRules, JointPath, Limits
+from aris.kernel.retime import RetimeResult, check, retime, retime_detailed, sample
+from aris.types import DrawRules, JointPath, Limits, Refusal
 
 # FR3 position limits, as in aris_sixarm/frames.py (FR3_MIN, FR3_MAX)
 Q_MIN = np.array([-2.7437, -1.7837, -2.9007, -3.0421, -2.8065, 0.5445, -3.0159])
@@ -287,7 +286,7 @@ def test_refusals():
     for r, reason in ((one, "too_few_samples"), (same, "no_motion"), (out, "outside_limits"),
                       (retime(JointPath(nan), LIMITS, RULES), "not_finite"),
                       (back, "bad_arc_length"), (stall, "bad_arc_length")):
-        assert isinstance(r, RetimeRefusal) and r.reason == reason, r
+        assert isinstance(r, Refusal) and r.reason == reason, r
         assert r.detail
 
 
@@ -295,5 +294,5 @@ def test_repeated_samples_inside_a_path_are_fine():
     q = corner_90()
     q = np.array([q[0], q[1], q[1], q[1], q[2]])
     traj = retime(JointPath(q), LIMITS, RULES)
-    assert not isinstance(traj, RetimeRefusal)
+    assert not isinstance(traj, Refusal)
     assert check(traj, LIMITS).inside
