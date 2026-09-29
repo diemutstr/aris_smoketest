@@ -244,50 +244,63 @@ the operator PC next to the arms. Only motions and status messages cross between
 
 ## 6. Calibration
 
-PROPOSAL (2026-09-29). A job of the drawing server. Starting point: each arm's pose is known to
+PROPOSAL (2026-09-29, second version after Pete's input). A job of the drawing server. The arms
+measure everything themselves, with their own joint sensors; no camera, no tape measure. A person
+is needed once, to guide each arm to the shared spots. Starting point: each arm's pose is known to
 a few millimetres, at worst a centimetre, and its orientation may be off.
 
-**What has to be found, per arm**
+**Hardware needed**
+- four small plates with a cone-shaped dimple, taped to the table on the centre line, at 605 mm and
+  1815 mm either side of the table centre. A dimple instead of a drawn dot, because the tip centres
+  itself in it and nobody has to judge by eye.
+- one rigid pin with a rounded tip, the size of a pen, for the holder. Graphite would wear and
+  break in a dimple.
 
-| unknown | why it matters | how it is measured |
-|---|---|---|
-| paper height and arm tilt | pen digs in or hovers; 1 degree of tilt is 14 mm of height at 0.8 m | touch the paper at a grid of points |
-| pen tip relative to the hand | every line is shifted, differently for every hand spin | spin test: draw the same small cross from four hand spins |
-| arm position and turn on the table | drawings of neighbouring arms do not line up; 1 degree of turn is 14 mm at 0.8 m | registration crosses shared with the neighbours |
+**Why those four spots.** Each is 678 mm from the arms around it. The two inner spots are reached
+by four arms each, the two outer spots by the two end arms. Every arm reaches exactly two spots,
+1.21 m apart.
 
-The order is fixed: height first (needed to draw at all), then the tip (needed before positions
-mean anything), then the position on the table.
+| spot (mm from table centre, on the centre line) | arms |
+|---|---|
+| -1815 | 13, 17 |
+| -605 | 13, 17, 31, 71 |
+| +605 | 31, 71, 2, 97 |
+| +1815 | 2, 97 |
 
-**1. Touch the paper.** Start well above the expected paper, lower slowly until contact, stop,
-record. About 25 points over the arm's area. The fit gives the tilt and the height; what is left
-over is the unevenness of the paper and table, kept as a height map.
+**Step 1. Paper height and tilt, automatic.** Each arm lowers the pin until it touches, on a grid
+of about 25 points. A plane fit gives the roll and pitch of the base and the height; the rest is
+the unevenness of the table, kept as a height map.
 
-**2. Spin test.** The arm draws one small cross four times at the same spot, with the hand turned
-0, 90, 180 and 270 degrees around the pen tip. If the tip is where we think, the four crosses
-coincide. If not, they sit on a small circle; its radius and direction are the tip error. This
-needs no knowledge of where the arm is on the table.
+**Step 2. Shared spots, hand-guided, about a minute per arm and spot.** Guide the pin into the
+dimple and, keeping it seated, tilt and turn the hand through a range of orientations. The arm
+records its joints the whole time. One fit gives two things at once:
+- where the tip is relative to the hand (its length included)
+- where the dimple is as seen by that arm
+The fit error is shown immediately; if the pin slipped, it is large and the step is repeated.
 
-**3. Registration crosses.** Every arm draws crosses at known positions spread over its area, some
-of them in the zones it shares with a neighbour, where the neighbour draws its own. The offset
-between two arms' crosses at the same place is exactly the error that shows up in a drawing. All
-six poses are solved together from these offsets, with one arm as the reference.
+**Step 3. Solve, automatic.** All arms that touched the same dimple must agree on where it is.
+Solving that for all six arms together gives each arm's position and turn on the table. The
+positions of the dimples do not have to be measured: they are solved too. Because every arm has
+two spots 1.21 m apart, its turn about the vertical comes out as well and does not have to be
+assumed zero.
 
-**4. Check.** Apply the corrections, draw the crosses again, accept when every pair of
-neighbouring crosses is closer than 1 mm. Otherwise refuse to draw.
+**Step 4. Pen length, automatic.** Swap the pin for the pen and touch the paper once. The arm's
+height is known by now, so the touch gives how much longer or shorter the pen is than the pin.
+The pen leans 23 degrees in the holder: 1 mm more length lowers the tip by 0.9 mm and moves it
+0.4 mm sideways, and both are corrected.
 
-**Pen length.** The pen leans 23 degrees in the holder, so 1 mm more length lowers the tip by
-0.9 mm and moves it 0.4 mm sideways.
-- new pen: mounted with a setting gauge so it always sticks out the same amount; the spin test
-  confirms it
-- before every job: one touch on the paper. The arm's height is known by then, so the touch gives
-  the pen length directly, and with it the sideways correction
+**Step 5. Check by drawing.** Neighbouring arms each draw a cross at the same place. They should
+coincide to within a millimetre. This is looked at, not measured.
+
+**How often**
+- steps 1 to 3: once, and again when an arm or the frame has been moved
+- step 4: before every job, a few seconds per arm; it also catches wear
 - while drawing: the controller finds the paper by contact at each pen-down
+- later, once the calibration is good, the arms can revisit the dimples by themselves to confirm
+  nothing has moved
 
-**Measuring the crosses.** A camera makes this automatic (overhead, or a phone photo with a
-printed scale in the picture). Without one, a caliper works; the routine is the same.
-
-**Output.** One dated file per arm: pose, tip, height map, the residuals, pass or fail. The
-drawing server refuses to draw without a passing calibration.
+**Output.** One dated file per arm: pose, tip, height map, fit errors, pass or fail. The drawing
+server refuses to draw without a passing calibration.
 
 ## Checker
 
