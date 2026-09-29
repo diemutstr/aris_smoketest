@@ -155,6 +155,16 @@ restricted by its partner.
 equally, to the leader. A line that crosses a wall waits for the next phase. Lines are not
 cut unless no arm can draw them whole; a cut gets an overlap at the joint.
 
+**After one alternation, what is left** (expected, to be measured):
+- lines that cross a wall in both phases; in particular any line longer than one arm's reach
+- two small patches where the phase 1 and phase 2 walls cross, at the centre line 605 mm either
+  side of the table centre: no arm may bring its body that close to a wall in either phase
+- the rim no arm reaches (2.5 % of the canvas), which is never drawn
+
+**A phase is just (active arms, walls).** The system planner runs a list of them: 1-2-1, 2-1-2,
+then fill layouts with the walls somewhere else or a single arm alone, until nothing is left or
+a layout draws nothing new.
+
 **Running a phase.** The three leaders plan in parallel and start moving as soon as their first
 motion exists. Each follower starts once its leader's plan for the phase is complete. When a row
 is done, both arms park and confirm. The next phase starts when all rows have confirmed.
@@ -170,6 +180,43 @@ other on 99 % of pose pairs even without walls; two arms of the same row hang on
 and the old followers kept 11 % of what they were offered at first and 67 % after fixes; a parked
 partner blocks none of the drawing area at this height; 57 % of the canvas can be drawn by exactly
 one arm; 2.5 % (the rim) by none.
+
+## 4. From plan to robot
+
+PROPOSAL (2026-09-29). Planning and execution never call each other. Between them sits one thing:
+a queue of motions per arm. Data flows one way.
+
+```
+arm planner -> checker -> queue (one per arm) -> executor (one per arm) -> arm
+                                                  coordinator: starts phases, waits for "all parked"
+```
+
+**Motion.** The only thing that crosses from planning to execution. One drawing motion or one
+free-space motion: a timed joint trajectory, its start configuration, its end configuration, its
+kind. Every motion starts where the previous one ended and ends in a configuration the arm can
+hold for as long as it likes, inside its own region.
+
+**Arm planner.** Produces motions one at a time, in order. It never talks to a robot. Collecting
+everything before running and running each motion as it appears are the same code; the only
+difference is when the executor is started.
+
+**Checker.** A motion enters the queue only after the independent check has passed. What is in
+the queue is safe to run.
+
+**Queue.** Append-only, one per arm and phase, stored as a file. It is also the record of what
+was planned, and what the GUI shows.
+
+**Executor.** One per arm. Takes the next motion, confirms the arm is at its start configuration,
+runs it, reports it done. Empty queue: the arm holds. It never plans and knows nothing about other
+arms. It talks to the arm through a handful of verbs (move, draw, switch controller, read state,
+stop); a simulated arm offers the same verbs, so everything above runs without hardware.
+
+**Coordinator.** The only part that knows about phases at run time: start a phase, wait until
+every arm reports parked, start the next.
+
+**When a motion fails.** That arm stops and holds; the rest of its queue is dropped; the arm
+planner is called again with the lines still to draw and the configuration the arm is actually
+in. The other arms are not affected, because the walls make them independent.
 
 ## Checker
 
