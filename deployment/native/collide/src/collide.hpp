@@ -24,6 +24,7 @@ struct Scene {  // the packed obstacles
     const double *pl_n, *pl_off, *pl_m, *pl_pen_m;             // (Mp,3) (Mp) (Mp) (Mp)
     const uint8_t* pl_paper;                                   // (Mp)
     const double *cap_a, *cap_b, *cap_rm;                      // (Mc,3) (Mc,3) (Mc)
+    const double* pl_tool_m;                                   // (Mp) margin for tool capsules
     // The same boxes and capsules one coordinate per row (see make_soa), so that the cheap
     // first pass runs as straight loops over obstacles that the compiler vectorises.
     const double* box_soa;   // (15, Mb): R00 R01 R02 R10 .. R22, cx cy cz, hx hy hz
@@ -91,7 +92,7 @@ inline void point_capsules(const Scene& S, const double* c, double r, double* ub
 struct Caps {  // the arm's capsules, per capsule
     int K = 0;
     const double* r;
-    const uint8_t *is_pen, *is_fixed;
+    const uint8_t *is_pen, *is_fixed, *is_tool;
 };
 
 struct Chain {  // serial arm: modified DH rows, then fixed extra frames, then capsules on frames
@@ -123,7 +124,7 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
         const double *a = p0 + 3 * k, *b = p1 + 3 * k;
         for (int m = 0; m < Mp; ++m) {
             double v = segment_plane_distance(a, b, S.pl_n + 3 * m, S.pl_off[m]) - C.r[k] -
-                       (C.is_pen[k] ? S.pl_pen_m[m] : S.pl_m[m]);
+                       (C.is_pen[k] ? S.pl_pen_m[m] : (C.is_tool[k] ? S.pl_tool_m[m] : S.pl_m[m]));
             if (drawing && C.is_pen[k] && S.pl_paper[m]) v = INF;
             w.pl[size_t(k) * Mp + m] = v;
             best = std::min(best, v);

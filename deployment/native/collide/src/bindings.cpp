@@ -1,7 +1,8 @@
 // Python binding: arrays in, arrays out, loops in C++ with the GIL released.
 //
-// scene = (box_R, box_c, box_h, box_m, pl_n, pl_off, pl_m, pl_pen_m, pl_paper, cap_a, cap_b, cap_rm)
-// caps  = (radius, is_pen, is_fixed)
+// scene = (box_R, box_c, box_h, box_m, pl_n, pl_off, pl_m, pl_pen_m, pl_paper, cap_a, cap_b, cap_rm,
+//          pl_tool_m)
+// caps  = (radius, is_pen, is_fixed, is_tool)
 // chain = (dh, ex_parent, ex_R, ex_t, cap_frame, cap_a, cap_b)
 // The tuples are built by aris.kernel.collide (pack, arm_tables); see that module for meaning.
 #include <pybind11/numpy.h>
@@ -19,26 +20,27 @@ using BArr = py::array_t<uint8_t, py::array::c_style | py::array::forcecast>;
 namespace {
 
 struct SceneIn {  // keeps the converted arrays alive while the pointers are in use
-    Arr bR, bc, bh, bm, pn, po, pm, ppm, ca, cb, crm;
+    Arr bR, bc, bh, bm, pn, po, pm, ppm, ca, cb, crm, ptm;
     BArr pp;
     std::vector<double> box_soa, cap_soa;
     acol::Scene s;
     explicit SceneIn(const py::tuple& t)
         : bR(t[0].cast<Arr>()), bc(t[1].cast<Arr>()), bh(t[2].cast<Arr>()), bm(t[3].cast<Arr>()),
           pn(t[4].cast<Arr>()), po(t[5].cast<Arr>()), pm(t[6].cast<Arr>()), ppm(t[7].cast<Arr>()),
-          ca(t[9].cast<Arr>()), cb(t[10].cast<Arr>()), crm(t[11].cast<Arr>()), pp(t[8].cast<BArr>()) {
-        if (t.size() != 12) throw std::invalid_argument("scene must have 12 arrays");
+          ca(t[9].cast<Arr>()), cb(t[10].cast<Arr>()), crm(t[11].cast<Arr>()),
+          ptm(t[12].cast<Arr>()), pp(t[8].cast<BArr>()) {
+        if (t.size() != 13) throw std::invalid_argument("scene must have 13 arrays");
         s.Mb = int(bm.size());
         s.Mp = int(po.size());
         s.Mc = int(crm.size());
         if (bR.size() != 9 * s.Mb || bc.size() != 3 * s.Mb || bh.size() != 3 * s.Mb ||
-            pn.size() != 3 * s.Mp || pm.size() != s.Mp || ppm.size() != s.Mp || pp.size() != s.Mp ||
+            pn.size() != 3 * s.Mp || pm.size() != s.Mp || ppm.size() != s.Mp || pp.size() != s.Mp || ptm.size() != s.Mp ||
             ca.size() != 3 * s.Mc || cb.size() != 3 * s.Mc)
             throw std::invalid_argument("scene arrays have inconsistent sizes");
         s.box_R = bR.data(); s.box_c = bc.data(); s.box_h = bh.data(); s.box_m = bm.data();
         s.pl_n = pn.data(); s.pl_off = po.data(); s.pl_m = pm.data(); s.pl_pen_m = ppm.data();
         s.pl_paper = pp.data();
-        s.cap_a = ca.data(); s.cap_b = cb.data(); s.cap_rm = crm.data();
+        s.cap_a = ca.data(); s.cap_b = cb.data(); s.cap_rm = crm.data(); s.pl_tool_m = ptm.data();
         acol::make_soa(s, box_soa, cap_soa);
         s.box_soa = box_soa.data();
         s.cap_soa = cap_soa.data();
@@ -47,13 +49,15 @@ struct SceneIn {  // keeps the converted arrays alive while the pointers are in 
 
 struct CapsIn {
     Arr r;
-    BArr pen, fixed;
+    BArr pen, fixed, tool;
     acol::Caps c;
     explicit CapsIn(const py::tuple& t)
-        : r(t[0].cast<Arr>()), pen(t[1].cast<BArr>()), fixed(t[2].cast<BArr>()) {
+        : r(t[0].cast<Arr>()), pen(t[1].cast<BArr>()), fixed(t[2].cast<BArr>()),
+          tool(t[3].cast<BArr>()) {
         c.K = int(r.size());
-        if (pen.size() != c.K || fixed.size() != c.K) throw std::invalid_argument("caps sizes differ");
-        c.r = r.data(); c.is_pen = pen.data(); c.is_fixed = fixed.data();
+        if (pen.size() != c.K || fixed.size() != c.K || tool.size() != c.K)
+            throw std::invalid_argument("caps sizes differ");
+        c.r = r.data(); c.is_pen = pen.data(); c.is_fixed = fixed.data(); c.is_tool = tool.data();
     }
 };
 
@@ -209,6 +213,21 @@ py::array_t<double> self_clearance_q(py::tuple chain, Arr r, Arr Q, IArr pairs, 
     return out;
 }
 
+acol::Refine refine_opts(double tol, int max_depth, int64_t max_evals, bool use_floor, double floor) {
+    acol::Refine o;
+    o.tol = tol;
+    o.max_depth = max_depth;
+    o.max_evals = max_evals;
+    o.use_floor = use_floor;
+    o.floor = floor;
+    return o;
+}
+
+void check_pairs(const IArr& pairs, int K) {
+    for (py::ssize_t n = 0; n < pairs.size(); ++n)
+        if (pairs.data()[n] < 0 || pairs.data()[n] >= K) throw std::invalid_argument("bad pair index");
+}
+
 double path_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr reach, Arr q, bool drawing,
                         double tol, int max_depth, int64_t max_evals, int threads) {
     ChainIn H(chain);
@@ -217,9 +236,46 @@ double path_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr re
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
     const py::ssize_t N = check_q(q, H.h.J);
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0);
     py::gil_scoped_release release;
-    return acol::path_clearance(H.h, C.c, S.s, reach.data(), q.data(), N, drawing, tol, max_depth,
-                                max_evals, threads);
+    return acol::path_obstacles(H.h, C.c, S.s, reach.data(), q.data(), N, drawing, o, threads);
+}
+
+double path_self_q(py::tuple chain, py::tuple caps, Arr reach, Arr q, IArr pairs, double margin,
+                   double tol, int max_depth, int64_t max_evals) {
+    ChainIn H(chain);
+    CapsIn C(caps);
+    if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
+    if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
+    check_pairs(pairs, C.c.K);
+    const py::ssize_t N = check_q(q, H.h.J);
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0);
+    py::gil_scoped_release release;
+    return acol::path_self(H.h, C.c, reach.data(), pairs.data(), pairs.size() / 2, margin, q.data(),
+                           N, o);
+}
+
+py::array_t<double> edges_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr reach,
+                                      Arr Qa, Arr Qb, bool drawing, IArr pairs, double margin,
+                                      double tol, int max_depth, int64_t max_evals, bool use_floor,
+                                      double floor, int threads) {
+    ChainIn H(chain);
+    CapsIn C(caps);
+    SceneIn S(scene);
+    if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
+    if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
+    check_pairs(pairs, C.c.K);
+    const py::ssize_t E = check_q(Qa, H.h.J);
+    if (check_q(Qb, H.h.J) != E) throw std::invalid_argument("Qa and Qb must have the same shape");
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, use_floor, floor);
+    py::array_t<double> out(E);
+    double* op = out.mutable_data();
+    {
+        py::gil_scoped_release release;
+        acol::edges(H.h, C.c, S.s, reach.data(), Qa.data(), Qb.data(), E, drawing, pairs.data(),
+                    pairs.size() / 2, margin, o, threads, op);
+    }
+    return out;
 }
 
 }  // namespace
@@ -233,4 +289,6 @@ PYBIND11_MODULE(_collide, m) {
     m.def("self_clearance", &self_clearance);
     m.def("self_clearance_q", &self_clearance_q);
     m.def("path_clearance_q", &path_clearance_q);
+    m.def("path_self_q", &path_self_q);
+    m.def("edges_clearance_q", &edges_clearance_q);
 }

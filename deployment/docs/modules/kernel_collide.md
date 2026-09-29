@@ -1,4 +1,4 @@
-# Collision check (`aris/kernel/collide.py`, `geometry.py`, `native/collide/`)
+# Collision check (`aris/kernel/collide.py`, `collide_path.py`, `collide_native.py`, `geometry.py`, `native/collide/`)
 
 ## Job
 
@@ -20,8 +20,10 @@ box or another capsule reads a gap of 0. A capsule through a plane reads how dee
 
 Special rules:
 - The pen capsules use the plane's `pen_margin` (if it has one) instead of its `margin`.
+- The tool capsules (`is_tool`: the pen holder) use the plane's `tool_margin` (if it has one).
+  Boxes and capsules do not care about either.
 - With `drawing=True` the pen is not checked against planes of kind "paper", because it is on
-  the paper on purpose.
+  the paper on purpose. The tool stays checked, with its `tool_margin`.
 - Capsules the body marks as fixed (`is_fixed`: the base, inside the arm's own mount) are
   never checked against obstacles.
 
@@ -36,7 +38,9 @@ Special rules:
 | `self_clearance(body, pairs, margin)` | (N,) the arm against itself, for the given capsule pairs |
 | `path_clearance(body_of, q, obstacles, reach, drawing=False, tol=5e-4)` | a lower bound on the clearance along a whole joint path, motion between samples included |
 | `arm_tables(arm)` | the arm as tables: its joint chain and its capsules |
-| `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q` | the same, from joint angles and the tables, without building a `Body` |
+| `path_self_clearance(...)` | the same kind of lower bound along a path, for the arm against itself |
+| `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q`, `path_self_clearance_q` | the same, from joint angles and the tables, without building a `Body` |
+| `edges_clearance_q(tables, reach, Qa, Qb, obstacles, self_pairs=None, self_margin=0, floor=0)` | one lower bound per straight joint-space edge, many edges in one compiled call (below) |
 | `backend()` | "native" when the compiled module is installed, otherwise "numpy" |
 
 Every call takes `backend="numpy"` or `"native"` (for tests) and `threads=` (compiled only; the
@@ -81,6 +85,16 @@ nothing. Where this bound falls more than `tol` below the smallest clearance mea
 sample, the interval is halved and measured again. The answer ends up at most `tol` below the
 true minimum, however coarse or fine the path came in.
 
+## Many edges at once
+
+A free-space planner checks thousands of short straight moves. `edges_clearance_q` takes them
+all in one call and runs the whole halving loop per edge in compiled code, optionally split
+over threads. With `self_pairs` the arm against itself is bounded the same way: a pair can
+close no faster than both its capsules move together. The answer is the smaller of the two
+bounds. With `floor=None` each edge gets exactly the bound `path_clearance_q` gives. With a
+number (default 0), an edge stops as soon as its bound is proven at least `floor` (free) or a
+point on it is found below 0 (not free). That is all a planner asking "free or not" needs.
+
 ## What it cannot do
 
 - A capsule inside a box or another capsule reads a gap of 0, not how deep it is.
@@ -106,6 +120,18 @@ are the better of two runs and may be low.
 | 1 | 1 600 | 47 000 | | |
 | 100 | 8 400 | 60 000 | | |
 | 10 000 | 12 700 | 85 000 (186 M pairs/s) | 590 000 | 880 000 |
+
+Edges on arm 31, one thread, CPU time (per second; the old way is `path_clearance_q` in a
+Python loop, which gives the same numbers as `floor=None`):
+
+| edge length | floor 0 | floor 0, with self check | floor None | Python loop |
+|---|---|---|---|---|
+| 0.05 rad | 17 000 to 23 000 | 10 000 to 14 000 | 8 000 to 12 000 | 7 000 to 10 000 |
+| 0.3 rad | 7 000 to 10 000 | 4 300 to 5 900 | 2 700 to 3 100 | 2 100 to 2 400 |
+| 1.0 rad | 3 600 to 4 000 | 2 200 to 2 700 | 840 to 1 040 | 850 to 1 090 |
+
+Most of the gain comes from stopping early at the floor. Once an edge has to be refined all
+the way, the refinement dominates and the Python loop costs little extra.
 
 One path check over a 50-sample path takes 10 to 20 ms in numpy and 1.3 to 1.8 ms compiled.
 The 12-capsule case from the first measurement (588 pairs) runs at 45 000 per second in numpy

@@ -56,12 +56,18 @@ class Packed:
     cap_b: np.ndarray        # (Mc, 3)
     cap_rm: np.ndarray       # (Mc,) obstacle radius + margin
     names: tuple[str, ...]   # boxes, then planes, then capsules: the obstacle index order
+    pl_tool_m: np.ndarray | None = None   # (Mp,) margin for tool capsules; None: pl_m
+
+    @property
+    def tool_m(self) -> np.ndarray:
+        return self.pl_m if self.pl_tool_m is None else self.pl_tool_m
 
     @property
     def scene(self) -> tuple:
         """The arrays in the order the compiled module takes them."""
         return (self.box_R, self.box_c, self.box_h, self.box_m, self.pl_n, self.pl_off, self.pl_m,
-                self.pl_pen_m, self.pl_paper.astype(np.uint8), self.cap_a, self.cap_b, self.cap_rm)
+                self.pl_pen_m, self.pl_paper.astype(np.uint8), self.cap_a, self.cap_b, self.cap_rm,
+                np.ascontiguousarray(self.tool_m, float))
 
 
 def pack(obs: Obstacles | Packed) -> Packed:
@@ -83,6 +89,8 @@ def pack(obs: Obstacles | Packed) -> Packed:
         cap_b=f([x.p1 for x in c], (len(c), 3)),
         cap_rm=f([x.radius + x.margin for x in c], (len(c),)),
         names=tuple(x.name for x in (*b, *p, *c)),
+        pl_tool_m=f([x.margin if getattr(x, "tool_margin", None) is None else x.tool_margin
+                     for x in p], (len(p),)),
     )
 
 
@@ -108,6 +116,11 @@ class ArmTables:
     is_pen: np.ndarray           # (K,) bool
     is_fixed: np.ndarray         # (K,) bool
     names: tuple[str, ...]
+    is_tool: np.ndarray | None = None   # (K,) bool; None: no tool capsules
+
+    @property
+    def tool(self) -> np.ndarray:
+        return np.zeros(len(self.radius), bool) if self.is_tool is None else self.is_tool
 
     @property
     def chain(self) -> tuple:
@@ -118,7 +131,8 @@ class ArmTables:
 
     @property
     def caps(self) -> tuple:
-        return (self.radius, self.is_pen.astype(np.uint8), self.is_fixed.astype(np.uint8))
+        return (self.radius, self.is_pen.astype(np.uint8), self.is_fixed.astype(np.uint8),
+                self.tool.astype(np.uint8))
 
 
 def arm_tables(arm) -> ArmTables:
@@ -130,7 +144,8 @@ def arm_tables(arm) -> ArmTables:
         ex_t=np.asarray(ch.t, float), cap_frame=np.asarray(cp.frame), cap_a=np.asarray(cp.a, float),
         cap_b=np.asarray(cp.b, float), radius=np.asarray(cp.radius, float),
         is_pen=np.asarray(cp.is_pen, bool), is_fixed=np.asarray(cp.is_fixed, bool),
-        names=tuple(cp.names))
+        names=tuple(cp.names),
+        is_tool=np.asarray(getattr(cp, "is_tool", np.zeros(len(cp.radius), bool)), bool))
 
 
 def body_q(tables: ArmTables, Q, backend: str | None = None) -> Body:
@@ -140,7 +155,7 @@ def body_q(tables: ArmTables, Q, backend: str | None = None) -> Body:
         p0, p1 = _native.body_q(tables.chain, Q)
     else:
         p0, p1 = _body_np(tables, Q)
-    return Body(p0, p1, tables.radius, tables.names, tables.is_pen, tables.is_fixed)
+    return Body(p0, p1, tables.radius, tables.names, tables.is_pen, tables.is_fixed, tables.tool)
 
 
 def _body_np(t: ArmTables, Q):

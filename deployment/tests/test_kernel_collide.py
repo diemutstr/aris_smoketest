@@ -117,6 +117,7 @@ def _seg_box_cases(rng, n):
 # --------------------------------------------------------------------------- 1. brute force
 
 
+@pytest.mark.slow
 def test_segment_segment_vs_brute_force():
     rng = np.random.default_rng(1)
     p0, p1, q0, q1 = _seg_seg_cases(rng, N_PAIRS)
@@ -128,6 +129,7 @@ def test_segment_segment_vs_brute_force():
     assert np.abs(err).max() < 1e-6
 
 
+@pytest.mark.slow
 def test_segment_box_vs_brute_force():
     rng = np.random.default_rng(2)
     p0, p1, R, c, h = _seg_box_cases(rng, N_PAIRS)
@@ -140,6 +142,7 @@ def test_segment_box_vs_brute_force():
     assert np.all(d[: N_PAIRS // 5] == 0.0)          # through the centre: exactly zero
 
 
+@pytest.mark.slow
 def test_point_and_plane_vs_brute_force():
     rng = np.random.default_rng(3)
     n = N_PAIRS
@@ -158,9 +161,19 @@ def test_point_and_plane_vs_brute_force():
     assert np.abs(sp - brute).max() < 1e-12
 
 
+def test_distances_vs_brute_force_quick():
+    """A 500-pair slice of the brute-force checks above, for the quick set."""
+    rng = np.random.default_rng(17)
+    p0, p1, q0, q1 = _seg_seg_cases(rng, 500)
+    assert np.abs(geo.segment_segment_distance(p0, p1, q0, q1) - _brute_seg_seg(p0, p1, q0, q1)).max() < 1e-6
+    p0, p1, R, c, h = _seg_box_cases(rng, 500)
+    assert np.abs(geo.segment_box_distance(p0, p1, R, c, h) - _brute_seg_box(p0, p1, R, c, h)).max() < 1e-6
+
+
 # --------------------------------------------------------------------------- 2. old code
 
 
+@pytest.mark.slow
 def test_against_old_segment_box_clearance():
     z = np.load(DATA / "collide_old_segbox.npz")
     n = len(z["A"])
@@ -178,6 +191,7 @@ def test_against_old_segment_box_clearance():
     assert err.max() <= 1e-15
 
 
+@pytest.mark.slow
 def test_against_old_seg_seg_dist():
     z = np.load(DATA / "collide_old_segseg.npz")
     d = geo.segment_segment_distance(z["p0"], z["p1"], z["q0"], z["q1"])
@@ -465,6 +479,7 @@ def test_pruning_changes_nothing_rig_like():
         assert np.array_equal(a.capsule, b.capsule)
 
 
+@pytest.mark.slow
 def test_speed_report():
     rng = np.random.default_rng(8)
     scenes = {"rig-like (98 % free)": (_cage_scene(rng), lambda n: _chain_body(rng, n)),
@@ -476,17 +491,17 @@ def test_speed_report():
             for N in (1, 100, 10_000):
                 body = make(N)
                 reps = max(1, 2000 // N)
-                collide.clearance(body, obs, prune=prune)
-                t = time.perf_counter()
+                collide.clearance(body, obs, prune=prune, backend="numpy")
+                t = time.process_time()
                 for _ in range(reps):
-                    collide.clearance(body, obs, prune=prune)
-                dt = (time.perf_counter() - t) / reps
+                    collide.clearance(body, obs, prune=prune, backend="numpy")
+                dt = (time.process_time() - t) / reps
                 rows.append((label, prune, N, N / dt, N * pairs / dt))
-    print(f"\nspeed, one core, 12 capsules vs 32 boxes + 3 planes + 14 capsules = {pairs} pairs per configuration")
+    print(f"\nspeed, numpy, one core, 12 capsules vs 32 boxes + 3 planes + 14 capsules = {pairs} pairs per configuration")
     for label, prune, N, cps, pps in rows:
         print(f"  {label:26} prune={prune!s:5} batch {N:6d}: {cps:9.0f} configurations/s, "
               f"{pps / 1e6:6.2f} M pairs/s")
-    assert all(r[3] > 100 for r in rows)
+    assert all(r[3] > 1000 for r in rows)            # ten times below the slowest seen (2 200/s)
 
 
 # --------------------------------------------------------------------------- the real arm
@@ -532,23 +547,25 @@ def test_real_arm_path_clearance():
         assert truth - min(bounds) <= tol + 1e-5
 
 
+@pytest.mark.slow
 def test_real_arm_speed_report():
     arm = _real_arm()
     rng = np.random.default_rng(14)
     obs = _cage_scene(rng)
     live = int((~arm.body(np.zeros((1, 7))).is_fixed).sum())
     pairs = live * (len(obs.boxes) + len(obs.planes) + len(obs.capsules))
-    print(f"\nreal FR3 body ({live} capsules checked) vs 32 boxes + 3 planes + 14 capsules = {pairs} pairs")
+    print(f"\nnumpy, real FR3 body ({live} capsules checked) vs 32 boxes + 3 planes + 14 capsules = {pairs} pairs")
     for N in (1, 100, 10_000):
         Q = rng.uniform(arm.limits.q_min, arm.limits.q_max, (N, 7))
         body = arm.body(Q)
         reps = max(1, 1000 // N)
-        collide.clearance(body, obs)
-        t = time.perf_counter()
+        collide.clearance(body, obs, backend="numpy")
+        t = time.process_time()
         for _ in range(reps):
-            collide.clearance(body, obs)
-        dt = (time.perf_counter() - t) / reps
+            collide.clearance(body, obs, backend="numpy")
+        dt = (time.process_time() - t) / reps
         print(f"  batch {N:6d}: {N / dt:9.0f} configurations/s, {N * pairs / dt / 1e6:6.2f} M pairs/s")
+        assert N / dt > 200                             # ten times below the slowest seen
 
 
 def test_without_the_compiled_module(monkeypatch):
@@ -564,3 +581,36 @@ def test_without_the_compiled_module(monkeypatch):
     T = collide.arm_tables(arm)
     Q = np.tile(np.array([0.0, -0.3, 0.0, -2.2, 0.0, 2.0, 0.8]), (3, 1))
     assert np.array_equal(collide.clearance_q(T, Q, obs), collide.clearance(arm.body(Q), obs))
+
+
+# --------------------------------------------------------------------------- tool margin
+
+
+@pytest.mark.parametrize("backend", ["numpy", "native"])
+def test_tool_margin_against_planes(backend):
+    if backend == "native" and collide.backend() != "native":
+        pytest.skip("compiled module not installed")
+    r = 0.01
+    cap = dict(p0=np.array([[[0.0, 0, 0.003 + r]]]), p1=np.array([[[0.1, 0, 0.003 + r]]]),
+               radius=np.array([r]), names=("holder",), is_pen=np.array([False]))
+    tool = Body(**cap, is_tool=np.array([True]))
+    plain = Body(**cap)
+    paper = lambda tm: Obstacles(planes=(Plane("paper", np.array([0, 0, 1.0]), 0.0, 0.020, "paper",
+                                               pen_margin=0.001, tool_margin=tm),))
+    for drawing in (False, True):                      # drawing never takes the tool out
+        assert collide.clearance(tool, paper(0.002), drawing, backend=backend)[0] == pytest.approx(0.001)
+        assert collide.clearance(tool, paper(None), drawing, backend=backend)[0] == pytest.approx(-0.017)
+        assert collide.clearance(plain, paper(0.002), drawing, backend=backend)[0] == pytest.approx(-0.017)
+    # a box does not care about tool_margin
+    box = Obstacles(boxes=(Box("b", np.eye(4), np.array([0.05, 0.05, 0.05]), 0.02),))
+    assert np.array_equal(collide.clearance(tool, box, backend=backend),
+                          collide.clearance(plain, box, backend=backend))
+
+
+def test_is_tool_none_changes_nothing():
+    rng = np.random.default_rng(16)
+    obs, body = _cage_scene(rng), _chain_body(rng, 500)
+    none = collide.clearance_detail(body, obs)
+    zeros = collide.clearance_detail(Body(body.p0, body.p1, body.radius, body.names, body.is_pen,
+                                          None, np.zeros(12, bool)), obs)
+    assert np.array_equal(none.value, zeros.value) and np.array_equal(none.obstacle, zeros.obstacle)
