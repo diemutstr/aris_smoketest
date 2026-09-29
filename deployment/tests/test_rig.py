@@ -9,12 +9,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from aris.kernel.tool import default_tool
 from aris.rig import Rig
 from aris.types import Line
 
 DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
 REF = np.load(DEPLOY / "tests" / "data" / "rig_reference.npz")
+TIP_SHIFT = np.array([0.001, 0.0, -0.002])  # made-up calibrated pen tip, hand frame
 SHIFT = REF["shift"]                      # canvas corner -> table centre, (0.9017, 1.81532, 0)
 
 
@@ -62,10 +64,24 @@ def test_paper_round_trip_and_plane(rig):
         worst_plane = max(worst_plane, np.abs(line.points @ pl.normal - pl.offset).max())
         # the arm's base origin is on the free side, 0.970 above the paper
         assert pl.kind == "paper" and pl.margin == 0.020 and pl.pen_margin == 0.003
+        assert pl.tool_margin == rig.clearance["tool_to_paper_m"]
         assert abs((0.0 - pl.offset) - 0.970) < 1e-12
     print(f"\nround trip table->base->table worst {worst_rt:.2e}; paper points off the "
           f"plane worst {worst_plane:.2e}")
     assert worst_rt <= 1e-12 and worst_plane <= 1e-12
+
+
+def test_paper_margins_for_planning(rig):
+    c, a = rig.clearance, rig.allowance
+    pl = rig.paper(31, for_planning=True)
+    assert pl.margin == c["body_to_paper_m"] + a["body_to_paper_m"]
+    assert pl.pen_margin == c["pen_lifted_to_paper_m"] + a["pen_lifted_to_paper_m"]
+    assert pl.tool_margin == c["tool_to_paper_m"] + a["tool_to_paper_m"]
+
+
+def test_walls_have_one_margin(rig):
+    pl = rig.wall_in_base(13, rig.wall_between(13, 71))
+    assert pl.pen_margin is None and pl.tool_margin is None
 
 
 def test_to_base_refuses_a_base_frame_line(rig):
@@ -324,7 +340,8 @@ def _calibrated_config(tmp_path, passed=True):
     T[:3, :3] = tilt @ base[:3, :3]
     T[:3, 3] += [0.003, -0.002, 0.001]
     cal = {"arm_id": 31, "date": "2026-10-01", "passed": passed, "T_table_base": T.tolist(),
-           "tip_hand_m": [0.086, 0.0, 0.150], "source": "made up for tests/test_rig.py"}
+           "tip_hand_m": (default_tool().tip_hand + TIP_SHIFT).tolist(),
+           "source": "made up for tests/test_rig.py"}
     (tmp_path / "calibration" / "31.json").write_text(json.dumps(cal))
     return T
 
@@ -337,7 +354,7 @@ def test_calibration_changes_arm_31_only(tmp_path, rig):
     assert not np.allclose(cal.T_table_base(31), rig.T_table_base(31))
     p0, p1 = rig.paper(31), cal.paper(31)
     assert not np.allclose(p0.normal, p1.normal) and abs(p0.offset - p1.offset) > 1e-4
-    np.testing.assert_allclose(cal.mounts[31].tip_hand, [0.086, 0.0, 0.150])
+    np.testing.assert_allclose(cal.mounts[31].tip_hand, default_tool().tip_hand + TIP_SHIFT)
     for aid in rig.arm_ids:
         if aid == 31:
             continue
@@ -358,6 +375,21 @@ def test_calibration_changes_arm_31_only(tmp_path, rig):
         np.testing.assert_array_equal(x.lo_table, y.lo_table)
     # the paper as arm 31 now sees it: its base origin is 0.970 + 1 mm above the paper
     assert abs(-p1.offset - (0.970 + 0.001)) < 1e-12
+
+
+def test_calibrated_tip_moves_the_pen_capsule(tmp_path, rig):
+    _calibrated_config(tmp_path)
+    cal = Rig.load(tmp_path)
+    q = rig.park_q(31)[None, :]
+    arm0, arm1 = rig.arm(31), cal.arm(31)
+    np.testing.assert_allclose(arm1.tool.tip_hand, arm0.tool.tip_hand + TIP_SHIFT, atol=1e-15)
+    tip, axis = arm1.tip(q)[0], arm1.pen_axis(q)[0]
+    body = arm1.body(q)
+    k = body.names.index("pen")
+    end = body.p1[0, k] + body.radius[k] * axis        # where the pen capsule's surface ends
+    print(f"\ncalibrated tip: pen capsule surface ends {np.linalg.norm(end - tip):.1e} m "
+          f"from the tip; nominal tip moved {np.linalg.norm(tip - arm0.tip(q)[0]) * 1e3:.2f} mm")
+    np.testing.assert_allclose(end, tip, atol=1e-12)
 
 
 def test_calibration_that_did_not_pass_is_not_applied(tmp_path, rig):

@@ -14,7 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
-from aris.kernel.arm import Arm, default_tool
+from aris.kernel.arm import Arm
+from aris.kernel.tool import default_tool, with_tip
 from aris.types import Box, Capsule, Gates, Line, Obstacles, Phase, Plane, Wall
 
 
@@ -178,7 +179,7 @@ class Rig:
         tool = default_tool()
         tip = self._mount(arm_id).tip_hand
         if tip is not None:
-            tool = replace(tool, tip_hand=tip.copy())
+            tool = with_tip(tool, tip)
         return Arm(tool)
 
     def to_base(self, arm_id: int, line: Line) -> Line:
@@ -199,12 +200,16 @@ class Rig:
         return Plane(name, n, float(n @ p), margin, kind, pen_margin)
 
     def paper(self, arm_id: int, for_planning: bool = False) -> Plane:
-        """The paper surface in this arm's base frame; free side is up, toward the arm."""
+        """The paper surface in this arm's base frame; free side is up, toward the arm.  Three
+        margins: the links (`margin`), the lifted pen (`pen_margin`), the rest of the tool:
+        gripper, blades, holder (`tool_margin`)."""
         c, a = self.clearance, self.allowance
         body = c["body_to_paper_m"] + (a["body_to_paper_m"] if for_planning else 0.0)
         pen = c["pen_lifted_to_paper_m"] + (a["pen_lifted_to_paper_m"] if for_planning else 0.0)
-        return self._plane_in_base(arm_id, "paper", np.array([0.0, 0.0, 1.0]),
-                                   np.array([0.0, 0.0, self.paper_z]), body, "paper", pen)
+        tool = c["tool_to_paper_m"] + (a["tool_to_paper_m"] if for_planning else 0.0)
+        plane = self._plane_in_base(arm_id, "paper", np.array([0.0, 0.0, 1.0]),
+                                    np.array([0.0, 0.0, self.paper_z]), body, "paper", pen)
+        return replace(plane, tool_margin=tool)
 
     def self_margin(self, for_planning: bool = False) -> float:
         return self.clearance["self_m"] + (self.allowance["self_m"] if for_planning else 0.0)

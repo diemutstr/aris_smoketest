@@ -129,6 +129,8 @@
     "wall_note": "half of arm_to_arm: two arms on opposite sides of a wall are then arm_to_arm apart",
     "body_to_paper_m": 0.020,
     "pen_lifted_to_paper_m": 0.003,
+    "tool_to_paper_m": 0.0,
+    "tool_to_paper_note": "PROVISIONAL, set by the orchestrator 2026-09-29. The tool (gripper, blades, pen holder) must not touch the paper. The final number waits for the measured height of the holder above the paper and for Pete; it is also the limit on how far a pen may wear.",
     "self_m": 0.020
   },
 
@@ -141,6 +143,7 @@
   "wall_note": "half of arm_to_arm, because both arms at a wall pay it",
   "body_to_paper_m": 0.0,
   "pen_lifted_to_paper_m": 0.0,
+  "tool_to_paper_m": 0.0,
   "paper_note": "zero: a pen that hovers a few millimetres over the paper before touching down cannot pay more",
   "self_m": 0.003
  }

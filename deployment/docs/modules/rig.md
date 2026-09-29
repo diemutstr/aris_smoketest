@@ -15,7 +15,7 @@ comes from here.
 | `arm_ids`, `T_table_base(a)`, `T_base_table(a)`, `park_q(a)` | the arms and their poses |
 | `arm(a)` | the arm model with this arm's tool (the calibrated pen tip if there is one) |
 | `to_base(a, line)`, `to_table(a, points)` | lines and points moved between the frames |
-| `paper(a)` | the paper as a plane in `a`'s base frame, free side up |
+| `paper(a)` | the paper as a plane in `a`'s base frame, free side up, with three margins: links, lifted pen, rest of the tool |
 | `wall_between(a, b)`, `wall_in_base(a, wall)` | a wall in the table frame, and as a plane for one arm |
 | `phase(n)` | phase 1 or 2: the leaders move, the other three stand parked, walls 13-71 and 71-2 (phase 1) or 17-31 and 31-97 (phase 2) |
 | `obstacles_for(a, phase)` | `obstacles` for a moving arm, with the parked arms it can reach (always its row partner) and the walls it stands next to |
@@ -138,6 +138,7 @@ samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
 | a wall | 0.025 | 0.0015 (half, because both arms pay it) |
 | paper, arm body | 0.020 | 0 |
 | paper, lifted pen | 0.003 | 0 |
+| paper, rest of the tool (gripper, blades, holder) | 0.0, provisional | 0 |
 | itself | 0.020 | 0.003 (`rig.self_margin()`, `rig.gates()`) |
 
 ## Calibration file
@@ -151,12 +152,18 @@ samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
  "source": "what produced it"}
 ```
 
-If `passed` is true, the file replaces that arm's nominal base pose and pen tip. If it is false,
+If `passed` is true, the file replaces that arm's nominal base pose and pen tip. The pen
+capsules move with the tip. If it is false,
 the file is ignored, and `calibration_status(a)` says so. A pose that is not a rigid transform
 stops the load with an error. The test file moves arm 31 by (3, −2, 1) mm and tilts it 0.5°. That
 changes arm 31's pose and its paper plane, and nothing else (walls, steel, other arms).
 
 ## Assumed, not measured
+
+- **The tool's clearance to the paper is 0 for now** (the orchestrator, 2026-09-29). The old
+  0.020 was measured at the joint centres. Measured at the surfaces, the holder cannot keep 0.020
+  while the pen is on the paper. The final number waits for the measured height of the holder
+  above the paper, and for Pete. It is also the limit on how far a pen may wear.
 
 - **The 0.240 side of every arm's struts is toward −x.** This is not confirmed; it is one setting
   per arm, `strut_wide_side`. The old model inferred the opposite, with its wider side toward +x.

@@ -40,3 +40,24 @@ def default_tool() -> Tool:
                  for n, a, b, r in _CAPSULES)
     return Tool(tip_hand=TIP_HAND.copy(), pen_axis_hand=PEN_AXIS_HAND.copy(),
                 capsules_hand=caps, pen_names=("pen",))
+
+
+def with_tip(tool: Tool, tip_hand) -> Tool:
+    """The same tool with its pen tip moved to `tip_hand` (hand frame), e.g. after calibration.
+
+    The pen capsules keep their direction and radius; each is moved onto the line through the
+    new tip along the pen axis, keeps its far end where the old one projects onto that line,
+    and ends so that its surface reaches exactly to the new tip.  A pen shorter than its own
+    radius collapses to a ball touching the tip.
+    """
+    tip = np.asarray(tip_hand, float).reshape(3).copy()
+    u = tool.pen_axis_hand
+    caps = []
+    for c in tool.capsules_hand:
+        if c.name in tool.pen_names:
+            p1 = tip - c.radius * u
+            p0 = p1 - max(float((p1 - c.p0) @ u), 0.0) * u
+            c = Capsule(name=c.name, p0=p0, p1=p1, radius=c.radius, margin=c.margin)
+        caps.append(c)
+    return Tool(tip_hand=tip, pen_axis_hand=u.copy(), capsules_hand=tuple(caps),
+                pen_names=tool.pen_names)
