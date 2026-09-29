@@ -1,16 +1,28 @@
-"""Measure the capsules of the hand, the Fat fingers and the pen holder.  Run once, by hand.
+"""Measure the capsules of the hand, the Fat finger blades, the pen holder and the pencil tail.
+Run once, by hand (about two minutes):
 
     cd deployment && ../.venv/bin/python tests/oracle/fit_arm_capsules.py
 
-Prints capsule rows to paste into `aris/kernel/fr3.py` (hand, fingers) and
-`aris/kernel/tool.py` (holder, pen tail, pen), and the containment of the link capsules that
-were taken over from the old `aris_sixarm/selfcoll.py` BODY_CAPSULES.
+Prints capsule rows to paste into `aris/kernel/fr3.py` (hand, blades) and `aris/kernel/tool.py`
+(holder, pencil tail), and the containment of the link capsules taken over from the old
+`aris_sixarm/selfcoll.py` BODY_CAPSULES.
 
-The fit is the old `scripts/self_collision_audit.py` method: search segment directions (the
-principal axes plus 400 random ones), shrink the segment while the enclosing radius falls,
-then take the radius as the exact maximum over every vertex, rounded up to the millimetre.
-A body is split into bands along its own fitted axis; every vertex lies in exactly one band,
-so the union of the band capsules contains the body.
+Two demands on every part bolted to the hand (2026-09-29): every mesh vertex inside the part's
+capsules, and, with the hand leaned up to 15 deg from square to the paper in any direction,
+the lowest point of the capsules no more than 1.5 mm below the lowest mesh vertex (so a
+clearance to the paper measured on the capsules is the clearance of the metal).
+
+`fit_facing` does it greedily.  A candidate capsule is seeded at an uncovered vertex, with an
+axis direction and a radius from fixed lists, and placed so that the vertex lies on the
+capsule's BOTTOM (the side facing the paper): its surface then sticks out below that vertex by
+at most r (1 - cos 15 deg) anywhere in the cone.  The segment is extended along its axis as far
+as the part reaches and as far as the capsule stays within FIT_TOL of the part's lowest point
+in every cone direction (a set of linear constraints on the two end parameters).  Each round
+takes the candidate covering the most uncovered vertices per volume**beta, until every vertex
+is covered; redundant capsules are then dropped.  The upper part of a big body (the hand
+above its lowest 50 mm) is first covered by the old banded fit, kept only where admissible.
+The banded fit is the old `scripts/self_collision_audit.py` method: search segment directions,
+shrink the segment while the enclosing radius falls, radius = exact maximum over the vertices.
 """
 from __future__ import annotations
 
@@ -20,7 +32,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from arm_meshes import LEAD_CENTRE, LEAD_LEN, LEAD_R, TAIL_CENTRE, TAIL_LEN, U, load_bodies  # noqa: E402
+from arm_meshes import LEAD_CENTRE, LEAD_LEN, U, load_bodies  # noqa: E402
 
 
 def pt_seg(P, a, b):
@@ -87,6 +99,114 @@ def show(name, frame, rows):
               f'({b[0]:.4f}, {b[1]:.4f}, {b[2]:.4f}), {r:.3f}),   # mesh {r_fit:.4f}')
 
 
+FIT_TOL = 1.2e-3        # m; the demand is 1.5 mm, checked on finer leans by the test
+CONE = 15.0             # deg
+# per part: radii to try (mm), volume exponent beta, height of the top part given to the
+# banded fit first (m, 0 = none), number of bands there
+PARAMS = {
+    "hand": ((3, 4.5, 6.5, 9, 13, 18, 25, 32, 40), 0.15, 0.05, 4),
+    "finger_left": ((2, 3, 4.5, 6.5, 9, 13, 18, 25), 0.08, 0.0, 0),
+    "finger_right": ((2, 3, 4.5, 6.5, 9, 13, 18, 25), 0.08, 0.0, 0),
+    "holder": ((2, 3, 4.5, 6.5, 9, 13, 18, 25), 0.2, 0.0, 0),
+    "pen_tail": ((2, 3, 3.6, 4.5), 0.0, 0.0, 0),
+}
+
+
+def cone_dirs(deg=CONE, step=1.0, naz=48):
+    """Downward directions in the hand frame: +z tilted up to `deg` in every direction."""
+    out = [np.array([0.0, 0.0, 1.0])]
+    for t in np.arange(step, deg + 1e-9, step):
+        a = np.deg2rad(t)
+        for p in np.linspace(0, 2 * np.pi, naz, endpoint=False):
+            out.append([np.sin(a) * np.cos(p), np.sin(a) * np.sin(p), np.cos(a)])
+    return np.array(out)
+
+
+def _axis_dirs():
+    i = np.arange(40) + 0.5
+    phi, th = np.arccos(1 - 2 * i / 40), np.pi * (1 + 5 ** 0.5) * i
+    d = np.stack([np.cos(th) * np.sin(phi), np.sin(th) * np.sin(phi), np.cos(phi)], 1)
+    d = list(d[d[:, 2] >= 0]) + [U, np.array([1.0, 0, 0]), np.array([0, 1.0, 0])]
+    return np.array([e / np.linalg.norm(e) for e in d if abs(e[2]) < 0.97])
+
+
+def _admissible(D, H, a, b, r):
+    return float((np.maximum(D @ a, D @ b) + r - H).max())
+
+
+def _candidate(V, D, H, v, e, r, z=np.array([0.0, 0.0, 1.0])):
+    w = z - (z @ e) * e
+    w /= np.linalg.norm(w)
+    c = v - (r - 1e-6) * w
+    const, ed = D @ c + r - H - FIT_TOL, D @ e
+    if np.any(const[np.abs(ed) < 1e-12] > 0):
+        return None
+    pos, neg = ed > 1e-12, ed < -1e-12
+    thi = np.min(-const[pos] / ed[pos]) if pos.any() else np.inf
+    tlo = np.max(-const[neg] / ed[neg]) if neg.any() else -np.inf
+    if not (tlo <= 1e-12 and thi >= -1e-12):
+        return None
+    X = V - c
+    pr = X @ e
+    near = np.linalg.norm(X - np.outer(pr, e), axis=1) <= r
+    lo, hi = max(tlo, min(pr[near].min(), 0.0)), min(thi, max(pr[near].max(), 0.0))
+    return c + lo * e, c + hi * e
+
+
+def fit_facing(V, radii_mm, beta, slab, bands, seed=0, n_seed=30):
+    rng = np.random.default_rng(seed)
+    D = cone_dirs()
+    H = (V @ D.T).max(0)
+    E = _axis_dirs()
+    unc, caps = np.ones(len(V), bool), []
+    if slab > 0:
+        up = V[:, 2] < V[:, 2].max() - slab
+        for a, b, r, _ in banded(V[up], bands):
+            if _admissible(D, H, a, b, r) <= FIT_TOL:
+                caps.append((a, b, r))
+                unc &= ~(pt_seg(V, a, b) <= r)
+    while unc.any():
+        idx = np.flatnonzero(unc)
+        seeds = np.unique(np.concatenate([idx[np.argsort(-V[idx, 2])[:n_seed // 2]],
+                                          rng.choice(idx, min(len(idx), n_seed // 2), False)]))
+        best = None
+        for s in seeds:
+            for e in E:
+                for r in np.asarray(radii_mm) * 1e-3:
+                    ab = _candidate(V, D, H, V[s], e, r)
+                    if ab is None:
+                        continue
+                    a, b = ab
+                    n = (pt_seg(V[idx], a, b) <= r).sum()
+                    vol = np.pi * r * r * np.linalg.norm(b - a) + 4 / 3 * np.pi * r ** 3
+                    score = n / vol ** beta
+                    if best is None or score > best[0]:
+                        best = (score, a, b, r)
+        _, a, b, r = best
+        caps.append((a, b, r))
+        unc &= ~(pt_seg(V, a, b) <= r)
+    inside = np.array([pt_seg(V, a, b) <= r for a, b, r in caps])
+    keep = list(range(len(caps)))
+    for k in sorted(keep, key=lambda k: inside[k].sum()):
+        others = [j for j in keep if j != k]
+        if others and inside[others].any(0).all():
+            keep = others
+    return [caps[k] for k in keep], D, H
+
+
+def rounded(V, caps, D, H):
+    """Round ends to 0.01 mm, then give each capsule the radius that keeps its vertices in."""
+    own = np.argmin(np.array([pt_seg(V, a, b) - r for a, b, r in caps]), axis=0)
+    rows = []
+    for k, (a, b, r) in enumerate(caps):
+        a, b = np.round(a, 5), np.round(b, 5)
+        W = V[own == k]
+        need = pt_seg(W, a, b).max() if len(W) else 0.0
+        rows.append((a, b, float(np.ceil(max(need, 1e-5) * 1e5) / 1e5)))
+    worst = max(_admissible(D, H, a, b, r) for a, b, r in rows)
+    return rows, worst
+
+
 def main():
     bodies = load_bodies()
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -98,18 +218,18 @@ def main():
         caps = [c for c in fr3.LINK_CAPSULES if c[0].startswith(name + ".")]
         d = np.min([pt_seg(V, np.array(a), np.array(b)) - r for _, _, a, b, r in caps], axis=0)
         print(f"  {name}: worst vertex {1e3 * d.max():+.2f} (<= 0 is inside), {len(V)} vertices")
-    print("\nhand + fingers (paste into fr3.py):")
-    show("hand", 9, banded(bodies["hand"][1], 3))
-    for side in ("finger_left", "finger_right"):
-        show(side, 9, banded(bodies[side][1], 2))
-    print("\ntool (paste into tool.py):")
-    show("holder", 9, banded(bodies["holder"][1], 3))
-    r = 0.005
-    tail = (TAIL_CENTRE - 0.5 * TAIL_LEN * U, TAIL_CENTRE + 0.5 * TAIL_LEN * U)
-    print(f"    pen_tail  {tail[0].round(7)} -> {tail[1].round(7)}  r {r}  (stick r {LEAD_R})")
+    for part, (radii, beta, slab, bands) in PARAMS.items():
+        V = bodies[part][1]
+        caps, D, H = fit_facing(V, radii, beta, slab, bands)
+        rows, worst = rounded(V, caps, D, H)
+        vol = sum(np.pi * r * r * np.linalg.norm(b - a) + 4 / 3 * np.pi * r ** 3 for a, b, r in rows)
+        print(f"\n{part}: {len(rows)} capsules, {1e3 * vol:.3f} L, lowest point at most "
+              f"{1e3 * worst:.2f} mm below the mesh's in the cone")
+        for k, (a, b, r) in enumerate(rows):
+            print(f'    ("{part}.{k}", 9, ({a[0]:.5f}, {a[1]:.5f}, {a[2]:.5f}), '
+                  f'({b[0]:.5f}, {b[1]:.5f}, {b[2]:.5f}), {r:.5f}),')
     tip = LEAD_CENTRE + 0.5 * LEAD_LEN * U
-    pen = (LEAD_CENTRE - 0.5 * LEAD_LEN * U, tip - r * U)
-    print(f"    pen       {pen[0].round(7)} -> {pen[1].round(7)}  r {r}  tip {tip.round(7)}")
+    print(f"\npen: from {(LEAD_CENTRE - 0.5 * LEAD_LEN * U).round(7)} to the tip {tip.round(7)}")
 
 
 if __name__ == "__main__":

@@ -19,10 +19,11 @@ Files: `aris/kernel/arm.py` (the `Arm` class), `aris/kernel/fr3.py` (the robot's
 | `fk(Q)` | joints (N,7) | hand pose `T_base_hand` (N,4,4) |
 | `tip(Q)`, `pen_axis(Q)` | joints | pen tip (N,3); unit vector along the pen, out of the tip (N,3) |
 | `link_frames(Q)` | joints | all ten frames (N,10,4,4) |
-| `body(Q)` | joints | `Body`: 40 capsules per configuration |
-| `self_pairs` | | which capsule pairs to check against each other (366 pairs); the margin is the rig's (`Gates.self_margin`) |
-| `reach` | | (7,40): how far each capsule can be from each joint's axis, for bounding motion between samples |
-| `capsule_table()` | | the 40 capsules as data: frame index, two ends in that frame, radius, is_pen, is_fixed, name |
+| `body(Q)` | joints | `Body`: 62 capsules per configuration, with `is_pen`, `is_fixed`, `is_tool` |
+| `self_pairs` | | which capsule pairs to check against each other (784 pairs); the margin is the rig's (`Gates.self_margin`) |
+| `reach` | | (7,62): how far each capsule can be from each joint's axis, for bounding motion between samples |
+| `capsule_table()` | | the 62 capsules as data: frame index, two ends in that frame, radius, is_pen, is_fixed, is_tool, name |
+| `tool.with_tip(tool, tip_hand)` | a tool, a calibrated tip in the hand frame | the same tool with the tip there; the pen capsule keeps its direction and radius and ends exactly at the new tip |
 | `chain_table()` | | the chain as data: the 7 DH rows, then the fixed flange and hand frames (parent, rotation, translation); with `capsule_table()` enough to rebuild `body` exactly (tested to 1e-12) |
 | `ik(T_base_hand, q7, with_flags=False)` | poses (M,4,4), joint-7 angle (M,) | joints (M,8,7), valid (M,8), and flags if asked |
 | `hand_pose(tip, normal, spin, lean)` | tips (M,3), paper normal (3,), spin (M,), lean (M,2) | hand poses (M,4,4) |
@@ -55,18 +56,19 @@ pen.
 
 ## The collision body
 
-40 capsules. The seven link0 capsules are **fixed** (`is_fixed`): they do not move with the
+62 capsules. The seven link0 capsules are **fixed** (`is_fixed`): they do not move with the
 joints, and the collision check does not test them against obstacles (they sit inside the
-arm's own mount). All others move.
+arm's own mount). All others move. The 33 capsules of the hand, blades, holder and pencil tail
+are marked `is_tool` (bolted to the flange); the pen is `is_pen` only.
 
 | body | capsules | radii (mm) | where the numbers come from |
 |---|---|---|---|
 | link0 (base) | link0.0 - link0.6, **fixed** | 177, 176, 171, 160, 112, 76, 78 | old `selfcoll.py` table: seven slices about the base axis; the lowest holds the cable connector stub behind the mounting face |
 | link1 - link7 | three each, link1.0 - link7.2 | 63 68 76 / 63 69 75 / 62 75 59 / 62 77 64 / 63 67 61 / 51 56 49 / 47 44 38 | old `selfcoll.py` table, fitted to each link's own metal |
-| hand | hand.0 - hand.2 | 39, 36, 31 | new fit |
-| Fat finger blades | finger_left.0-1, finger_right.0-1 | 24, 16 / 16, 24 | new fit |
-| pen holder | holder.0 - holder.2 | 16, 21, 25 | new fit on the housing and cap meshes |
-| pencil tail | pen_tail | 5 | the 72.5 mm of pencil behind the holder, as the old model draws it (never measured) |
+| hand (gripper body) | hand.0 - hand.13 | 26-31 above, 3-6.5 along the bottom edges | new fit, paper-facing (below) |
+| Fat finger blades | finger_left.0-3, finger_right.0-3 | 25, and three of 2 along the edges | new fit, paper-facing |
+| pen holder | holder.0 - holder.8 | 25, 25, and seven of 2 | new fit on the housing and cap meshes, paper-facing |
+| pencil tail | pen_tail.0-1 | 4.5 | the 72.5 mm of pencil behind the holder, as the old model draws it (never measured) |
 | pen | pen (the only `is_pen` capsule) | 5 | the 20 mm of graphite past the cap; the capsule's surface ends exactly at the tip |
 
 Why this model. The old code had four: fat sausages about the lines between joint origins
@@ -77,9 +79,28 @@ with every radius the exact largest distance of any mesh vertex, rounded up to t
 The last is the tightest one that contains the metal, so it is used for links 0 to 7 as is. Its
 hand capsules were fitted to the stock fingers, but the rig has Fat finger blades reaching 80 mm
 further, and its tool was a 50 mm "L" that the 2026-09-03 holder correction showed no longer
-contains the holder. So the hand, the blades and the holder were refitted with the same method
+contains the holder. So the hand, the blades, the holder and the tail were refitted
 (`tests/oracle/fit_arm_capsules.py`) on the meshes of the real build in
-`assets/system_model/meshes`.
+`assets/system_model/meshes`, with a second demand beside containment: the capsules must not
+reach further toward the paper than the metal does. A first fit (3 + 2 + 2 + 3 capsules) put the
+round end of a capsule 14.7 mm below the holder's cap with the hand square to the paper, which
+left no drawing pose any clearance. The refit places each capsule so that the mesh points it
+covers near the paper lie on its underside, and adds small capsules along the edges nearest
+the paper. Measured heights above the paper with the pen tip on it (lowest point, mm):
+
+| part | square: mesh | square: capsules | leaned up to 15 deg: mesh | capsules | worst gap over the cone |
+|---|---|---|---|---|---|
+| holder (housing and cap) | 14.73 | 14.73 | 9.41 | 8.28 | 1.20 |
+| blade, left | 37.18 | 37.18 | 12.44 | 11.24 | 1.21 |
+| blade, right | 37.18 | 37.18 | 12.05 | 10.85 | 1.21 |
+| gripper body | 83.41 | 82.37 | 45.79 | 44.65 | 1.20 |
+| pencil tail | 95.38 | 94.75 | 80.67 | 80.34 | 1.20 |
+
+Before the refit the capsule column read 0.03, 7.73, 8.23, 48.53, 91.75 square and -7.99, -5.59,
+-9.83, 10.01, 77.82 leaned (below zero means through the paper), with gaps up to 37 mm. "Leaned"
+is the worst over 0, 5, 10, 15 degrees in 8 directions; the gap is checked on those and 300 more
+random leans in the cone. The pen itself touches the paper, of course; the closest thing after
+it is the holder's cap edge, 9.4 mm up at a 15 degree lean.
 
 `reach[j, k]` bounds, over all configurations, the distance of any point of capsule k (radius
 included) from joint j's axis; turning the joints by dq moves the capsule by at most
@@ -139,9 +160,9 @@ what the local planner searches.
 | `hand_pose` -> `ik` -> `tip`, lean up to 15 degrees | worst tip error 5.9e-16 m over 12 327 solutions |
 | `reach` bound on capsule travel, 10 000 random moves | never exceeded; travel / bound median 0.25, worst 0.75 (small moves 0.29, 0.76) |
 | `sigma_min`, `limit_margin` vs old code | 4.7e-16, exact |
-| mesh vertices outside their capsules (worst, mm; negative is inside) | link0 -0.14, link1 -0.88, link2 -0.34, link3 -0.35, link4 -3.31, link5 -0.00, link6 -0.14, link7 -1.42, hand -0.73, blades -0.22 / -0.44, holder -0.09, pen 0.00 (the tip, by design), pencil tail -1.50 |
-| self pairs | 366; none is overlapping in every configuration; 86 % of random configurations clear 23 mm |
-| speed, one core, batch 10 000 | fk 1.4 M/s, tip 1.36 M/s, body 0.40 M/s, sigma_min 0.42 M/s; IK solver alone new 1.13 M poses/s against old 0.75 M; `ik` with the check 0.16 M/s (it checks 3 answers per pose, the old path 2: 0.24 M/s) |
+| mesh vertices outside their capsules (worst, mm; negative is inside) | link0 -0.14, link1 -0.88, link2 -0.34, link3 -0.35, link4 -3.31, link5 -0.00, link6 -0.14, link7 -1.42, hand, blades, holder, pencil tail -0.00 (the refit is tight by construction), pen 0.00 (the tip, by design) |
+| self pairs | 784; none is overlapping in every configuration; 86 % of random configurations clear 23 mm |
+| speed, one core, batch 10 000 | on a quiet machine (wall time, 40 capsules): fk 1.4 M/s, body 0.40 M/s, IK solver alone new 1.13 M poses/s against old 0.75 M. CPU time under load average 70 (62 capsules): fk 0.10 M/s, body 0.09 M/s, sigma_min 0.11 M/s, IK solver alone new 0.80 M against old 0.43 M poses/s |
 
 Regenerate the reference data with
 `ARIS_RIG=proposed ARIS_TOOL=lateral ../.venv/bin/python tests/oracle/make_arm_reference.py`.

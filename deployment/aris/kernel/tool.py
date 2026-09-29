@@ -15,20 +15,28 @@ PEN_LEAN = np.deg2rad(23.0)                  # the bore's lean off hand z, towar
 TIP_HAND = np.array([0.0860369, 0.0, 0.1034 + 0.0460262])
 PEN_AXIS_HAND = np.array([np.sin(PEN_LEAN), 0.0, np.cos(PEN_LEAN)])
 
-# Capsules in the hand frame: (name, a, b, radius).  holder.0-2 were measured on the housing
-# and cap meshes (assets/system_model/meshes/penholder) by tests/oracle/fit_arm_capsules.py;
-# radius = exact mesh maximum rounded up to the millimetre (16.0, 20.5, 24.5 mm).
-# pen_tail is the graphite stick's 72.5 mm tail behind the housing, pointing back at the wrist
-# (a modelled length, never measured on the real pencil).  pen is the 20 mm of graphite past
-# the cap.  Both are 3.5 mm sticks in 5 mm capsules; the pen capsule's segment stops 5 mm short
-# of the tip, so the capsule's surface reaches exactly to the tip and a pen resting on the
-# paper is at distance zero from it.
+# Capsules in the hand frame: (name, a, b, radius).  holder.* (housing and cap meshes,
+# assets/system_model/meshes/penholder) and pen_tail.* (the graphite stick's 72.5 mm tail behind
+# the housing, pointing back at the wrist; a modelled length, never measured on the real
+# pencil) were measured by tests/oracle/fit_arm_capsules.py: every vertex inside, and with the
+# hand leaned up to 15 deg the lowest capsule point at most 1.2 mm below the lowest vertex (the
+# 2 mm capsules are mop-ups along the edges nearest the paper).  pen is the 20 mm of graphite
+# past the cap, a 3.5 mm stick in a 5 mm capsule whose segment stops 5 mm short of the tip, so
+# its surface reaches exactly to the tip and a pen resting on the paper is at distance zero.
 _R_STICK = 0.005
-_CAPSULES = (
-    ("holder.0", (0.0566, -0.0025, 0.0781), (0.0451, -0.0018, 0.0522), 0.016),
-    ("holder.1", (0.0678, -0.0259, 0.0970), (0.0600, 0.0258, 0.0904), 0.021),
-    ("holder.2", (0.0726, -0.0257, 0.1244), (0.0760, 0.0258, 0.1213), 0.025),
-    ("pen_tail", (0.0166432, 0.0, -0.0140708), (0.0449767, 0.0, 0.0526787), _R_STICK),
+_CAPSULES = tuple((n, a, b, r) for n, _f, a, b, r in (
+    ("holder.0", 9, (0.06955, -0.00349, 0.10970), (0.06955, 0.00349, 0.10970), 0.02500),
+    ("holder.1", 9, (0.05314, 0.01688, 0.05676), (0.05430, -0.03905, 0.09607), 0.02501),
+    ("holder.2", 9, (0.05350, 0.02459, 0.09240), (0.07950, 0.02459, 0.09240), 0.00201),
+    ("holder.3", 9, (0.05247, 0.02525, 0.11529), (0.05233, 0.02532, 0.11567), 0.00200),
+    ("holder.4", 9, (0.08067, -0.02500, 0.08969), (0.08093, -0.02500, 0.09029), 0.00198),
+    ("holder.5", 9, (0.05346, 0.01151, 0.09008), (0.05313, 0.01227, 0.09018), 0.00200),
+    ("holder.6", 9, (0.07464, 0.02314, 0.09327), (0.06086, 0.00045, 0.13203), 0.00201),
+    ("holder.7", 9, (0.05796, 0.01425, 0.08871), (0.05796, 0.01425, 0.08871), 0.00201),
+    ("holder.8", 9, (0.07842, -0.02440, 0.08907), (0.07825, -0.02421, 0.08922), 0.00201),
+    ("pen_tail.0", 9, (0.01756, 0.00000, -0.01446), (0.04484, 0.00000, 0.04980), 0.00450),
+    ("pen_tail.1", 9, (0.04332, 0.00544, 0.04617), (0.04343, -0.00026, 0.05018), 0.00450),
+)) + (
     ("pen", (0.0782223, 0.0, 0.1310161), tuple(TIP_HAND - _R_STICK * PEN_AXIS_HAND), _R_STICK),
 )
 

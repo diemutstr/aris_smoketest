@@ -2,7 +2,7 @@
 tests/oracle/make_arm_reference.py) and against the FR3 meshes.
 
     cd deployment && ../.venv/bin/python -m pytest tests/test_kernel_arm.py -q -s
-(-s prints the measured numbers.)
+(-s prints the measured numbers; -m "not slow" leaves out the four slow tests.)
 """
 import sys
 import time
@@ -137,6 +137,7 @@ def _drawing_configs(arm, n_draw, seed):
     return np.concatenate(keep)[:n_draw]
 
 
+@pytest.mark.slow
 def test_ik_round_trip(arm):
     q = random_q(arm, 100_000, 21)
     T = arm.fk(q)
@@ -153,6 +154,7 @@ def test_ik_round_trip(arm):
     assert found.mean() >= 0.999
 
 
+@pytest.mark.slow
 def test_ik_round_trip_drawing(arm):
     q = _drawing_configs(arm, 2000, 22)
     T = arm.fk(q)
@@ -224,6 +226,7 @@ def test_ik_empty(arm):
     assert Q.shape == (0, 8, 7) and valid.shape == (0, 8)
 
 
+@pytest.mark.slow
 def test_paper_coverage_old_vs_new(arm):
     """Tip positions on the paper 0.97 m below the base, out to 0.95 m, 2 cm grid, 8 spins,
     no lean, q7 on the old 16-value grid: how many have an answer passing the gates."""
@@ -364,6 +367,66 @@ def test_body_contains_meshes(arm, meshes):
     print("\nworst vertex vs its capsules (mm, <= 0 inside): " + ", ".join(report))
 
 
+PARTS = ("holder", "finger_left", "finger_right", "hand", "pen_tail")
+
+
+def test_lowest_point_follows_meshes(arm, meshes):
+    """Pen tip on a plane, hand square to it and then leaned over the 15 deg cone: the lowest
+    capsule point of each tool part is at most 1.5 mm below the part's lowest mesh vertex."""
+    rng = np.random.default_rng(41)
+    leans = [(0.0, 0.0)] + [(np.deg2rad(m) * np.cos(t), np.deg2rad(m) * np.sin(t))
+                            for m in (5, 10, 15) for t in np.linspace(0, 2 * np.pi, 8, False)]
+    ang, az = np.deg2rad(15.0) * np.sqrt(rng.random(300)), rng.uniform(0, 2 * np.pi, 300)
+    leans = np.array(leans + list(zip(ang * np.cos(az), ang * np.sin(az))))
+    T = arm.hand_pose(np.zeros((len(leans), 3)), np.array([0.0, 0.0, 1.0]), np.zeros(len(leans)),
+                      leans)
+    ct = arm.capsule_table()
+    rows = []
+    for part in PARTS:
+        V = meshes[part][1]
+        mesh = (V @ T[:, 2, :3].T).min(0) + T[:, 2, 3]                     # (L,)
+        ks = [k for k, n in enumerate(ct.names) if n.split(".")[0] == part]
+        za = ct.a[ks] @ T[:, 2, :3].T + T[:, 2, 3]
+        zb = ct.b[ks] @ T[:, 2, :3].T + T[:, 2, 3]
+        caps = (np.minimum(za, zb) - ct.radius[ks, None]).min(0)
+        gap = mesh - caps
+        rows.append(f"{part:12s} {1e3 * mesh[0]:7.2f} {1e3 * caps[0]:7.2f}   "
+                    f"{1e3 * mesh[:25].min():7.2f} {1e3 * caps[:25].min():7.2f}   "
+                    f"{1e3 * gap.max():5.2f}")
+        assert gap.min() >= -1e-9 and gap.max() <= 1.5e-3, part
+    print("\nheight above the paper (mm) of the lowest point, pen tip on the paper:\n"
+          "part         square: mesh  capsules   lean<=15: mesh  capsules   worst gap\n  "
+          + "\n  ".join(rows))
+
+
+def test_is_tool(arm):
+    b = arm.body(np.zeros((1, 7)))
+    tool = {n for n, t in zip(b.names, b.is_tool) if t}
+    assert tool == {n for n in b.names if n.split(".")[0] in PARTS}
+    assert np.array_equal(arm.capsule_table().is_tool, b.is_tool)
+    assert not (b.is_tool & b.is_pen).any() and not (b.is_tool & b.is_fixed).any()
+
+
+def test_with_tip():
+    from aris.kernel.tool import with_tip
+    tool = default_tool()
+    for tip in (tool.tip_hand + [0.0, 0.0, 0.004], tool.tip_hand + [0.002, -0.001, -0.003]):
+        t2 = with_tip(tool, tip)
+        pen = [c for c in t2.capsules_hand if c.name in t2.pen_names]
+        assert pen and np.array_equal(t2.tip_hand, tip)
+        for c in pen:
+            assert abs(np.linalg.norm(tip - c.p1) - c.radius) < 1e-12
+            assert np.abs(np.cross(tip - c.p1, t2.pen_axis_hand)).max() < 1e-12
+            d = c.p1 - c.p0
+            assert np.abs(np.cross(d, t2.pen_axis_hand)).max() < 1e-12 and d @ t2.pen_axis_hand >= 0
+        arm2 = Arm(t2)
+        q = random_q(arm2, 50, 42)
+        b = arm2.body(q)
+        k = b.names.index("pen")
+        assert np.allclose(np.linalg.norm(arm2.tip(q) - b.p1[:, k], axis=1), b.radius[k],
+                           atol=1e-12)
+
+
 def test_body_shape(arm):
     q = random_q(arm, 3, 2)
     b = arm.body(q)
@@ -418,6 +481,7 @@ def test_tables_reproduce_body(arm):
     assert np.array_equal(cp.is_pen, b.is_pen) and np.array_equal(cp.is_fixed, b.is_fixed)
 
 
+@pytest.mark.slow
 def test_self_pairs_can_separate(arm):
     """Every watched pair clears the margin somewhere: none is overlapping by construction."""
     margin = Gates().self_margin
@@ -481,9 +545,9 @@ def test_speed(arm):
                     ("new solver alone", lambda: _new_raw(arm, T, q[:, 6])),
                     ("old solver alone", lambda: _old_ik(arm, T, q[:, 6]))):
         f()
-        t0 = time.perf_counter()
+        t0 = time.process_time()
         f()
-        dt = time.perf_counter() - t0
+        dt = time.process_time() - t0
         out.append(f"{name} {len(q) / dt / 1e3:.0f}k/s")
         assert dt < 10.0
-    print("\nbatch 10 000: " + ", ".join(out))
+    print("\nbatch 10 000, CPU time: " + ", ".join(out))

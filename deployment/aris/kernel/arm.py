@@ -41,6 +41,7 @@ class CapsuleTable:
     is_pen: np.ndarray       # (K,) bool
     is_fixed: np.ndarray     # (K,) bool
     names: tuple
+    is_tool: np.ndarray      # (K,) bool: bolted to the flange (gripper, blades, holder, tail)
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,9 @@ class Arm:
         self._is_pen = np.array([n in tool.pen_names for n in self._names])
         self._is_fixed = self._cap_frame == 0          # link0: bolted to the mount
         tool_names = {c.name for c in tool.capsules_hand}
+        self._is_tool = np.array([(n in tool_names or n.split(".")[0] in
+                                   ("hand", "finger_left", "finger_right"))
+                                  and n not in tool.pen_names for n in self._names])
         body_of = ["tool" if n in tool_names else n.split(".")[0] for n in self._names]
         pos = [fr3.CHAIN_POS[b] for b in body_of]
         self.self_pairs = np.array(
@@ -88,7 +92,7 @@ class Arm:
         return CapsuleTable(frame=self._cap_frame.copy(), a=self._cap_a.copy(),
                             b=self._cap_b.copy(), radius=self._radius.copy(),
                             is_pen=self._is_pen.copy(), is_fixed=self._is_fixed.copy(),
-                            names=self._names)
+                            names=self._names, is_tool=self._is_tool.copy())
 
     def chain_table(self) -> ChainTable:
         """The kinematic chain as plain arrays (copies); see `ChainTable`."""
@@ -160,7 +164,7 @@ class Arm:
         return Body(p0=np.einsum("nkij,kj->nki", Rk, self._cap_a) + pk,
                     p1=np.einsum("nkij,kj->nki", Rk, self._cap_b) + pk,
                     radius=self._radius.copy(), names=self._names, is_pen=self._is_pen.copy(),
-                    is_fixed=self._is_fixed.copy())
+                    is_fixed=self._is_fixed.copy(), is_tool=self._is_tool.copy())
 
     # ------------------------------------------------------------ inverse kinematics
 
