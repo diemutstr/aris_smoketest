@@ -79,6 +79,23 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
    and per parked arm first, exact capsules only for what is close; same answers to 1e-12;
    target 100 000 configurations per second on the real arm 31 scene, one thread.
 
+## If the tests fail right after picking up
+
+`ValueError: scene must have 13 arrays` (or another count) means the compiled collision module
+that is installed and the Python side in the working tree are out of step: the two-level check
+was mid-change when the session ended. Either finish that task, or go back to the last
+consistent state:
+
+```
+cd /home/franka/aris_project/aris_sixarm
+git status --short deployment            # see what the agents left uncommitted
+git stash push -- deployment/aris/kernel deployment/native/collide deployment/tests/test_kernel_collide*.py
+.venv/bin/pip install ./deployment/native/collide ./deployment/native/fr3_ik ./deployment/native/retime
+cd deployment && ../.venv/bin/python -m pytest tests -q -m "not slow"
+```
+
+The same three `pip install` lines are what a fresh clone needs before anything runs.
+
 ## Decisions waiting for Pete
 
 1. How close the pen holder may come to the paper (`rig.json`, `clearances.tool_to_paper_m`, now
