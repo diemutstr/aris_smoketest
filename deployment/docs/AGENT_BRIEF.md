@@ -1,0 +1,65 @@
+# Brief for every agent working on `deployment/`
+
+## What this is
+
+Six Franka FR3 arms hang upside down from a frame over a paper-covered table and draw with
+pens held in a holder on the hand. `deployment/` is a clean rebuild of the planning and
+execution software. The old code (`aris_sixarm/`, `scripts/`, about 90 000 lines) works but is
+slow and hard to understand. The project lead, Pete, wants to understand every module of the new
+code and how the modules compose. Clean and small beats clever.
+
+Repository root: `/home/franka/aris_project/aris_sixarm`. New code: `deployment/`.
+
+## Read before writing anything
+
+1. `deployment/docs/DESIGN.md` — what the system is
+2. `deployment/docs/BUILD.md` — layout, import rule, the calls between modules, code rules
+3. `deployment/aris/types.py` — the shared data types
+4. `docs/STAGED_LESSONS_2026-09-29.md` — what the old planner learned the hard way; read the
+   parts that touch your module and do not repeat those mistakes
+5. `deployment/docs/OPTIMIZATION_NOTES.md` — ideas parked for later; do not build them now unless
+   your task says so
+
+## Environment
+
+- Interpreter: `/home/franka/aris_project/aris_sixarm/.venv/bin/python` (Python 3.12, numpy 2.5,
+  scipy 1.18, pydrake 1.56, matplotlib, pytest). The package `aris` is installed editable.
+- Run your tests with `cd deployment && ../.venv/bin/python -m pytest tests/<yours> -q`.
+- g++ 13, cmake and ninja are installed. numba, pybind11 and toppra are not. Do not add a
+  dependency without saying so in your report; prefer none.
+- 32 cores. No robot, no ROS on this machine.
+
+## The old code as a reference
+
+- You may read anything in `aris_sixarm/`, `scripts/`, `docs/`, `assets/`, `tests/`.
+- The new package never imports the old one.
+- To compare answers, write a small script under `deployment/tests/oracle/` that runs the old code
+  and saves reference numbers to `deployment/tests/data/<name>.npz`; your tests read that file.
+  The old code must be imported with the environment `ARIS_RIG=proposed ARIS_TOOL=lateral` set
+  before the import, so run the oracle script as its own process with those variables. The rig
+  is at height `h = 0.970` m (paper to mounting plate) with the lateral pen holder
+  (`pen_lat = 0.0860369`, `pen_ext = 0.0460262`).
+- The old analytic IK is vendored in `third_party/franka_analytical_ik`.
+
+## Rules
+
+- Write only inside the folders your task names, plus your own tests under `deployment/tests/`
+  and your own page under `deployment/docs/modules/`. Other agents are working in the sibling
+  folders at the same time.
+- Do not edit `aris/types.py`, `docs/BUILD.md`, `docs/DESIGN.md` or this file. If you need a
+  change to a shared type or a contract, say so in your report.
+- Do not run git commands that change anything (no add, commit, checkout, stash, reset). The
+  orchestrator commits.
+- No environment variables, no global mutable state, no hidden caches in new code.
+- Same input, same output. Anything random takes its seed from its input.
+- An ordinary refusal is a return value with a reason, never an exception.
+- Units: metres, radians, seconds. Name the frame in the variable (`p_base`, `T_table_base`).
+- A file over 400 lines or a function over 60 lines needs a reason. Comments say why, not what.
+- Your module page (`docs/modules/<module>.md`) is one page, plain language, no internal jargon:
+  the job, what goes in, what comes out, how it works, what it cannot do, the measured numbers.
+
+## Your final report
+
+Short. What you built (files), the test results with numbers, anything you could not do, any
+change you need to a shared type or contract, and anything you found that the orchestrator or
+Pete should know. Do not paste code.
