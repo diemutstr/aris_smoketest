@@ -91,6 +91,7 @@ def _run(name, p2, s, corners, **kw):
                 slowest=speed[5:-5].min(), rep=check(r.traj, ARM.limits))
 
 
+@pytest.mark.slow                  # about 4 s: 36 shapes through IK and retime
 def test_drawing_through_the_real_arm():
     rows = [x for x in (_run(*sh) for sh in shapes(3, 36)) if x is not None]
     assert len(rows) >= 15

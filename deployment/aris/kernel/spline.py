@@ -23,7 +23,6 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import correlate1d, minimum_filter1d, uniform_filter1d
-from scipy.signal import oaconvolve
 
 WIDTH_LEVELS = 8       # window widths tried: the narrowest that fits everywhere, times 4^k
 
@@ -159,11 +158,16 @@ def box3_kernel(n: int) -> np.ndarray:
 
 
 def _box3(q, n_box):
-    """Three box averages of n_box samples in a row (one kernel of 3 n_box - 2 samples)."""
-    kernel = box3_kernel(n_box)
-    if len(kernel) <= 301:
-        return correlate1d(q, kernel, axis=0, mode="nearest")
-    return oaconvolve(q, kernel[:, None], mode="same", axes=0)
+    """Three box averages of n_box samples in a row.
+
+    A sliding sum: the cost does not grow with the width, and its rounding error changes by one
+    rounding per step, so even the third difference of the result stays clean.  (A running sum
+    over the whole path would not: its rounding grows with the total.)
+    """
+    rows = np.ascontiguousarray(q.T)            # one contiguous row per joint: 10x faster
+    for _ in range(3):
+        rows = uniform_filter1d(rows, n_box, axis=1, mode="nearest")
+    return rows.T
 
 
 def path_at(path: SmoothPath, u: np.ndarray) -> np.ndarray:

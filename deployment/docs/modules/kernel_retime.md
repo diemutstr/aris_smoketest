@@ -140,5 +140,6 @@ branch inside the gates. Of 36 shapes, 23 had such a branch. At 20 mm/s:
 - Ends: velocity exactly 0; configuration equal to the input's (the tests check to 1e-12).
   Acceleration at the very ends is below 0.01 rad/s²; the smooth spline doesn't force it to zero.
 - Determinism: the same input gives a bit-identical output.
-- Speed, one core on a heavily loaded machine: a 2 000-sample drawing path takes 167 ms; a
-  2 000-sample jittery free path takes 655 ms.
+- Speed, CPU time of one process: a 2 000-sample drawing path takes 66 ms; a 2 000-sample
+  jittery free path takes 242 ms. The long random zigzags (about 10 rad of joint travel with
+  sharp corners, a smoothing grid of about 500 000 points) take 0.9–1.2 s each.
