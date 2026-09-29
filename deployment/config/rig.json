@@ -55,7 +55,9 @@
   "rows_and_phases": {
     "source": "docs/DESIGN.md section 3 (Pete, 2026-09-29): three rows of two arms; phase 1 leaders 13, 71, 2; phase 2 leaders 17, 31, 97",
     "rows": [[13, 17], [31, 71], [2, 97]],
-    "leaders": {"1": [13, 71, 2], "2": [17, 31, 97]}
+    "leaders": {"1": [13, 71, 2], "2": [17, 31, 97]},
+    "walls": {"1": [[13, 71], [71, 2]], "2": [[17, 31], [31, 97]]},
+    "walls_note": "a wall only between leaders that can reach each other (the diagonal pairs, 1.355 apart); the two end leaders of a column are 2.42 apart and cannot"
   },
 
   "hanger": {
@@ -78,8 +80,7 @@
     "clamp_bottom_z_m": 0.9827,
     "clamp_top_z_m": 1.0784,
     "clamp_source": "old system_model CLAMP (drawing down_clamps 226 x 152.4 x 95.7 mm), sitting on the plate, same centre as the plate. Envelope only; no part number in the drawing.",
-    "own_arm_skips": ["strut", "plate", "clamp"],
-    "own_arm_skips_note": "an arm is bolted to its own plate and clamp, so they are not obstacles for it. Its own struts are real steel its moving links could in principle touch, but the arm's base (kernel link0 capsules, radius 0.171-0.177 about the axis up to 0.238 above the mount plane) sits inside them, and the obstacle types cannot say 'every capsule except the base'. So they are left out until the collision check skips the base capsules; then remove \"strut\" from this list. tests/test_rig.py measures what leaving them out risks."
+    "own_hardware_note": "an arm's own struts, plate and clamp are obstacles for it like any other steel. Its base (the kernel's link0 capsules, marked fixed) sits among them and is not checked against obstacles, because it cannot move."
   },
 
   "steel": {
@@ -132,15 +133,15 @@
   },
 
   "planning_allowance": {
-    "source": "added on top of the demanded clearances when a planner asks (for_planning=True), so the checker is a second opinion and not a coin toss (lesson L32). steel and self are the old numbers (STATIC_PLAN_MARGIN - STATIC_MARGIN = 0.013: 0.010 checker half-step + 0.00275 Lipschitz, rounded; SELF_PLAN_PAD = 0.003).",
-    "steel_m": 0.013,
-    "arm_to_arm_m": 0.013,
-    "arm_to_arm_note": "a parked arm is as still as the steel, so it gets the steel allowance. Not an old number: chosen here.",
-    "wall_m": 0.0065,
-    "wall_note": "half of arm_to_arm, because both arms at a wall pay it. Not an old number: chosen here.",
-    "body_to_paper_m": 0.0,
-    "pen_lifted_to_paper_m": 0.0,
-    "paper_note": "zero: the old planner used the checker's own paper numbers, and a pen that hovers a few millimetres over the paper before touching down cannot pay more",
-    "self_m": 0.003
-  }
+  "source": "added on top of the demanded clearances when a planner asks (for_planning=True), so that the checker is a second opinion and not a coin toss (lesson L32). Set by the orchestrator 2026-09-29. The old numbers (0.013 on steel) paid for the old checker's sampling error: 0.010 half-step along a capsule plus 0.00275 between samples. The new distances are exact and both planner and checker bound the motion between samples to better than 0.001, so 0.003 covers the difference between the two with room to spare. The demanded clearances above are unchanged.",
+  "steel_m": 0.003,
+  "arm_to_arm_m": 0.003,
+  "arm_to_arm_note": "a parked arm is as still as the steel, so it gets the steel allowance",
+  "wall_m": 0.0015,
+  "wall_note": "half of arm_to_arm, because both arms at a wall pay it",
+  "body_to_paper_m": 0.0,
+  "pen_lifted_to_paper_m": 0.0,
+  "paper_note": "zero: a pen that hovers a few millimetres over the paper before touching down cannot pay more",
+  "self_m": 0.003
+ }
 }

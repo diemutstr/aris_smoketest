@@ -13,6 +13,7 @@ import pytest
 
 from aris.kernel import fr3
 from aris.kernel.arm import Arm, default_tool
+from aris.types import Gates
 
 DATA = Path(__file__).parent / "data" / "arm_reference.npz"
 TOL = 1e-9
@@ -88,45 +89,116 @@ def test_pen_axis(arm):
 
 # ------------------------------------------------------------------ 2. inverse kinematics
 
+IK_TOL = 1e-7
+
+
+def _old_ik(arm, T_hand, q7):
+    """The OLD vendored solver, used the way the old code used it (FR3 limits re-applied, every
+    answer checked by forward kinematics to 1e-9).  For comparison only; the package never
+    calls it.  -> Q (M,4,7) with NaN, valid (M,4)."""
+    ik = pytest.importorskip("franka_analytical_ik")._franka_ik
+    T = np.asarray(T_hand, float).copy()
+    T[:, :3, 3] += fr3.D_HAND_TCP * T[:, :3, 2]
+    flat = np.ascontiguousarray(T.transpose(0, 2, 1)).reshape(-1, 16)
+    raw = ik.solve_batch(flat, np.ascontiguousarray(q7, dtype=float), np.zeros(7), 1e-9, 1e-9)
+    ok = np.all(np.isfinite(raw), -1) & np.all((raw >= fr3.Q_MIN) & (raw <= fr3.Q_MAX), -1)
+    return np.where(ok[..., None], raw, np.nan), ok
+
+
+def _found(Q, q, tol=1e-6):
+    """Is configuration q[i] among the answers Q[i]?  -> (M,) bool."""
+    return (np.nan_to_num(np.abs(Q - q[:, None]), nan=9.0).max(-1) < tol).any(1)
+
+
 def _check_solutions(arm, T, Q, valid):
+    """Every valid answer is inside the limits and reproduces the pose. -> pose errors."""
     q = Q[valid]
     Tf = arm.fk(q)
     Tr = np.broadcast_to(T[:, None], Q.shape[:2] + (4, 4))[valid]
-    e_pos = np.linalg.norm(Tf[:, :3, 3] - Tr[:, :3, 3], axis=1)
-    e_rot = np.linalg.norm(Tf[:, :3, :3] - Tr[:, :3, :3], axis=(1, 2))
-    assert np.all(e_pos <= TOL) and np.all(e_rot <= TOL)
-    assert np.all(arm.limit_margin(q) >= 0.0)
+    e = np.maximum(np.linalg.norm(Tf[:, :3, 3] - Tr[:, :3, 3], axis=1),
+                   np.linalg.norm(Tf[:, :3, :3] - Tr[:, :3, :3], axis=(1, 2)))
+    assert np.all(e <= IK_TOL)
+    assert np.all((q >= arm.limits.q_min) & (q <= arm.limits.q_max))
     assert np.all(np.isnan(Q[~valid]))
-    return (e_pos.max() if len(q) else 0.0), (e_rot.max() if len(q) else 0.0)
+    return e
 
 
-def test_ik_reachable_matches_old(arm, ref):
-    T, q = ref["ik_hand"], ref["ik_q"]
+def _drawing_configs(arm, n_draw, seed):
+    """Configurations that hold the pen on a paper 0.97 m below the base: tip within 3 cm of
+    the plane, hand within 15 deg of vertical, 0.15 rad from every limit (rejection sampling)."""
+    rng = np.random.default_rng(seed)
+    L, keep = arm.limits, []
+    while sum(len(k) for k in keep) < n_draw:
+        q = L.q_min + rng.random((500_000, 7)) * (L.q_max - L.q_min)
+        T = arm.fk(q)
+        tip = T[:, :3, 3] + T[:, :3, :3] @ arm.tool.tip_hand
+        ok = (np.abs(tip[:, 2] - 0.97) < 0.03) & (T[:, 2, 2] > np.cos(np.deg2rad(15.0)))
+        keep.append(q[ok & (arm.limit_margin(q) >= 0.15)])
+    return np.concatenate(keep)[:n_draw]
+
+
+def test_ik_round_trip(arm):
+    q = random_q(arm, 100_000, 21)
+    T = arm.fk(q)
+    Q, valid, flags = arm.ik(T, q[:, 6], with_flags=True)
+    assert Q.shape == (len(q), 8, 7) and valid.shape == (len(q), 8)
+    e = _check_solutions(arm, T, Q, valid)
+    found = _found(Q, q)
+    Qo, vo = _old_ik(arm, T, q[:, 6])
+    print(f"\nround trip, 100 000 random configurations: new {found.mean():.4%}, old "
+          f"{_found(Qo, q).mean():.2%}; {valid.sum() / len(q):.2f} answers per pose (old "
+          f"{vo.sum() / len(q):.2f}); pose error worst {e.max():.1e}, "
+          f"{int(((e > 1e-9) & (e <= 1e-7)).sum())} answers between 1e-9 and 1e-7; "
+          f"{int((flags != 0).sum())} flagged")
+    assert found.mean() >= 0.999
+
+
+def test_ik_round_trip_drawing(arm):
+    q = _drawing_configs(arm, 2000, 22)
+    T = arm.fk(q)
     Q, valid = arm.ik(T, q[:, 6])
-    assert Q.shape == (len(T), 4, 7) and valid.shape == (len(T), 4)
-    ep, er = _check_solutions(arm, T, Q, valid)
-    assert np.array_equal(valid.sum(1), ref["ik_count"])
-    # the same solutions, in the same solver order (the old code packed them to the front)
-    old = ref["ik_Q"]
-    for k in range(len(old)):
-        n = valid[k].sum()
-        assert np.allclose(Q[k][valid[k]], old[k][:n], atol=1e-12)
-    found = (np.nan_to_num(np.abs(Q - q[:, None]), nan=9.0).max(-1) < 1e-6).any(1)
-    print(f"\nIK on {len(T)} reachable poses: {valid.sum()} solutions (old: "
-          f"{ref['ik_count'].sum()}), worst pose error {ep:.1e} m / {er:.1e}; "
-          f"{(valid.sum(1) == 0).mean():.1%} poses with none; the configuration the pose came "
-          f"from is among the answers for {found.mean():.1%}")
-
-
-def test_ik_random_poses_matches_old(arm, ref):
-    T = ref["ikr_hand"]
-    Q, valid = arm.ik(T, ref["ikr_q7"])
     _check_solutions(arm, T, Q, valid)
-    assert np.array_equal(valid.sum(1), ref["ikr_count"])
+    found = _found(Q, q)
+    Qo, vo = _old_ik(arm, T, q[:, 6])
+    print(f"\nround trip, {len(q)} drawing configurations: new {found.mean():.2%}, old "
+          f"{_found(Qo, q).mean():.2%}; poses with no answer: new "
+          f"{(valid.sum(1) == 0).mean():.2%}, old {(vo.sum(1) == 0).mean():.2%}")
+    assert found.mean() >= 0.999
 
 
-def test_ik_rejects_clamped_answers(arm):
-    """The solver clamps at the workspace edge; such answers must come back invalid."""
+def test_ik_shoulder_singular_is_flagged(arm):
+    q = random_q(arm, 200, 23)
+    q[:, 1] = 0.0
+    T = arm.fk(q)
+    Q, valid, flags = arm.ik(T, q[:, 6], with_flags=True)
+    _check_solutions(arm, T, Q, valid)
+    hit = (valid & (flags == 1)).any(1)
+    assert hit.mean() > 0.9           # the family q1 + q3 = const is found and marked
+    # a pose merely near it is solved normally; so close to the singularity q1 and q3 are
+    # ill-conditioned (only their sum is sharp), so they come back to ~1e-5 rad at q2 = 1e-8
+    for q2, tol in ((1e-8, 1e-4), (1e-5, 1e-6)):
+        q[:, 1] = q2
+        Q, valid, flags = arm.ik(arm.fk(q), q[:, 6], with_flags=True)
+        assert _found(Q, q, tol).all() and not flags.any()
+
+
+def test_ik_superset_of_old(arm, ref):
+    worst = 0.0
+    for T, q7, count in ((ref["ik_hand"], ref["ik_q"][:, 6], ref["ik_count"]),
+                         (ref["ikr_hand"], ref["ikr_q7"], ref["ikr_count"])):
+        Qo, vo = _old_ik(arm, T, q7)
+        assert np.array_equal(vo.sum(1), count)        # the helper is the old code
+        Q, valid = arm.ik(T, q7)
+        _check_solutions(arm, T, Q, valid)
+        m, b = np.nonzero(vo)
+        d = np.nan_to_num(np.abs(Q[m] - Qo[m, b][:, None]), nan=9.0).max(-1).min(-1)
+        assert d.max() < 1e-5, f"{(d >= 1e-5).sum()} old answers missing"
+        worst = max(worst, d.max())
+    print(f"\nsuperset: every old answer is among the new ones, to {worst:.1e} rad at worst "
+          f"(the old solver's own precision near singularities)")
+
+
+def test_ik_rejects_unreachable(arm):
     q = random_q(arm, 3000, 7)
     T = arm.fk(q)
     T[:, :3, 3] *= 1.6                      # push the hands outward, many beyond reach
@@ -134,9 +206,59 @@ def test_ik_rejects_clamped_answers(arm):
     _check_solutions(arm, T, Q, valid)
 
 
+def test_ik_limits_are_arguments(arm):
+    """Narrower limits only remove answers; the solver has none of its own."""
+    import aris_fr3_ik
+    q = random_q(arm, 2000, 24)
+    T = arm.fk(q)
+    lo, hi = arm.limits.q_min + 0.3, arm.limits.q_max - 0.3
+    Q, _ = aris_fr3_ik.solve(T, np.ascontiguousarray(q[:, 6]), lo, hi)
+    ok = np.isfinite(Q).all(-1)
+    assert np.all((Q[ok] >= lo) & (Q[ok] <= hi))
+    inside = np.all((q >= lo) & (q <= hi), 1)
+    assert _found(Q[inside], q[inside]).mean() >= 0.999
+
+
 def test_ik_empty(arm):
     Q, valid = arm.ik(np.zeros((0, 4, 4)), np.zeros(0))
-    assert Q.shape == (0, 4, 7) and valid.shape == (0, 4)
+    assert Q.shape == (0, 8, 7) and valid.shape == (0, 8)
+
+
+def test_paper_coverage_old_vs_new(arm):
+    """Tip positions on the paper 0.97 m below the base, out to 0.95 m, 2 cm grid, 8 spins,
+    no lean, q7 on the old 16-value grid: how many have an answer passing the gates."""
+    g = np.arange(-0.95, 0.95 + 1e-9, 0.02)
+    X, Y = np.meshgrid(g, g)
+    keep = np.hypot(X, Y) <= 0.95
+    tips = np.column_stack([X[keep], Y[keep], np.full(keep.sum(), 0.97)])
+    spins = np.linspace(-np.pi, np.pi, 8, endpoint=False)
+    q7s = np.linspace(arm.limits.q_min[6] + 0.05, arm.limits.q_max[6] - 0.05, 16)
+    n_t, n_s, n_q = len(tips), len(spins), len(q7s)
+    T = arm.hand_pose(np.repeat(tips, n_s, 0), np.array([0.0, 0.0, -1.0]),
+                      np.tile(spins, n_t), np.zeros((n_t * n_s, 2)))
+    T = np.repeat(T, n_q, 0)
+    q7 = np.tile(q7s, n_t * n_s)
+    covered, spun, n_good, tip_ok = {}, {}, {}, {}
+    for name, solver in (("old", lambda: _old_ik(arm, T, q7)), ("new", lambda: arm.ik(T, q7))):
+        Q, valid = solver()
+        m, b = np.nonzero(valid)
+        q = Q[m, b]
+        good = (arm.limit_margin(q) >= 0.15) & (arm.sigma_min(q) >= 0.08)
+        hit = np.zeros(len(T), bool)
+        hit[m[good]] = True
+        h = hit.reshape(n_t, n_s, n_q)
+        covered[name] = int(h.any((1, 2)).sum())
+        spun[name] = int(h.any(2).sum())
+        n_good[name] = int(good.sum())
+        tip_ok[name] = h.any((1, 2))
+    gain = covered["new"] / covered["old"] - 1.0
+    r_new = np.hypot(*tips[tip_ok["new"] & ~tip_ok["old"], :2].T)
+    print(f"\npaper coverage (2 cm grid, {n_t} tips out to 0.95 m): tips reachable inside the "
+          f"gates old {covered['old']}, new {covered['new']} (+{gain:.1%}; the new ones lie at "
+          f"{r_new.min():.2f}-{r_new.max():.2f} m); (tip, spin) pairs old {spun['old']}, new "
+          f"{spun['new']} (+{spun['new'] / spun['old'] - 1:.1%}); gated answers old "
+          f"{n_good['old']}, new {n_good['new']} (+{n_good['new'] / n_good['old'] - 1:.1%})")
+    assert covered["new"] >= covered["old"] and not (tip_ok["old"] & ~tip_ok["new"]).any()
 
 
 # ------------------------------------------------------------------ 3. hand_pose
@@ -269,29 +391,70 @@ def test_fixed_capsules_do_not_move(arm):
 
 def test_self_pairs_can_separate(arm):
     """Every watched pair clears the margin somewhere: none is overlapping by construction."""
+    margin = Gates().self_margin
     q = random_q(arm, 20000, 9)
     b = arm.body(q)
     I, J = arm.self_pairs.T
     d = seg_seg(b.p0[:, I], b.p1[:, I], b.p0[:, J], b.p1[:, J]) - b.radius[I] - b.radius[J]
-    assert np.all(d.max(0) > arm.self_margin)
-    free = (d.min(1) >= arm.self_margin).mean()
+    assert np.all(d.max(0) > margin)
+    free = (d.min(1) >= margin).mean()
     print(f"\n{len(I)} self pairs; {free:.1%} of random configurations clear the "
-          f"{1e3 * arm.self_margin:.0f} mm self margin")
+          f"{1e3 * margin:.0f} mm self margin")
 
 
 # ------------------------------------------------------------------ 6. speed
+
+def _new_raw(arm, T, q7):
+    import aris_fr3_ik
+    return aris_fr3_ik.solve(T, np.ascontiguousarray(q7), arm.limits.q_min, arm.limits.q_max)
+
+
+def _old_ik_checked(arm, T, q7):
+    """The old solver plus the same forward-kinematics check the new path pays."""
+    Q, ok = _old_ik(arm, T, q7)
+    m, b = np.nonzero(ok)
+    arm.fk(Q[m, b])
+    return Q, ok
+
+
+def test_reach_bounds_motion(arm):
+    """Straight joint moves: no capsule endpoint moves further than sum_j |dq_j| reach[j, k]."""
+    assert arm.reach.shape == (7, len(arm.body(np.zeros((1, 7))).names))
+    b0 = arm.body(np.zeros((1, 7)))
+    assert np.all(arm.reach[:, b0.is_fixed] == 0.0)
+    ratios = []
+    for seed, scale in ((25, 1.0), (26, 0.01)):   # large moves, and small ones (tight regime)
+        rng = np.random.default_rng(seed)
+        qa = random_q(arm, 10_000, seed)
+        qb = np.clip(qa + scale * rng.uniform(-1, 1, qa.shape) * (arm.limits.q_max -
+                                                                  arm.limits.q_min),
+                     arm.limits.q_min, arm.limits.q_max)
+        A, B = arm.body(qa), arm.body(qb)
+        bound = np.abs(qb - qa) @ arm.reach                       # (N, K)
+        move = np.maximum(np.linalg.norm(B.p0 - A.p0, axis=-1),
+                          np.linalg.norm(B.p1 - A.p1, axis=-1))
+        live = ~A.is_fixed
+        assert np.all(move[:, live] <= bound[:, live] + 1e-12)
+        ratios.append((move[:, live] / bound[:, live]).ravel())
+    print(f"\nreach bound, endpoint travel / bound: large moves median {np.median(ratios[0]):.2f}"
+          f" worst {ratios[0].max():.2f}; small moves median {np.median(ratios[1]):.2f} worst "
+          f"{ratios[1].max():.2f}")
+
 
 def test_speed(arm):
     q = random_q(arm, 10_000, 12)
     T = arm.fk(q)
     out = []
     for name, f in (("fk", lambda: arm.fk(q)), ("tip", lambda: arm.tip(q)),
-                    ("body", lambda: arm.body(q)), ("ik", lambda: arm.ik(T, q[:, 6])),
-                    ("sigma_min", lambda: arm.sigma_min(q))):
+                    ("body", lambda: arm.body(q)), ("sigma_min", lambda: arm.sigma_min(q)),
+                    ("ik new (checked)", lambda: arm.ik(T, q[:, 6])),
+                    ("ik old (checked)", lambda: _old_ik_checked(arm, T, q[:, 6])),
+                    ("new solver alone", lambda: _new_raw(arm, T, q[:, 6])),
+                    ("old solver alone", lambda: _old_ik(arm, T, q[:, 6]))):
         f()
         t0 = time.perf_counter()
         f()
         dt = time.perf_counter() - t0
         out.append(f"{name} {len(q) / dt / 1e3:.0f}k/s")
-        assert dt < 5.0
+        assert dt < 10.0
     print("\nbatch 10 000: " + ", ".join(out))

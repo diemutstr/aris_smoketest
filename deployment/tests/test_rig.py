@@ -109,7 +109,7 @@ def test_phase_walls_cross_on_the_centre_line(rig):
 
 def test_wall_planning_margin(rig):
     pl = rig.wall_in_base(13, rig.wall_between(13, 71), for_planning=True)
-    assert abs(pl.margin - (0.025 + 0.0065)) < 1e-15
+    assert pl.margin == 0.025 + rig.allowance["wall_m"]
 
 
 # --------------------------------------------------------------------------- 4. steel
@@ -162,7 +162,7 @@ def test_steel_per_arm_and_against_old(rig):
     new_by_name = {b.name: b for b in rig.steel}
     print("\narm  boxes(for planning)  boxes(checker)  out of reach")
     for aid in rig.arm_ids:
-        near, far = rig.steel_for(aid, 0.063)
+        near, far = rig.steel_for(aid, rig.clearance["steel_m"] + rig.allowance["steel_m"])
         obs = rig.obstacles(aid)
         obs_chk = rig.obstacles(aid, for_planning=False)
         assert len(obs.boxes) == len(near)
@@ -215,7 +215,7 @@ def test_reach_bound_covers_the_kernel_body(rig):
 
 def test_park_clearances_old_model(rig):
     print("\narm  paper(capsules)  pen tip z  self   steel(old set)  steel(new set, binding box)"
-          "  own struts")
+          "  own struts alone")
     for i, aid in enumerate(REF["arm_ids"]):
         np.testing.assert_allclose(REF["park_q"][i], rig.park_q(int(aid)), atol=0)
         print(f"{aid:3d}   {REF['park_caps_paper'][i]:.4f}   {REF['park_tip_z'][i]:.4f}   "
@@ -242,47 +242,65 @@ def test_park_clearances_kernel(rig):
         assert det.value[0] >= 0.0 and sc >= 0.0
 
 
-def _own_strut_obstacles(rig, aid):
-    """The arm's own struts, which obstacles() leaves out, as a box-only Obstacles."""
-    from aris.types import Box, Obstacles
-    T = rig.T_base_table(aid)
-    boxes = []
-    for b in rig.steel:
-        if b.name.startswith(f"strut{aid}_"):
-            Tb = T.copy()
-            Tb[:3, 3] = T[:3, :3] @ (0.5 * (b.lo_table + b.hi_table)) + T[:3, 3]
-            boxes.append(Box(b.name, Tb, 0.5 * (b.hi_table - b.lo_table), 0.050))
-    return Obstacles(boxes=tuple(boxes))
+def _split_own(obs, aid):
+    """-> (the arm's own struts, plate and clamp; everything else), as two Obstacles."""
+    from aris.types import Obstacles
+    own_names = {f"strut{aid}_wide", f"strut{aid}_narrow", f"plate{aid}", f"clamp{aid}"}
+    own = tuple(b for b in obs.boxes if b.name in own_names)
+    rest = tuple(b for b in obs.boxes if b.name not in own_names)
+    assert len(own) == 4
+    return Obstacles(boxes=own), Obstacles(rest, obs.planes, obs.capsules)
 
 
-def _without_base(body):
-    from aris.types import Body
-    keep = np.array([not n.startswith("link0") for n in body.names])
-    return Body(body.p0[:, keep], body.p1[:, keep], body.radius[keep],
-                tuple(n for n, k in zip(body.names, keep) if k), body.is_pen[keep])
-
-
-def test_own_struts_left_out(rig):
-    """What leaving an arm's own struts out costs: the parks clear them, and random
-    configurations that are otherwise fine almost never come near them."""
+def test_own_hardware(rig):
+    """The arm's own struts, plate and clamp are obstacles for it (its fixed base capsules are
+    not checked).  Parks keep the demanded clearance to them; count the random configurations
+    that are otherwise fine and still come too close."""
     from aris.kernel.collide import clearance, self_clearance
     rng = np.random.default_rng(11)
-    print("\narm  park vs own struts (no base capsules)  random configs within 0.050 of them")
+    print("\narm  park vs own hardware (beyond 0.050)  random configs too close / otherwise fine")
     for aid in rig.arm_ids:
-        arm, own = rig.arm(aid), _own_strut_obstacles(rig, aid)
-        park = clearance(_without_base(arm.body(rig.park_q(aid)[None, :])), own, prune=False)[0]
+        arm = rig.arm(aid)
+        own, rest = _split_own(rig.obstacles(aid, for_planning=False), aid)
+        park = clearance(arm.body(rig.park_q(aid)[None, :]), own, prune=False)[0]
         lim = arm.limits
         body = arm.body(rng.uniform(lim.q_min, lim.q_max, size=(10_000, 7)))
         ok = self_clearance(body, arm.self_pairs, rig.self_margin()) >= 0.0
-        ok &= clearance(body, rig.obstacles(aid, for_planning=False)) >= 0.0
-        hit = clearance(_without_base(body), own) < 0.0
+        ok &= clearance(body, rest) >= 0.0
+        hit = clearance(body, own) < 0.0
         print(f"{aid:3d}  {park:+.4f}   {int((hit & ok).sum())} of {int(ok.sum())}")
         assert park >= 0.0
 
 
+def test_link1_against_own_struts_over_q1(rig):
+    """Link 1 turns with q1 alone, 35 mm under the struts' bottom ends.  It keeps the demanded
+    clearance at every q1, but not the planning allowance on part of the q1 range."""
+    from aris.kernel.collide import capsule_clearance
+    arm = rig.arm(31)
+    own, _ = _split_own(rig.obstacles(31, for_planning=False), 31)
+    q = np.zeros((721, 7))
+    q[:, 0] = np.linspace(arm.limits.q_min[0], arm.limits.q_max[0], 721)
+    body = arm.body(q)
+    k = [i for i, n in enumerate(body.names) if n.startswith("link1")]
+    v = capsule_clearance(body, own, prune=False)[:, k].min(axis=1)
+    short = float((v < rig.allowance["steel_m"]).mean())
+    print(f"\nlink1 vs own struts over q1, beyond 0.050: {v.min():+.4f} .. {v.max():+.4f}; "
+          f"short of the {rig.allowance['steel_m']} planning allowance on {100 * short:.0f} % "
+          "of the q1 range")
+    assert v.min() >= 0.0
+    # room under the strut ends, surface to steel, at every q1
+    print(f"link1 room under its own struts: {0.050 + v.min():.4f} .. {0.050 + v.max():.4f} m")
+
+
+def test_gates(rig):
+    g = rig.gates()
+    assert abs(g.self_margin - 0.023) < 1e-15
+
+
 def test_parked_arm_capsules(rig):
     obs = rig.obstacles(13, parked=(17,), walls=(rig.wall_between(13, 71),))
-    assert len(obs.capsules) > 0 and all(c.margin == 0.063 for c in obs.capsules)
+    m = 0.050 + rig.allowance["arm_to_arm_m"]
+    assert len(obs.capsules) > 0 and all(c.margin == m for c in obs.capsules)
     assert [p.kind for p in obs.planes] == ["paper", "wall"]
     # the parked capsules sit where arm 17's own body is, seen from arm 13
     body = rig.arm(17).body(rig.park_q(17)[None, :])
@@ -374,3 +392,39 @@ def test_config_only_read_by_rig():
     offenders = [p for p in pkg.rglob("*.py")
                  if p.name != "rig.py" and "rig.json" in p.read_text()]
     assert offenders == []
+
+
+# --------------------------------------------------------------------------- phases
+
+
+def test_phases(rig):
+    for n, active, pairs in [(1, (13, 71, 2), {(13, 71), (71, 2)}),
+                             (2, (17, 31, 97), {(17, 31), (31, 97)})]:
+        ph = rig.phase(n)
+        assert ph.active == active
+        assert set(ph.parked) == set(rig.arm_ids) - set(active)
+        assert {w.arms for w in ph.walls} == pairs
+    print("\narm  phase  parked arms it sees  walls")
+    for n in (1, 2):
+        ph = rig.phase(n)
+        for aid in ph.active:
+            obs = rig.obstacles_for(aid, ph)
+            seen = sorted({int(c.name[6:].split(":")[0]) for c in obs.capsules})
+            walls = [p.name for p in obs.planes if p.kind == "wall"]
+            print(f"{aid:3d}  {n}  {seen}  {walls}")
+            assert rig.row_partner(aid) in seen
+            assert all(aid in map(int, w.split("_")[1:]) for w in walls)
+            assert len(walls) == (2 if aid in (71, 31) else 1)
+    with pytest.raises(ValueError):
+        rig.obstacles_for(17, rig.phase(1))
+
+
+def test_obstacles_for_matches_obstacles(rig):
+    ph = rig.phase(1)
+    a = rig.obstacles_for(71, ph, for_planning=False)
+    seen = tuple(p for p in ph.parked
+                 if any(c.name.startswith(f"parked{p}:") for c in a.capsules))
+    assert 31 in seen
+    b = rig.obstacles(71, parked=seen, walls=tuple(ph.walls), for_planning=False)
+    assert [c.name for c in a.capsules] == [c.name for c in b.capsules]
+    assert [p.name for p in a.planes] == [p.name for p in b.planes]

@@ -12,7 +12,7 @@ Writes tests/data/rig_reference.npz:
                                     paper (chain centres and capsule surfaces), pen tip height,
                                     self, and steel (old static set, and the NEW steel set read
                                     from config/rig.json, each box scored separately; and the
-                                    arm's own struts, which the rig leaves out, on their own)
+                                    arm's own struts on their own)
   reach_sampled                     the furthest any old body capsule surface got from the
                                     shoulder over random configurations
 """
@@ -52,11 +52,8 @@ class _Shim:
 
 
 def _new_steel_canvas(rig, arm_id, own_struts=False):
-    """The new steel as the rig hands it to `arm_id`, or only that arm's own struts."""
-    if own_struts:
-        keep = [b for b in rig.steel if b.name.startswith(f"strut{arm_id}_")]
-    else:
-        keep = [b for b in rig.steel if arm_id not in b.not_for]
+    """All the new steel (the rig's own set, before its reach cut), or only that arm's struts."""
+    keep = [b for b in rig.steel if not own_struts or b.name.startswith(f"strut{arm_id}_")]
     return [dict(name=b.name, lo=b.lo_table + SHIFT, hi=b.hi_table + SHIFT) for b in keep]
 
 

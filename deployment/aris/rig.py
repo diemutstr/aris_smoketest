@@ -15,16 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from aris.kernel.arm import Arm, default_tool
-from aris.types import Box, Capsule, Line, Obstacles, Plane
-
-
-@dataclass(frozen=True)
-class Wall:
-    """A vertical plane in the table frame, between two arms."""
-    name: str
-    arms: tuple[int, int]
-    point_table: np.ndarray            # (3,) a point on the wall, on the paper
-    normal_table: np.ndarray           # (3,) unit, horizontal, pointing from arms[0] to arms[1]
+from aris.types import Box, Capsule, Gates, Line, Obstacles, Phase, Plane, Wall
 
 
 @dataclass(frozen=True)
@@ -34,7 +25,6 @@ class SteelBox:
     lo_table: np.ndarray               # (3,)
     hi_table: np.ndarray               # (3,)
     source: str
-    not_for: tuple[int, ...] = ()      # arms bolted to it, for which it is not an obstacle
 
 
 @dataclass(frozen=True)
@@ -81,24 +71,22 @@ def _hanger_boxes(arm_id: int, axis_xy: np.ndarray, side: str, h: dict) -> list[
                             h["strut_size_x_m"], h["strut_size_y_m"])
     z0, z1 = h["strut_bottom_z_m"], h["strut_top_z_m"]
 
-    def box(name, x_a, x_b, half_y, za, zb, src, not_for=()):
+    def box(name, x_a, x_b, half_y, za, zb, src):
         return SteelBox(name, np.array([min(x_a, x_b), ay - half_y, za]),
-                        np.array([max(x_a, x_b), ay + half_y, zb]), src, not_for)
+                        np.array([max(x_a, x_b), ay + half_y, zb]), src)
 
     pc = ax + s * h["plate_centre_toward_wide_side_m"]
-    own = (arm_id,)
-    own_strut = own if "strut" in h["own_arm_skips"] else ()
     return [
         box(f"strut{arm_id}_wide", ax + s * wide, ax + s * (wide - sx), sy / 2, z0, z1,
-            h["strut_source"] + f" Wide (0.240) side assumed toward table {side}.", own_strut),
+            h["strut_source"] + f" Wide (0.240) side assumed toward table {side}."),
         box(f"strut{arm_id}_narrow", ax - s * narrow, ax - s * (narrow - sx), sy / 2, z0, z1,
-            h["strut_source"], own_strut),
+            h["strut_source"]),
         box(f"plate{arm_id}", pc - h["plate_size_x_m"] / 2, pc + h["plate_size_x_m"] / 2,
             h["plate_size_y_m"] / 2, h["plate_bottom_z_m"], h["plate_top_z_m"],
-            h["plate_source"], own if "plate" in h["own_arm_skips"] else ()),
+            h["plate_source"]),
         box(f"clamp{arm_id}", pc - h["clamp_size_x_m"] / 2, pc + h["clamp_size_x_m"] / 2,
             h["clamp_size_y_m"] / 2, h["clamp_bottom_z_m"], h["clamp_top_z_m"],
-            h["clamp_source"], own if "clamp" in h["own_arm_skips"] else ()),
+            h["clamp_source"]),
     ]
 
 
@@ -116,6 +104,7 @@ class Rig:
     body_reach: float                  # from the shoulder, see rig.json "reach"
     rows: tuple[tuple[int, int], ...]
     leader_sets: dict                  # phase -> tuple of arm ids
+    wall_pairs: dict                   # phase -> tuple of (arm, arm) with a wall between them
     canvas_size: np.ndarray            # (2,)
     table_size: np.ndarray             # (2,)
     paper_z: float
@@ -150,6 +139,8 @@ class Rig:
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
             rows=tuple(tuple(int(i) for i in r) for r in rp["rows"]),
             leader_sets={int(k): tuple(int(i) for i in v) for k, v in rp["leaders"].items()},
+            wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v)
+                        for k, v in rp["walls"].items()},
             canvas_size=np.array([cfg["canvas"]["size_x_m"], cfg["canvas"]["size_y_m"]]),
             table_size=np.array([cfg["table"]["size_x_m"], cfg["table"]["size_y_m"]]),
             paper_z=float(cfg["table"]["paper_surface_z_m"]),
@@ -218,6 +209,11 @@ class Rig:
     def self_margin(self, for_planning: bool = False) -> float:
         return self.clearance["self_m"] + (self.allowance["self_m"] if for_planning else 0.0)
 
+    def gates(self) -> Gates:
+        """The planners' gates, with the self clearance taken from rig.json (demanded plus the
+        planning allowance).  Joint-limit margin and sigma_min are not rig facts: defaults."""
+        return Gates(self_margin=self.self_margin(for_planning=True))
+
     # ------------------------------------------------------------------ walls
 
     def wall_between(self, arm_a: int, arm_b: int) -> Wall:
@@ -253,8 +249,6 @@ class Rig:
         s = self.shoulder_table(arm_id)
         near, far = [], []
         for b in self.steel:
-            if arm_id in b.not_for:
-                continue
             d = _point_box_distance(s, b.lo_table, b.hi_table)
             (far if d > self.body_reach + margin else near).append(b)
         return near, far
@@ -295,6 +289,38 @@ class Rig:
             raise ValueError(f"no phase {phase}; phases with fixed leaders are "
                              f"{tuple(self.leader_sets)}")
         return self.leader_sets[phase]
+
+    def phase(self, n: int) -> Phase:
+        """Phase n: the leaders move, the other three stand parked, walls between the leaders
+        that can reach each other."""
+        active = self.leaders(n)
+        parked = tuple(a for a in self.arm_ids if a not in active)
+        walls = tuple(self.wall_between(a, b) for a, b in self.wall_pairs[n])
+        return Phase(f"phase {n}", active, parked, walls)
+
+    def _parked_in_reach(self, arm_id: int, parked_id: int, margin: float) -> bool:
+        """Can any part of `arm_id` come within `margin` of `parked_id` standing parked?"""
+        caps = self.parked_capsules(arm_id, parked_id)
+        s = np.array([0.0, 0.0, self.shoulder_below_base])      # shoulder, base frame
+        for c in caps:
+            d = c.p1 - c.p0
+            t = np.clip((s - c.p0) @ d / max(d @ d, 1e-18), 0.0, 1.0)
+            if np.linalg.norm(c.p0 + t * d - s) - c.radius <= self.body_reach + margin:
+                return True
+        return False
+
+    def obstacles_for(self, arm_id: int, phase: Phase, for_planning: bool = True) -> Obstacles:
+        """`obstacles` for an arm that moves in `phase`: its parked row partner, any other parked
+        arm it can reach, and the walls it stands next to."""
+        if arm_id not in phase.active:
+            raise ValueError(f"arm {arm_id} does not move in {phase.name}")
+        m = self.clearance["arm_to_arm_m"] + (self.allowance["arm_to_arm_m"] if for_planning
+                                              else 0.0)
+        partner = self.row_partner(arm_id)
+        parked = tuple(p for p in phase.parked
+                       if p == partner or self._parked_in_reach(arm_id, p, m))
+        walls = tuple(w for w in phase.walls if arm_id in w.arms)
+        return self.obstacles(arm_id, parked, walls, for_planning)
 
     def row_partner(self, arm_id: int) -> int:
         for a, b in self.rows:

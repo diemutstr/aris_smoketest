@@ -17,7 +17,10 @@ comes from here.
 | `to_base(a, line)`, `to_table(a, points)` | lines and points moved between the frames |
 | `paper(a)` | the paper as a plane in `a`'s base frame, free side up |
 | `wall_between(a, b)`, `wall_in_base(a, wall)` | a wall in the table frame, and as a plane for one arm |
+| `phase(n)` | phase 1 or 2: the leaders move, the other three stand parked, walls 13-71 and 71-2 (phase 1) or 17-31 and 31-97 (phase 2) |
+| `obstacles_for(a, phase)` | `obstacles` for a moving arm, with the parked arms it can reach (always its row partner) and the walls it stands next to |
 | `obstacles(a, parked=(), walls=(), for_planning=True)` | everything `a` must stay clear of |
+| `gates()` | the planners' `Gates`, with the self margin from `rig.json` (0.020 + 0.003) |
 | `leaders(phase)`, `row_partner(a)` | (13, 71, 2) in phase 1, (17, 31, 97) in phase 2; 13-17, 31-71, 2-97 |
 
 ## Frames
@@ -73,11 +76,12 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 | seam bars | 2, beside the table at y = 0, from the table top to the runway | old model, "representative, not measured" (Pete, 2026-09-14) |
 | perimeter rails and corner legs | 4 + 4 | old model (rails from the drawing, legs assumed) |
 
-An arm does not see its own plate and clamp (it is bolted to them). It does not see its own
-struts either, for now (see below). It also skips any box further from its shoulder than
+An arm's own struts, plate and clamp are obstacles for it like any other steel. Its base (the
+arm model's link0 capsules) sits among them, but those capsules are marked fixed and the
+collision check leaves them out, because they cannot move. An arm skips any box further from its shoulder than
 **1.20 m + the steel clearance**: 1.20 m is how far any part of the arm, hand, holder and pen can
 get from the shoulder. That is a bound from the link lengths, checked by sampling: 1.079 m with
-the old body model and 1.028 m with the new one. Each arm keeps 12 to 19 boxes.
+the old body model and 1.028 m with the new one. Each arm keeps 16 to 23 boxes.
 
 **Compared with the old `spec.static_obstacles()`.** The seam bars are identical. The old set had
 each neighbour's plate as a 0.226 x 0.190 x 0.050 block centred on the axis. It is now the
@@ -100,27 +104,41 @@ last column comes from the new kernel and is measured beyond each obstacle's dem
 
 | arm | paper (body) | pen tip height | self | new steel, old body model | everything, new kernel, beyond the margin |
 |---|---|---|---|---|---|
-| 13 | 0.250 | 0.300 | 0.123 | 0.345 | +0.143 |
-| 17 | 0.250 | 0.300 | 0.153 | 0.388 | +0.189 |
-| 31 | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.079 (seam bar W) |
-| 71 | 0.150 | 0.200 | 0.133 | 0.224 | +0.180 (against the paper) |
-| 2 | 0.250 | 0.300 | 0.124 | 0.345 | +0.143 |
-| 97 | 0.250 | 0.300 | 0.114 | 0.364 | +0.189 |
+| 13 | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.018 (link 1, own narrow strut) |
+| 17 | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.018 (same) |
+| 31 | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.014 (same) |
+| 71 | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.012 (same) |
+| 2 | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.015 (same) |
+| 97 | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.015 (same) |
+
+Every park keeps the demanded clearances. What binds is link 1, the first moving link. It turns
+with joint 1 alone and passes under the bottom ends of the arm's own struts. At every angle of
+joint 1 it has 62 to 71 mm of room there, which is 12 to 21 mm beyond the 0.050 demanded. That is
+also more than the 0.003 planning allowance.
+
+In `obstacles_for`, an arm sees these parked arms and walls:
+
+| phase | arm: parked arms it sees; walls |
+|---|---|
+| 1 | 13: 17, 31; 13-71 · 71: 17, 31, 97; 13-71, 71-2 · 2: 31, 97; 71-2 |
+| 2 | 17: 13, 71; 17-31 · 31: 2, 13, 71; 17-31, 31-97 · 97: 2, 71; 31-97 |
 
 ## Clearances
 
 These are demanded by the checker and kept as the old gates. The planning allowance is a
 separate number, added when `for_planning=True`, so that the checker is a second opinion and not
-a coin toss.
+a coin toss. The old code's allowance was 0.013, but that paid for the old checker's sampling
+error. The new distances are exact, and both the planner and the checker bound the motion between
+samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
 
 | against | demanded | planning allowance |
 |---|---|---|
-| steel | 0.050 | 0.013 |
-| another arm (parked) | 0.050 | 0.013 (chosen here: a parked arm is as still as steel) |
-| a wall | 0.025 | 0.0065 (chosen here: half, because both arms pay it) |
+| steel | 0.050 | 0.003 |
+| another arm (parked) | 0.050 | 0.003 (a parked arm is as still as steel) |
+| a wall | 0.025 | 0.0015 (half, because both arms pay it) |
 | paper, arm body | 0.020 | 0 |
 | paper, lifted pen | 0.003 | 0 |
-| itself | 0.020 | 0.003 (`rig.self_margin()`) |
+| itself | 0.020 | 0.003 (`rig.self_margin()`, `rig.gates()`) |
 
 ## Calibration file
 
@@ -145,12 +163,9 @@ changes arm 31's pose and its paper plane, and nothing else (walls, steel, other
 - The strut heights, the plate, the clamp, the runways, rails and legs are the old drawing-based
   model. The seam bars are "representative", and the corner legs were assumed in the old model.
 - The plate sits centred between the struts. That is inferred from its size, not seen.
-- **An arm's own struts are left out of its obstacles.** The new arm model's base capsules
-  (link0, radius up to 0.177, reaching 0.238 above the mount plane) sit inside them, so every
-  configuration would read as a collision. Without the base capsules the parks clear their own
-  struts by 12 to 18 mm beyond the 0.050. But about 1 % of random configurations that are
-  otherwise fine come within 0.050 of them. Fix: let the collision check skip the base capsules,
-  then remove `"strut"` from `hanger.own_arm_skips` in `rig.json`.
-- The arm-to-arm and wall planning allowances were chosen here, not carried over from the old code.
+- **How far the hanging struts reach below the mounting plate is not measured.** The old model
+  says 35 mm. With that, link 1 passes under the strut ends with 62 to 71 mm of room at every
+  angle of joint 1, against the 50 mm demanded. Pete will measure it. If the struts reach 12 mm
+  or more further down, link 1 no longer keeps the demanded clearance at some angles of joint 1.
 - The park configurations are the old home parks. They were not searched for the new phase
   scheme.

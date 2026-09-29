@@ -7,7 +7,8 @@ arms are identical, so one `Arm` object serves all of them. It works in the arm'
 frame and knows nothing about the table, the paper or the other arms.
 
 Files: `aris/kernel/arm.py` (the `Arm` class), `aris/kernel/fr3.py` (the robot's numbers),
-`aris/kernel/tool.py` (the pen holder, `default_tool()`).
+`aris/kernel/tool.py` (the pen holder, `default_tool()`), and the IK solver
+`native/fr3_ik/` (C++, installed with `../.venv/bin/pip install ./native/fr3_ik`).
 
 ## Calls
 
@@ -19,8 +20,9 @@ Files: `aris/kernel/arm.py` (the `Arm` class), `aris/kernel/fr3.py` (the robot's
 | `tip(Q)`, `pen_axis(Q)` | joints | pen tip (N,3); unit vector along the pen, out of the tip (N,3) |
 | `link_frames(Q)` | joints | all ten frames (N,10,4,4) |
 | `body(Q)` | joints | `Body`: 40 capsules per configuration |
-| `self_pairs`, `self_margin` | | which capsule pairs to check against each other (366 pairs), and 0.023 m |
-| `ik(T_base_hand, q7)` | poses (M,4,4), joint-7 angle (M,) | joints (M,4,7) and valid (M,4) |
+| `self_pairs` | | which capsule pairs to check against each other (366 pairs); the margin is the rig's (`Gates.self_margin`) |
+| `reach` | | (7,40): how far each capsule can be from each joint's axis, for bounding motion between samples |
+| `ik(T_base_hand, q7, with_flags=False)` | poses (M,4,4), joint-7 angle (M,) | joints (M,8,7), valid (M,8), and flags if asked |
 | `hand_pose(tip, normal, spin, lean)` | tips (M,3), paper normal (3,), spin (M,), lean (M,2) | hand poses (M,4,4) |
 | `sigma_min(Q)`, `tip_jacobian(Q)` | joints | smallest singular value of the tip Jacobian (N,); the Jacobian (N,3,7) |
 | `limit_margin(Q)` | joints | radians to the nearest joint limit (N,) |
@@ -77,6 +79,11 @@ contains the holder. So the hand, the blades and the holder were refitted with t
 (`tests/oracle/fit_arm_capsules.py`) on the meshes of the real build in
 `assets/system_model/meshes`.
 
+`reach[j, k]` bounds, over all configurations, the distance of any point of capsule k (radius
+included) from joint j's axis; turning the joints by dq moves the capsule by at most
+sum_j reach[j, k] |dq_j|. Exact for capsules fixed to the frame the joint turns; the triangle
+inequality along the chain further down.
+
 Self pairs: two bodies are checked against each other only if they are at least four joints
 apart (the hand, blades and tool count as one body at the end of the chain). Closer bodies meet
 at a joint and their capsules overlap in every configuration; the old code used the same rule.
@@ -92,41 +99,47 @@ on every joint: libfranka `rate_limiting.h`; 10 rad/s^2 is also the driver's gat
 
 ## Inverse kinematics
 
-The vendored analytic solver (`third_party/franka_analytical_ik`, He et al.) returns four
-branches per pose and joint-7 angle. Slot b is always the solver's branch b. Each answer is
-kept only if it is inside the FR3 limits and our own forward kinematics puts the hand on the
-requested pose to 1e-9 m; the solver clamps at the edge of the workspace and returns answers
-that miss by centimetres, and those are rejected.
+With joint 7 fixed, the hand pose fixes the wrist centre. The distance from the shoulder to the
+wrist fixes the elbow angle (two roots); the forearm must then lie on a cone around the
+shoulder-to-wrist line and square to joint 6's axis (two roots); and the upper arm can be
+reached two ways from the base (two roots). So there are up to 8 answers, returned in 8 slots;
+slot b always means the same root, so the same slot is the same arm shape from pose to pose.
+Joint limits are passed in. Every answer is checked by our own forward kinematics and kept
+only if it puts the hand on the pose to 1e-7 m (answers land at 1e-15; none has fallen between
+1e-9 and 1e-7). Where the pose is truly singular the answer is flagged instead of dropped: flag 1
+means joint 2 is exactly 0, where joints 1 and 3 turn about the same axis and only their sum is
+fixed; one member of that family is returned. Very close to that point (joint 2 about 1e-8) joints
+1 and 3 are ill-conditioned and come back to about 1e-5 rad, their sum exact.
 
-**What it cannot do.** The solver has the Panda's limits built in and computes only one of the
-two elbow angles, so it never returns:
-- joint 6 above 3.7525 rad (the FR3 allows up to 4.5169): a fifth of joint 6's range
-- joint 7 beyond ±2.8973, joint 2 beyond ±1.7628, joint 3 beyond ±2.8973 (FR3: ±3.0159, ±1.7837, ±2.9007)
-- an almost straight elbow, joint 4 above -0.467 rad (the second root)
-- joint 2 within about 0.045 rad of zero (it treats that as the shoulder singularity)
+**What was wrong with the old solver** (the vendored `franka_analytical_ik`, which the old code
+keeps using): it had the Panda's limits built in, so it never returned joint 6 above 3.7525 (a
+fifth of the FR3's joint-6 range), |joint 7| above 2.8973, |joint 2| above 1.7628 or |joint 3| above
+2.8973; it computed only one of the two elbow roots, so it never returned an almost straight
+elbow (joint 4 above -0.467); and it replaced every configuration with joint 2 within 0.045 rad of
+zero by a made-up one that misses the pose. Of random configurations only 66 % came back from
+their own pose; of drawing configurations only 57 %, and 26 % of drawing poses got no answer at all.
 
-Measured: of random configurations inside the FR3 limits, only 66 % are found again from their
-own hand pose, and 21 % of those poses get no answer at all. Of configurations that hold a pen
-on a paper 0.97 m below the base (hand within 15 degrees of vertical, 0.15 rad from every limit),
-58 % are found again and 26 % of the poses get no answer; nine in ten of the misses have joint 6
-above 3.7525. The old planner had the same blind spots. Fixing them means changing the solver.
-
-About 0.1 % of genuine answers, near singularities, reproduce the pose only to between 1e-9 and
-1e-6 and are dropped by the 1e-9 check (the old code did the same); clamped answers miss by
-1e-4 or more.
+**What that buys on the paper.** Tips on a 2 cm grid on the paper 0.97 m below the base out to
+0.95 m, 8 spins, no lean, joint 7 on the old 16-value grid, gates 0.15 rad and sigma_min 0.08:
+tips with at least one usable answer 4724 old, 4786 new (+1.3 %, new ones both right under the
+base and at the rim); (tip, spin) pairs 28 082 against 29 973 (+6.7 %); usable answers 125 816
+against 204 605 (+63 %). Reach barely grows; what grows is the choice at each point, which is
+what the local planner searches.
 
 ## Measured (tests/test_kernel_arm.py)
 
 | test | result |
 |---|---|
 | hand, tip, all link frames vs old code, 10 000 random configurations | worst 4.4e-16 m |
-| IK on 10 000 reachable poses | 19 865 solutions, same count per pose as the old code, same solutions in the same order; worst pose error 9.9e-10 m; all inside the limits |
-| IK on 10 000 random poses in a 2 m cube | 971 solutions, count per pose equal to the old code |
-| `hand_pose` -> `ik` -> `tip`, lean up to 15 degrees | worst tip error 1.4e-11 m over 9 062 solutions |
+| IK round trip, 100 000 random configurations | original found for 100.000 % (old solver 66.4 %); 3.02 answers per pose (old 1.97); worst pose error 2.4e-15 |
+| IK round trip, 2 000 drawing configurations | 100 % (old 56.8 %); poses with no answer 0 % (old 26.3 %) |
+| every old answer among the new ones (20 000 reference poses) | yes, to 1.3e-6 rad (the old solver's own precision near singularities) |
+| `hand_pose` -> `ik` -> `tip`, lean up to 15 degrees | worst tip error 5.9e-16 m over 12 327 solutions |
+| `reach` bound on capsule travel, 10 000 random moves | never exceeded; travel / bound median 0.25, worst 0.75 (small moves 0.29, 0.76) |
 | `sigma_min`, `limit_margin` vs old code | 4.7e-16, exact |
 | mesh vertices outside their capsules (worst, mm; negative is inside) | link0 -0.14, link1 -0.88, link2 -0.34, link3 -0.35, link4 -3.31, link5 -0.00, link6 -0.14, link7 -1.42, hand -0.73, blades -0.22 / -0.44, holder -0.09, pen 0.00 (the tip, by design), pencil tail -1.50 |
 | self pairs | 366; none is overlapping in every configuration; 86 % of random configurations clear 23 mm |
-| speed, one core, batch 10 000 | fk 1.06 M/s, tip 1.13 M/s, body 0.32 M/s, ik 0.21 M poses/s, sigma_min 0.31 M/s |
+| speed, one core, batch 10 000 | fk 1.4 M/s, tip 1.36 M/s, body 0.40 M/s, sigma_min 0.42 M/s; IK solver alone new 1.13 M poses/s against old 0.75 M; `ik` with the check 0.16 M/s (it checks 3 answers per pose, the old path 2: 0.24 M/s) |
 
 Regenerate the reference data with
 `ARIS_RIG=proposed ARIS_TOOL=lateral ../.venv/bin/python tests/oracle/make_arm_reference.py`.

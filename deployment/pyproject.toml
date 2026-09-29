@@ -7,7 +7,8 @@ name = "aris"
 version = "0.1.0"
 description = "Planner, drawing server and calibration for the six-arm drawing rig"
 requires-python = ">=3.10"
-dependencies = ["numpy", "scipy"]
+# aris_fr3_ik and aris_collide_native are built from native/ (pip install ./native/fr3_ik ...)
+dependencies = ["numpy", "scipy", "aris_fr3_ik"]
 
 [project.optional-dependencies]
 check = ["drake"]

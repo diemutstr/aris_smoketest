@@ -100,6 +100,3 @@ CHAIN_POS = dict(link0=0, link1=1, link2=2, link3=3, link4=4, link5=5, link6=6, 
 # Two bodies fewer than this many joints apart are held apart by the mechanism (they meet at
 # a joint and their capsules overlap in every configuration); old selfcoll.WATCH_CHAIN_D.
 SELF_CHAIN_GAP = 4
-# Clearance the arm owes itself when planning: 20 mm of metal plus 3 mm the old checker's
-# sampling needed (old selfcoll.SELF_PLAN_MARGIN; same number as types.Gates.self_margin).
-SELF_MARGIN = 0.023

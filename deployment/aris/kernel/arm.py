@@ -16,16 +16,16 @@ from aris.kernel.tool import default_tool
 from aris.types import Body, Limits, Tool
 
 try:
-    from franka_analytical_ik import _franka_ik
+    import aris_fr3_ik
 except ImportError as e:        # an installation fault, not a refusal
-    raise ImportError("the analytic IK is not installed; run "
-                      "`.venv/bin/pip install ./third_party/franka_analytical_ik`") from e
+    raise ImportError("the FR3 IK is not installed; from deployment/ run "
+                      "`../.venv/bin/pip install ./native/fr3_ik`") from e
 
 __all__ = ["Arm", "default_tool"]
 
-N_BRANCH = 4            # branches the analytic solver returns per (pose, q7)
-IK_TOL = 1e-9           # m, and Frobenius norm on the rotation: genuine solutions land ~1e-12
-IK_SEED = np.zeros(7)   # the solver reads only seed[0], and only at the shoulder singularity
+N_BRANCH = aris_fr3_ik.N_SOL   # 8: two elbow roots x two forearm roots x two shoulder roots
+IK_TOL = 1e-7           # m, and Frobenius norm on the rotation; answers land within ~1e-9,
+                        # near singularities within 1e-6; a wrong answer misses by far more
 
 
 class Arm:
@@ -51,7 +51,7 @@ class Arm:
         self.self_pairs = np.array(
             [(i, j) for i in range(len(rows)) for j in range(i + 1, len(rows))
              if abs(pos[i] - pos[j]) >= fr3.SELF_CHAIN_GAP], int).reshape(-1, 2)
-        self.self_margin = fr3.SELF_MARGIN
+        self.reach = _joint_reach(self._cap_frame, self._cap_a, self._cap_b, self._radius)
 
     # ------------------------------------------------------------ forward kinematics
 
@@ -119,37 +119,32 @@ class Arm:
 
     # ------------------------------------------------------------ inverse kinematics
 
-    def ik(self, T_base_hand, q7):
+    def ik(self, T_base_hand, q7, with_flags=False):
         """All analytic solutions for each (hand pose, joint-7 angle).
 
-        (M,4,4), (M,) -> Q (M,4,7), valid (M,4).  Slot b is always the solver's branch b, so
-        the same slot means the same arm shape from one pose to the next.  A slot is valid
-        only if the solution lies inside the FR3 limits and our own forward kinematics puts
-        the hand on the requested pose to IK_TOL; invalid slots are NaN.  The solver clamps
-        at the edge of the workspace instead of failing, which is why every answer is checked.
-
-        What the solver cannot return (measured, see docs/modules/kernel_arm.md): anything
-        outside the PANDA limits it has built in (q6 above 3.7525, |q7| above 2.8973, |q2|
-        above 1.7628, |q3| above 2.8973), the second elbow root (q4 above -0.467, the almost
-        straight elbow), and configurations with q2 within about 0.045 rad of zero.
+        (M,4,4), (M,) -> Q (M,8,7), valid (M,8); with `with_flags`, also flags (M,8).
+        Slot b is always the same root (elbow root, forearm root, shoulder branch), so the same
+        slot means the same arm shape from one pose to the next.  A slot is valid only if the
+        answer lies inside `limits` and our own forward kinematics puts the hand on the pose
+        to IK_TOL; invalid slots are NaN.  A nonzero flag marks a degenerate answer: 1 means
+        q2 = 0, where only q1 + q3 is fixed and one member of that family is returned (see
+        native/fr3_ik/src/fr3_ik.hpp for 2 and 4).
         """
-        T = np.asarray(T_base_hand, float).reshape(-1, 4, 4)
-        q7 = np.broadcast_to(np.asarray(q7, float), (len(T),))
+        T = np.ascontiguousarray(np.asarray(T_base_hand, float).reshape(-1, 4, 4))
+        q7 = np.ascontiguousarray(np.broadcast_to(np.asarray(q7, float), (len(T),)))
         if not len(T):
-            return np.zeros((0, N_BRANCH, 7)), np.zeros((0, N_BRANCH), bool)
-        T_tcp = T.copy()
-        T_tcp[:, :3, 3] += fr3.D_HAND_TCP * T[:, :3, 2]
-        flat = np.ascontiguousarray(T_tcp.transpose(0, 2, 1)).reshape(-1, 16)   # column-major
-        raw = _franka_ik.solve_batch(flat, np.ascontiguousarray(q7), IK_SEED, IK_TOL, IK_TOL)
+            out = np.zeros((0, N_BRANCH, 7)), np.zeros((0, N_BRANCH), bool)
+            return out + (np.zeros((0, N_BRANCH), np.uint8),) if with_flags else out
+        raw, flags = aris_fr3_ik.solve(T, q7, self.limits.q_min, self.limits.q_max)
         ok = np.all(np.isfinite(raw), axis=-1)
-        ok &= np.all((raw >= fr3.Q_MIN) & (raw <= fr3.Q_MAX), axis=-1)
         m, b = np.nonzero(ok)
         if len(m):
             R, p = self._frames(raw[m, b])
             pos_err = np.linalg.norm(p[:, 9] - T[m, :3, 3], axis=1)
             rot_err = np.linalg.norm(R[:, 9] - T[m, :3, :3], axis=(1, 2))
             ok[m, b] = (pos_err <= IK_TOL) & (rot_err <= IK_TOL)
-        return np.where(ok[..., None], raw, np.nan), ok
+        Q = np.where(ok[..., None], raw, np.nan)
+        return (Q, ok, np.where(ok, flags, 0).astype(np.uint8)) if with_flags else (Q, ok)
 
     def hand_pose(self, tip_base, normal_base, spin, lean) -> np.ndarray:
         """The hand pose that puts the pen tip on `tip_base`.  -> T_base_hand (M,4,4).
@@ -201,6 +196,40 @@ class Arm:
         """(N,7) -> (N,) radians to the nearest joint position limit (negative: outside)."""
         Q = np.asarray(Q, float).reshape(-1, 7)
         return np.min(np.minimum(Q - fr3.Q_MIN, fr3.Q_MAX - Q), axis=1)
+
+
+def _joint_reach(frame, a, b, radius):
+    """(7, K): for joint j and capsule k, an upper bound over all configurations on the
+    distance of any point of the capsule (radius included) from joint j's axis; 0 if joint j
+    does not move the capsule.  Turning the joints by dq moves any point of capsule k along a
+    path no longer than  sum_j reach[j, k] |dq_j|.
+
+    Joint j turns frame j+1 about its own z axis.  A capsule rigidly fixed to frame j+1 has an
+    exact distance: its endpoints' distance from that z axis (for the last joint the flange and
+    hand frames are rigid to link7 too).  Further down the chain the bound is the triangle
+    inequality: the sideways part of the first link offset, plus the length of every further
+    offset, plus the endpoint's distance from its own frame's origin.
+    """
+    c, s = np.cos(fr3.HAND_TWIST), np.sin(fr3.HAND_TWIST)
+    to7 = {8: (np.eye(3), np.array([0.0, 0.0, fr3.D_FLANGE])),
+           9: (np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]),
+               np.array([0.0, 0.0, fr3.D_FLANGE]))}
+    reach = np.zeros((7, len(frame)))
+    for k, f in enumerate(frame):
+        ends = np.array([a[k], b[k]])
+        if f in to7:                              # express in link7's frame, which is rigid
+            R, t = to7[f]
+            ends, f = ends @ R.T + t, 7
+        for j in range(f):                        # joints 0..f-1 move frame f
+            if f == j + 1:
+                d = np.hypot(ends[:, 0], ends[:, 1]).max()
+            else:
+                al, aa, dd = fr3.DH[j + 1]
+                d = (np.hypot(aa, np.sin(al) * dd)
+                     + sum(np.hypot(fr3.DH[i][1], fr3.DH[i][2]) for i in range(j + 2, f))
+                     + np.linalg.norm(ends, axis=1).max())
+            reach[j, k] = d + radius[k]
+    return reach
 
 
 def _rot_in_plane(v):
