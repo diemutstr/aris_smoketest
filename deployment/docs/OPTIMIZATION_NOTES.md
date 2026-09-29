@@ -33,9 +33,18 @@ first, measure on the corpus, then pick from this list. Numbers marked (est.) ar
 
 ## Collision kernel
 
-10. Closed-form capsule-to-box distance. The old code used a 36-step search per capsule per box;
-    that was ~28 % of a whole single-arm plan.
-11. Compiled batch kernel over the measured capsule geometry.
+10. DONE (round 1): exact capsule-to-box distance without iteration. The old 36-step search was
+    ~28 % of a whole single-arm plan; the new one agrees with brute force to 1e-15.
+11. IN PROGRESS (round 1): compiled kernel, configurations in, clearance out. Measured in plain
+    numpy: 16 000 configurations per second for the real arm (33 checked capsules, 49 obstacles),
+    47 000 for a 12-capsule body. Too slow for a 0.1 s free-space search.
+12. Not yet: one bounding volume around the whole arm as a first pass per configuration; SIMD.
+
+## IK
+
+12b. IN PROGRESS (round 1): the vendored solver has the Panda's joint limits built in and returns
+    one elbow root. For drawing-like poses it answers 58 % of round trips and gives nothing for
+    26 % of poses. A corrected solver with the FR3 limits as arguments is being built.
 
 ## Sequencer
 
