@@ -129,7 +129,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | phase end: all arms at park | pass; tightest arm 31 against its own strut, 63.8 mm (demanded 50) |
 | phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
 | phase end: arm 71 into parked arm 31; an active arm missing | caught |
-| speed, CPU time, one core | 0.7 s free motion 52 ms; 1.6 s free motion 66 ms; 7.1 s free motion 130 ms; 14 s drawing line 180 ms; 60 s drawing motion 530 ms |
+| speed, CPU time, one core, 62 capsules | 6.8 s free motion 200 ms; 60 s drawing motion 635 ms (with the first 40-capsule model: 145 and 650 ms) |
 
 Where the time goes (60 s drawing motion): about 10 000 clearance samples, then the 1 kHz and
 4 kHz readings (240 000 samples of the cubic) and the pen at 1 kHz. Drake is not used at run
@@ -139,12 +139,10 @@ native code), or a tighter bound on how far a capsule moves.
 
 ## What it cannot do, and what it found
 
-- **The pen holder works within millimetres of the paper.** With the hand square to the paper the
-  holder's lowest capsule (`holder.2`) is 0.03 mm above it; over the whole 15° lean cone the best
-  is 2.6 mm. Decided 2026-09-29: the tool gets its own clearance to the paper
-  (`tool_to_paper_m`, provisionally 0: it must not touch), and the tool capsules near the cap are
-  being refitted. Until both have landed, the straight-line drawing test is marked as an expected
-  failure (the old `holder.2` capsule reaches 0.08 mm into the paper).
+- **The tool and the paper.** The tool keeps its own clearance to the paper (`tool_to_paper_m`,
+  provisionally 0: it must not touch). With the refitted tool capsules (62 capsules in all,
+  2026-09-29) a straight line drawn by arm 31 passes: tool 14.5 mm above the paper with the hand
+  square, 8.1 mm at the worst 15 degree lean; links 112.5 mm (a lower bound) and 84.2 mm.
 - The old hover run of arm 71 (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
   flown curve (the old code read 89 at 48 Hz), jerk and the 1 kHz/4 kHz comparison, and link 6
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).

@@ -115,11 +115,11 @@ def ik_path(arm_id, pts_table, lean=(0.0, 0.0)):
     return best_q, tip_b
 
 
-def draw_motion(arm_id, pts_table, split=None):
+def draw_motion(arm_id, pts_table, split=None, lean=(0.0, 0.0)):
     """A drawing motion along the table-frame points.  With `split` (a sample index), the line
     is drawn as two motions that meet there, each starting and ending at rest."""
     arm = RIG.arm(arm_id)
-    Q, tip_b = ik_path(arm_id, pts_table)
+    Q, tip_b = ik_path(arm_id, pts_table, lean)
     s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tip_b, axis=0), axis=1))])
     parts = [slice(0, len(Q))] if split is None else [slice(0, split + 1), slice(split, len(Q))]
     out = []
@@ -354,7 +354,7 @@ def test_fault_path_touches_a_parked_neighbour():
 @pytest.mark.slow
 def test_fault_self_collision():
     ph = phase_of(13)
-    path = find_through(13, ph, "self", seed=4)
+    path = find_through(13, ph, "self", seed=5)
     _fails(check(CONFIG, 13, free_motion(13, path), ph, path[0]), "clearance self")
 
 
@@ -410,16 +410,20 @@ def good_draw():
     return draw_motion(31, line_table((-0.62, 0.05), (-0.50, 0.30)))
 
 
-def test_a_straight_line_draws(good_draw):
-    """A straight line drawn on the paper passes everything.  Needs the tool's own clearance
-    to the paper in rig.json and the refitted tool capsules; until both have landed the old
-    holder capsule touches the paper (it reaches 0.08 mm into it) and this is expected to fail."""
-    body = RIG.arm(31).body(good_draw.q_start[None])
-    if body.is_tool is None or MINE.notes:
-        pytest.xfail("waiting for clearances.tool_to_paper_m and the tool capsule refit")
-    v = check(CONFIG, 31, good_draw, phase_of(31), good_draw.q_start)
+PAPER_ROWS = ("clearance paper (links)", "clearance paper (tool)", "clearance paper (pen)")
+
+
+@pytest.mark.parametrize("lean", [(0.0, 0.0), (0.0, 0.26)],
+                         ids=["upright", "leaned 15 deg, worst direction"])
+def test_a_straight_line_draws(lean):
+    """A straight line drawn on the paper passes everything, hand square and leaned 15 deg."""
+    m = draw_motion(31, line_table((-0.62, 0.05), (-0.50, 0.30)), lean=lean)
+    v = check(CONFIG, 31, m, phase_of(31), m.q_start)
     print(f"\n{v}")
     assert v.passed, v.failed
+    assert "clearance paper (pen)" not in [x.name for x in v.measurements]
+    for name in PAPER_ROWS[:2]:
+        print(f"{name}: {v.get(name).value * 1e3:.2f} mm (limit {v.get(name).limit * 1e3:.1f})")
 
 
 def test_fault_drawing_leaves_the_line(good_draw):
