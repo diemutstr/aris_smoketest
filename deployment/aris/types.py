@@ -211,6 +211,37 @@ class Motion:
         return self.traj.q[-1]
 
 
+# --------------------------------------------------------------------------- refusals
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """A call that could not do what was asked, and why.  Returned, never raised."""
+    reason: str
+    detail: str = ""
+
+
+# --------------------------------------------------------------------------- the rig at one moment
+
+
+@dataclass(frozen=True)
+class Wall:
+    """A vertical plane in the table frame, between two arms."""
+    name: str
+    arms: tuple[int, int]
+    point_table: np.ndarray            # (3,) a point on the wall, on the paper
+    normal_table: np.ndarray           # (3,) unit, horizontal, pointing from arms[0] to arms[1]
+
+
+@dataclass(frozen=True)
+class Phase:
+    """Who moves, who stands parked, and the walls between those who move."""
+    name: str
+    active: tuple[int, ...]
+    parked: tuple[int, ...]
+    walls: tuple[Wall, ...]
+
+
 # --------------------------------------------------------------------------- rules
 
 

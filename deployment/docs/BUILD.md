@@ -58,14 +58,20 @@ Types are in `aris/types.py`. The calls:
 |---|---|---|
 | kernel.arm | `Arm(tool)`, then `limits`, `self_pairs`, `reach`, `fk(Q)`, `tip(Q)`, `body(Q)`, `ik(T_base_hand, q7)`, `hand_pose(tip, normal, spin, lean)`, `sigma_min(Q)`, `limit_margin(Q)` | arrays, `Body`, `Limits` |
 | kernel.collide | `clearance(body, obstacles, drawing=False)`, `self_clearance(body, pairs, margin)`, `path_clearance(arm.body, q, obstacles, arm.reach, drawing=False)` (a lower bound that also covers the motion between samples) | metres beyond the demanded margin; at least 0 means free |
-| kernel.retime | `retime(path, limits, rules, s=None)` (with `s`, the arc length per sample, for drawing motions), `sample(traj, t)` | `Trajectory`, arrays |
+| kernel.retime | `retime(path, limits, rules, s=None)` (with `s`, the arc length per sample, for drawing motions), `sample(traj, t)`, `check(traj, limits)` | `Trajectory` or `Refusal`, arrays, a report |
 | rig | `Rig.load(config_dir)`, `to_base(arm_id, line)`, `obstacles(arm_id, parked, walls)`, `wall_between(a, b)`, `arm(arm_id)` | `Line`, `Obstacles`, `Plane`, `Arm` |
 | local | `plan(arm, lines, obstacles, rules)` | `list[Bunch]`, `list[Leftover]` |
-| free | `plan(arm, q_start, q_goal, obstacles, rules)` | `JointPath` or `Leftover`-style refusal |
+| free | `plan(arm, q_start, q_goal, obstacles, rules)` | a free `Motion` (timed, and checked as flown) or a `Refusal` |
 | sequencer | `tour(arm, bunches, q_start, obstacles, rules)` | iterator of `Motion`, then `list[Leftover]` |
 | arm_planner | `plan(arm, lines, obstacles, q_start, rules)` | iterator of `Motion`, then `list[Leftover]` |
 | system | `plan(rig, drawing, arm_configs)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]` |
-| check | `check(rig_config, arm_id, motion, phase)` | pass or fail, with the numbers |
+| check | `check(config_dir, arm_id, motion, phase, q_before)` | a verdict: pass or fail, every measured number, and the tightest one |
+
+## What is checked is what is flown
+
+Timing rounds the corners of a path, so the path that is flown is not exactly the path that was
+searched. Every collision verdict that counts, in the planners and in the checker, is taken on
+the timed trajectory, not on the path it was made from.
 
 ## Rules for the code
 
