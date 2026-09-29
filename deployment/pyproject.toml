@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aris"
+version = "0.1.0"
+description = "Planner, drawing server and calibration for the six-arm drawing rig"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy"]
+
+[project.optional-dependencies]
+check = ["drake"]
+gui = ["fastapi", "uvicorn"]
+dev = ["pytest"]
+
+[project.scripts]
+aris = "aris.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aris*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

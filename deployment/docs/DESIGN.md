@@ -249,7 +249,7 @@ measure everything themselves, with their own joint sensors; no camera, no tape 
 is needed once, to guide each arm to the shared spots. Starting point: each arm's pose is known to
 a few millimetres, at worst a centimetre, and its orientation may be off.
 
-**Hardware needed**
+**Hardware needed** (Pete builds this, 2026-09-29; the software side is ours)
 - four small plates with a cone-shaped dimple, taped to the table on the centre line, at 605 mm and
   1815 mm either side of the table centre. A dimple instead of a drawn dot, because the tip centres
   itself in it and nobody has to judge by eye.

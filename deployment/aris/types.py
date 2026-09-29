@@ -1,0 +1,228 @@
+"""The shared data types.  Every module talks to every other module in these, and nothing else.
+
+Units: metres, radians, seconds.
+Frames: every position says which frame it is in, either in the variable name (`p_base`,
+`T_table_base`) or in a `frame` field.  Two frames exist:
+  "table"  origin at the table centre on the paper surface, x across, y along, z up
+  "base"   one arm's own base frame (the arm model's origin)
+The planners below the system planner only ever see the "base" frame.
+
+This file holds data only.  No logic, no I/O, no imports from the rest of the package.
+Changing it changes every module, so it is changed by the orchestrator only.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Literal
+
+import numpy as np
+
+N_JOINTS = 7
+
+# --------------------------------------------------------------------------- drawing input
+
+
+@dataclass(frozen=True)
+class Line:
+    """One line of the drawing: where the pen tip should go."""
+    id: str
+    points: np.ndarray                 # (N, 3) tip positions
+    frame: Literal["table", "base"]
+    intensity: float = 1.0             # 0..1, how hard to press
+
+
+# --------------------------------------------------------------------------- obstacles
+# An obstacle carries the clearance it demands (`margin`).  "Free" means: distance to every
+# obstacle is at least that obstacle's margin.  A planner never needs to know what an
+# obstacle is; a wall, a parked arm and a strut of the frame are all just geometry.
+
+
+@dataclass(frozen=True)
+class Box:
+    name: str
+    T_base_box: np.ndarray             # (4, 4) pose of the box centre
+    half: np.ndarray                   # (3,) half extents
+    margin: float
+
+
+@dataclass(frozen=True)
+class Plane:
+    """A flat boundary.  Free space is the side the normal points to: normal . p >= offset."""
+    name: str
+    normal: np.ndarray                 # (3,) unit vector, pointing into free space
+    offset: float
+    margin: float
+    kind: Literal["paper", "wall", "other"] = "other"
+    # The pen touches the paper when drawing and hovers close to it when lifted, so the pen
+    # gets its own, smaller clearance against a plane.  None means: same as `margin`.
+    pen_margin: float | None = None
+
+
+@dataclass(frozen=True)
+class Capsule:
+    """A segment with a radius, e.g. one link of a parked arm."""
+    name: str
+    p0: np.ndarray                     # (3,)
+    p1: np.ndarray                     # (3,)
+    radius: float
+    margin: float
+
+
+@dataclass(frozen=True)
+class Obstacles:
+    """Everything one arm has to stay clear of, in that arm's base frame."""
+    boxes: tuple[Box, ...] = ()
+    planes: tuple[Plane, ...] = ()
+    capsules: tuple[Capsule, ...] = ()
+
+
+# --------------------------------------------------------------------------- the arm's body
+
+
+@dataclass(frozen=True)
+class Body:
+    """The arm's collision body at N configurations: K capsules each."""
+    p0: np.ndarray                     # (N, K, 3)
+    p1: np.ndarray                     # (N, K, 3)
+    radius: np.ndarray                 # (K,)
+    names: tuple[str, ...]             # K names, e.g. "forearm", "hand", "pen"
+    is_pen: np.ndarray                 # (K,) bool
+
+
+@dataclass(frozen=True)
+class Tool:
+    """What is bolted to the hand: the pen holder and the pen."""
+    tip_hand: np.ndarray               # (3,) pen tip in the hand frame
+    pen_axis_hand: np.ndarray          # (3,) unit vector along the pen, pointing out of the tip
+    capsules_hand: tuple[Capsule, ...] # holder and pen, in the hand frame (margin unused)
+    pen_names: tuple[str, ...]         # which of those capsules are the pen itself
+
+
+# --------------------------------------------------------------------------- limits
+
+
+@dataclass(frozen=True)
+class Limits:
+    """What the arm's joints may do.  All arrays are (7,)."""
+    q_min: np.ndarray                  # rad
+    q_max: np.ndarray                  # rad
+    qd_max: np.ndarray                 # rad/s
+    qdd_max: np.ndarray                # rad/s^2
+    qddd_max: np.ndarray               # rad/s^3
+
+
+# --------------------------------------------------------------------------- paths and motions
+
+
+@dataclass(frozen=True)
+class JointPath:
+    """A path without timing."""
+    q: np.ndarray                      # (N, 7)
+
+
+@dataclass(frozen=True)
+class Trajectory:
+    """A path with timing, inside the arm's limits.
+
+    The motion between two samples is the cubic that matches q and qd at both of them, so a
+    trajectory can be sampled at any rate without changing what it means.
+    """
+    t: np.ndarray                      # (N,) seconds from the start, increasing
+    q: np.ndarray                      # (N, 7)
+    qd: np.ndarray                     # (N, 7)
+
+
+@dataclass(frozen=True)
+class Piece:
+    """A stretch of one line, by arc length along it."""
+    line_id: str
+    s0: float                          # metres from the start of the line
+    s1: float
+
+
+@dataclass(frozen=True)
+class DrawPlan:
+    """One way of drawing a piece.  Can be run in either direction."""
+    piece: Piece
+    q: np.ndarray                      # (N, 7) joint path, pen on the paper
+    s: np.ndarray                      # (N,) arc length along the line at each sample
+    tip_base: np.ndarray               # (N, 3)
+    score: float                       # worst margin along the path; higher is better
+    joint_travel: float                # radians summed over joints and samples
+
+    @property
+    def q_start(self) -> np.ndarray:
+        return self.q[0]
+
+    @property
+    def q_end(self) -> np.ndarray:
+        return self.q[-1]
+
+
+@dataclass(frozen=True)
+class Bunch:
+    """The alternatives for one piece.  The sequencer picks one."""
+    piece: Piece
+    plans: tuple[DrawPlan, ...]
+
+
+Reason = Literal[
+    "unreachable",        # no arm configuration puts the tip there inside the gates
+    "blocked",            # reachable, but an obstacle is in the way
+    "too_short",          # shorter than the smallest stretch worth a pen-down
+    "no_free_path",       # could be drawn, but the arm cannot fly to it
+    "outside_region",     # not inside this arm's region in this phase
+    "failed_check",       # the independent checker refused the motion
+]
+
+
+@dataclass(frozen=True)
+class Leftover:
+    """Something that was asked for and not planned, and why."""
+    piece: Piece
+    reason: Reason
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class Motion:
+    """The only thing that crosses from planning to execution.
+
+    Starts where the previous motion of the same arm ended.  Ends in a configuration the arm
+    can hold for as long as it likes.
+    """
+    kind: Literal["draw", "free"]
+    traj: Trajectory
+    piece: Piece | None = None         # draw motions: what is being drawn
+    tip_base: np.ndarray | None = None # draw motions: (N, 3) tip positions, same samples as traj
+    intensity: float = 1.0
+
+    @property
+    def q_start(self) -> np.ndarray:
+        return self.traj.q[0]
+
+    @property
+    def q_end(self) -> np.ndarray:
+        return self.traj.q[-1]
+
+
+# --------------------------------------------------------------------------- rules
+
+
+@dataclass(frozen=True)
+class Gates:
+    """What a configuration must satisfy to count as usable."""
+    limit_margin: float = 0.15         # rad, distance to the nearest joint limit
+    sigma_min: float = 0.08            # smallest singular value of the tip Jacobian
+    self_margin: float = 0.023         # m, the arm against itself
+
+
+@dataclass(frozen=True)
+class DrawRules:
+    """How drawing motions are timed and shaped."""
+    draw_speed: float = 0.02           # m/s along the line
+    lift_height: float = 0.025         # m, how far the tip is raised between lines
+    lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
+    min_piece: float = 0.010           # m, shortest stretch worth a pen-down
+    speed_fraction: float = 0.30       # fraction of the joint speed limits that may be used
+    gates: Gates = field(default_factory=Gates)
