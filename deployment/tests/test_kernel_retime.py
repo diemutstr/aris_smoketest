@@ -258,20 +258,97 @@ def test_bit_identical():
 # --------------------------------------------------------------------------- 7. speed
 
 
-def test_speed_2000_samples():
-    wander = dense_wander(11)
-    q, s = draw_case(np.c_[0.1 * np.cos(np.linspace(0, 6, 2000)),
-                           0.05 * np.sin(np.linspace(0, 17, 2000))])
-    for label, args in (("free, 2000 samples", (JointPath(wander), LIMITS, RULES)),
-                        ("draw, 2000 samples", (JointPath(q), LIMITS, RULES, s))):
-        retime(*args)
-        t0 = time.process_time()          # CPU time: the machine is shared and often loaded
-        r = retime_detailed(*args)
-        cpu = time.process_time() - t0
-        print(f"\n{label}: {cpu * 1e3:.0f} ms CPU, trajectory {r.traj.t[-1]:.2f} s, "
-              f"{len(r.traj.t)} samples, deviation {r.deviation * 1e3:.4f} mrad")
-        assert cpu < SPEED_CEILING_S
-        assert check(r.traj, LIMITS).inside
+def free_walk(n, seed):
+    """A free-space path as a planner hands it over: n waypoints 0.2 to 0.8 rad apart."""
+    rng = np.random.default_rng(seed)
+    q = [MID.copy()]
+    while len(q) < n:
+        step = rng.normal(size=7)
+        step *= rng.uniform(0.2, 0.8) / np.linalg.norm(step)
+        if np.all(np.abs(q[-1] + step - MID) < 0.5 * (Q_MAX - Q_MIN) - 0.2):
+            q.append(q[-1] + step)
+    return np.array(q)
+
+
+def _tip(q):
+    return np.c_[pen(q), np.zeros(len(q))]
+
+
+def test_speed():
+    """CPU time of one process (the machine is shared).  Each ceiling is ten times the target."""
+    wavy = lambda n: draw_case(np.c_[np.linspace(0, 0.5, n), 0.02 * np.sin(np.linspace(0, 30, n))])
+    cases = [(f"free, {n} waypoints", (JointPath(free_walk(n, 1)), LIMITS, RULES), {}, 0.05)
+             for n in (3, 10, 30)]
+    for n, ceiling in ((250, 0.1), (2000, 0.4)):
+        q, s = wavy(n)
+        cases.append((f"draw, {n} samples", (JointPath(q), LIMITS, RULES, s), {"tip_of": _tip},
+                       ceiling))
+    q, s = wavy(250)
+    cases.append(("refusal (1 nm pen budget)", (JointPath(q), LIMITS, RULES, s),
+                  {"tip_of": _tip, "tip_budget_m": 1e-9}, 0.5))
+    print()
+    for label, args, kw, ceiling in cases:
+        retime(*args, **kw)
+        best = np.inf
+        for _ in range(5):                  # the least disturbed of five runs
+            t0 = time.process_time()
+            out = retime(*args, **kw)
+            best = min(best, time.process_time() - t0)
+        kind = "refused" if isinstance(out, Refusal) else f"{out.t[-1]:.2f} s, {len(out.t)} samples"
+        print(f"{label:28s} {best * 1e3:6.1f} ms CPU  ({kind})")
+        assert best < ceiling
+        assert isinstance(out, Refusal) == label.startswith("refusal")
+
+
+def test_compiled_and_numpy_sweeps_agree():
+    import aris.kernel.retime as rt
+    if rt._native_sweeps is None:
+        pytest.skip("aris_retime_native is not installed")
+    rng = np.random.default_rng(3)
+    for n in (1, 5, 400):
+        x = rng.uniform(0, 4, n + 1)
+        p = rng.uniform(0, 1, (n, 7))
+        q = np.where(rng.uniform(size=(n, 7)) < 0.1, np.inf, rng.uniform(0, 0.1, (n, 7)))
+        assert rt._native_sweeps(x, p, q).tobytes() == rt.sweeps_numpy(x, p, q).tobytes()
+    native = retime(JointPath(random_zigzag(4)), LIMITS, RULES)
+    saved, rt._native_sweeps = rt._native_sweeps, None
+    try:
+        fallback = retime(JointPath(random_zigzag(4)), LIMITS, RULES)
+    finally:
+        rt._native_sweeps = saved
+    assert native.t.tobytes() == fallback.t.tobytes() and native.q.tobytes() == fallback.q.tobytes()
+
+
+def _turns(angles, leg=0.03, step=0.002):
+    """A drawn line of straight legs, turning by each angle (degrees) between them."""
+    p, heading = [np.zeros(2)], 0.0
+    for a in list(angles) + [None]:
+        for _ in range(int(round(leg / step))):
+            p.append(p[-1] + step * np.array([np.cos(heading), np.sin(heading)]))
+        if a is not None:
+            heading += np.deg2rad(a)
+    return np.array(p)
+
+
+@pytest.mark.parametrize("angles", [(30, -90, 150, -179), (180,)])
+def test_drawn_corners_in_one_call(angles):
+    """A whole line with sharp corners, timed in one call: the pen slows at each corner and
+    stops only at a 180 degree cusp; it stays within the 0.1 mm pen budget."""
+    q, s = draw_case(_turns(angles))
+    r = retime_detailed(JointPath(q), LIMITS, RULES, s=s, tip_of=_tip)
+    assert isinstance(r, RetimeResult), r
+    t = np.arange(0.0, r.traj.t[-1], 1e-3)
+    p = pen(sample(r.traj, t)[0])
+    speed = np.linalg.norm(np.diff(p, axis=0), axis=1) / 1e-3
+    s_t = np.interp(t[1:], r.traj.t, r.s)
+    print(f"\npen deviation {r.tip_deviation * 1e3:.3f} mm")
+    for k, a in enumerate(angles, start=1):
+        near = np.abs(s_t - 0.03 * k) < 0.004
+        print(f"corner of {abs(a):3d} deg: slowest pen {speed[near].min() * 1e3:6.2f} mm/s")
+        if abs(a) < 180:
+            assert speed[near].min() > 1e-4        # slower, never stopped
+    assert r.tip_deviation <= 1e-4
+    assert check(r.traj, LIMITS).inside
 
 
 # --------------------------------------------------------------------------- 8. refusals
@@ -287,9 +364,11 @@ def test_refusals():
     nan[1, 0] = np.nan
     back = retime(JointPath(corner_90()), LIMITS, RULES, s=np.array([0.0, 0.02, 0.01]))
     stall = retime(JointPath(corner_90()), LIMITS, RULES, s=np.array([0.0, 0.0, 0.01]))
+    long_line = np.array([MID, MID + 0.001])
+    slow = retime(JointPath(long_line), LIMITS, RULES, s=np.array([0.0, 13.0]))  # 650 s of ink
     for r, reason in ((one, "too_few_samples"), (same, "no_motion"), (out, "outside_limits"),
                       (retime(JointPath(nan), LIMITS, RULES), "not_finite"),
-                      (back, "bad_arc_length"), (stall, "bad_arc_length")):
+                      (back, "bad_arc_length"), (stall, "bad_arc_length"), (slow, "too_slow")):
         assert isinstance(r, Refusal) and r.reason == reason, r
         assert r.detail
 

@@ -10,13 +10,15 @@ millisecond.
 - `rules`: `speed_fraction` (share of the velocity limit that may be used, 0.3) and `draw_speed`
 - `s` (drawing motions only): how far along the drawn line each sample is, in metres, increasing
 - `tip_of` and `tip_budget_m` (optional): a function from joints to pen-tip positions, and how
-  far the pen tip may stray from the input. For drawing, the budget defaults to 0.1 mm when
-  `tip_of` is given.
+  far the pen may stray from where the input path puts it. For drawing, the budget defaults to
+  0.1 mm when `tip_of` is given.
 
 **Out.** A `Trajectory`: times, configurations and joint velocities. Between two samples the motion
 is the cubic that matches both. It starts and ends at rest, exactly at the first and last input
-configuration. `retime_detailed` also returns the arc length at each sample (for drawing), how far
-the flown path is from the input (joint space, and at the pen tip if asked), and the 1 kHz check.
+configuration. `retime_detailed` also returns:
+- the arc length at each sample (drawing only)
+- how far the flown path is from the input, in joint space and at the pen if asked
+- the report: the exact extremes of the cubic pieces against the limits
 
 If the path can't be timed, the result is a `Refusal` (from `aris.types`), never an exception. Its
 reasons:
@@ -28,9 +30,10 @@ reasons:
 | `outside_limits` | a sample is outside the joint limits |
 | `no_motion` | all samples are the same |
 | `bad_arc_length` | `s` has the wrong length, is not finite, goes backwards, or stands still while the joints move |
-| `bad_rules` | `speed_fraction` not in (0, 1], `draw_speed` not positive, or a tip budget without `tip_of` |
-| `cannot_smooth` | the deviation budget can't be met (corners too sharp for the grid, or the pen-tip budget not met after 12 tightenings) |
+| `bad_rules` | `speed_fraction` not in (0, 1], `draw_speed` not positive, or a pen budget without `tip_of` |
+| `cannot_smooth` | a deviation budget can't be met |
 | `leaves_limits` | the rounded path leaves the joint limits |
+| `too_slow` | the motion would take more than 600 s |
 
 `sample(traj, t)` gives position, velocity and acceleration at any times. `check(traj, limits,
 rate_hz)` samples at a rate, takes differences like the driver does, and reports the largest
@@ -44,28 +47,55 @@ slowly it is flown. So the reading depends on how closely you look: the same tra
 38 rad/s² at 48 Hz and 1 422 rad/s² at 1 kHz, against a driver limit of 10. Slowing the clock
 cannot fix that; only changing the path can.
 
-So the path is smoothed before anything is timed. Each point is replaced by an average of its
-neighbours along the path (three box averages in a row). A straight piece averages to itself, so
-straight pieces are kept exactly and only the corners are rounded.
+Near each corner, the path is replaced by an average of its neighbours (three box averages in a
+row, over a window of width w). A straight piece averages to itself, so only the corners change.
+The rounded path is the input plus one small, exactly known bump per corner, and the bump reaches
+only 1.5 w either side. Four consequences:
+- The path is evaluated exactly, at any point, without a grid.
+- Every corner gets its own window.
+- A lone corner moves the path by 0.2 × w × (its change of direction), largest at the corner.
+- Windows stay clear of the path's ends, so the ends are exact.
 
-The window is as wide as the deviation budget allows at each place. First the narrowest width
-that works everywhere is found. Then wider windows (4×, 16×, …) are blended in wherever they
-also stay within budget. A weighted mix of paths that are each within budget is itself within
-budget. So one sharp corner does not force tight, slow curves on the rest of the path.
+Each window is as wide as the budgets allow. Corners that break a budget are narrowed; the others
+are left alone.
+- **Joint budget:** 0.15 mrad by default. That keeps the pen within 0.2 mm, because over the
+  FR3's whole joint range one milliradian of joint motion moves the pen at most 1.28 mm
+  (measured on 20 000 random configurations).
+- **Pen budget:** with `tip_of`, the pen is also compared with where the input path puts it.
 
-The ends are mirrored through the end points, so they stay exactly where they were. Deviation is
-measured at the same position along the path. The joint-space budget defaults to 0.15 mrad,
-which keeps the pen tip within 0.2 mm: over the FR3's whole joint range, one milliradian of joint
-motion moves the tip at most 1.28 mm (measured on 20 000 random configurations). With `tip_of`,
-the pen tip is also compared with the input's tip line, and the joint budget is tightened until
-the tip is within `tip_budget_m`.
+Deviation is always measured at the same position along the path.
+
+## Sharp corners in a drawn line
+
+A whole drawing path, zigzags and letters included, is timed in one call. At a corner of the
+line, the pen rounds the corner inside the pen budget: it cuts the corner by at most 0.1 mm.
+It slows down, more for sharper corners, because a turn must take at least 20 ms (see below).
+Measured with a 1.5 rad-per-metre test arm at 20 mm/s:
+
+| corner of the line | slowest pen speed there |
+|---|---|
+| 30° | 19.3 mm/s |
+| 90° | 11.8 mm/s |
+| 150° | 3.5 mm/s |
+| 179° | 0.34 mm/s |
+| 180° (the line doubles back) | stops for an instant |
+
+The pen stops only at a true 180° cusp. There the joints reverse, so their velocity must pass
+through zero. At every other corner the pen keeps moving. It never leaves the line by more than
+the pen budget. The reported figure, 0.096–0.100 mm in these cases, is an upper bound: the
+rounded path's measured pen deviation plus 1.3 m/rad times how far the written-out cubic strays
+from it. Where that bound would exceed the budget, the pen is measured with `tip_of` at those
+points.
 
 ## How the speed is chosen
 
 1. **Fastest allowed speed.** One forward pass accelerates as hard as the joint limits allow; one
-   backward pass brakes as hard as they allow. The speed is also capped at the velocity limit
-   times `speed_fraction`, where bending would make acceleration or jerk too large, and at the
-   draw speed for drawing.
+   backward pass brakes as hard as they allow. This runs over about 500 points spread along the
+   path, plus 12 across every narrow, sharp corner. The speed is also capped at the velocity
+   limit times `speed_fraction`, where bending would make acceleration or jerk too large, and at
+   the draw speed for drawing. The two passes are a small compiled function
+   (`native/retime`). A numpy version gives the same numbers bit for bit, and is used when the
+   compiled one isn't installed.
 2. **Turns take at least 20 ms.** A turn shorter than that would last only a few driver ticks,
    and the reading would depend on where the ticks fall. Turns too gentle to use more than 10%
    of the acceleration and jerk limits are exempt.
@@ -74,72 +104,75 @@ the tip is within `tip_budget_m`.
    leaves constant-speed stretches unchanged. Before that, the speed cap is lowered around every
    slow spot, by the distance travelled in one averaging window, so the averaging can't carry
    speed into the slow spot.
-4. **Write out and check.** Samples go at least every 5 ms, closer on turns (never closer than
-   2 ms). Their velocities make acceleration continuous across samples, so jerk is finite
-   everywhere. The result is checked at 1 kHz. If anything is over its target, the whole clock is
-   slowed by the exact factor needed; in every test case so far that factor was 1.0005.
+4. **Write out and check.** Samples are placed where the path turns and where the joints' speed
+   or acceleration change: at least every 50 ms, never closer than 6 ms, and every 6 ms in the
+   first and last 30 ms. Ramps are sampled densely enough that even a copy resampled at 100 Hz
+   reads the same at 1 and 4 kHz (the checker tests this). Their velocities make acceleration continuous across samples, so jerk is
+   finite everywhere. The exact extremes of each cubic piece are then compared with the targets.
+   If anything is over, the whole clock is slowed by the exact factor needed.
 
-## What is guaranteed at 1 kHz
+## What is guaranteed
 
-At the driver's 1 kHz, finite differences stay within these targets: velocity at most
-`speed_fraction` × the limit, acceleration and jerk at most 0.9 × the limit. Positions stay inside
-the joint limits, to the driver's own tolerance of 1e-7 rad. The flown path is within the
-deviation budget of the input, and the pen tip within its budget if one was given. A drawing
-motion never stops or reverses between its ends, and runs at `draw_speed` wherever no joint
-limit is in the way.
+The report holds the exact largest velocity, acceleration and jerk of the cubic pieces. A sampled
+measurement at any rate, 1 kHz included, averages these and can only read less. Guaranteed:
+- velocity at most `speed_fraction` × the limit
+- acceleration and jerk at most 0.9 × the limit
+- positions inside the joint limits, to the driver's tolerance of 1e-7 rad
+- the flown path within the deviation budget of the input, and the pen within its budget if one
+  was given
+- a drawing motion never reverses; it stops only at a 180° cusp of the line; it runs at
+  `draw_speed` wherever no joint limit is in the way
 
 ## What it cannot do
 
 - It doesn't know about obstacles. The rounded path cuts corners by up to the deviation budget,
   so whoever checks collisions must allow that much. A free-space motion can afford a larger
   budget, and should be given one.
-- Many small kinks still cost time, because each one is a turn. A jittery 2 000-sample free path
-  takes 13.7 s at 0.15 mrad, 6.9 s at 1 mrad and 4.2 s at 4 mrad, against 3.5 s if only the
-  speed limit counted. Hand it a shortened path, with the budget your clearance allows.
+- Each corner of a free-space path is a near-stop at a tight budget, because the rounding is
+  short. A larger budget makes corners faster.
 - It times one motion. Keeping several arms on a shared clock is not its job.
 
-## Measured (FR3 limits, speed fraction 0.3, targets 0.9 of acceleration and jerk)
+## Measured
+
+Targets: speed fraction 0.3; acceleration and jerk held to 0.9 of the limit.
 
 | case | duration | velocity / (0.3 × limit) | accel / limit | jerk / limit | deviation |
 |---|---|---|---|---|---|
-| 90° corner | 2.06 s | 0.9995 | 0.854 | 0.050 | 0.108 mrad |
-| 175° near-reversal | 2.63 s | 0.9995 | 0.854 | 0.050 | 0.109 mrad |
-| random 9-point zigzags (3 seeds) | 10.4–11.4 s | 0.9995 | 0.854 | 0.050 | 0.108 mrad |
-| corners on the joint limits | 9.85 s | 0.9995 | 0.854 | 0.050 | 0.107 mrad |
+| 90° corner | 2.1 s | 1.0 | 0.86 | 0.05 | 0.135 mrad |
+| 175° near-reversal, random 9-point zigzags, corners on the joint limits | 2.6–11 s | 1.0 | 0.86 | 0.05 | 0.135 mrad or less |
 
 **Same answer at every rate** (90° corner, largest over joints; the old code grew about 30×
 between 48 Hz and 1 kHz):
 
 | rate | velocity | accel | jerk |
 |---|---|---|---|
-| 100 Hz | 0.786 | 8.541 | 238.2 |
-| 1 kHz | 0.786 | 8.542 | 252.1 |
-| 4 kHz | 0.786 | 8.543 | 252.1 |
+| 100 Hz | 0.786 | 8.56 | 234 |
+| 1 kHz | 0.786 | 8.58 | 250 |
+| 4 kHz | 0.786 | 8.58 | 250 |
 
-At 100 Hz the jerk reads 6% low, because the speed-softening windows are shorter than a 100 Hz
-difference spans. From 1 kHz up it doesn't change: 16 kHz gives 252.08 as well.
+**Drawing through the real arm model**, at 20 mm/s. The shapes were lines, half-circles and
+zigzags at random places on the paper. On 23 shapes, the pen speed is within 0.25% of
+20 mm/s away from ends and corners, and the pen stays within 0.052 mm of the input. No joint
+limit binds. Asking for a 5 µm pen budget gives 4.99 µm, at 9.42 s instead of 9.28 s.
 
-**Drawing through the real arm model.** Pen-tip shapes on the paper 0.97 m below the base: 10 cm
-lines, 10 cm-radius half-circles and 6-segment zigzags, 1 mm apart, at random places and
-directions. Each is made into a joint path with `Arm.hand_pose` and `Arm.ik`, following one IK
-branch inside the gates. Of 36 shapes, 23 had such a branch. At 20 mm/s:
-- pen speed error, away from the ends and zigzag corners: at most 0.68% (lines and arcs 0.04% or
-  less)
-- pen deviation from the input line: 0.007–0.040 mm with the joint budget alone, all inside the
-  0.1 mm default
-- a joint limit binds on none of the 23 shapes. The most any shape needs is 0.20 of the allowed
-  joint speed.
-- tightening works: asking for 5 µm at the pen gives 3.9 µm, and the zigzag takes 9.84 s instead
-  of 9.30 s
+**Speed, CPU time on one core.** Old and new were run back to back on the same core. The
+32-thread machine was at a load of 40 to 65 throughout, which inflates everything by up to
+about 2×. Each figure is the median of 15 runs; for free space it is the worst of five random
+paths.
+- Free-space paths: waypoints 0.2 to 0.8 rad apart.
+- Drawing paths: through the real arm model.
+  - 250 samples: a 0.74 m letter-like line with sharp corners.
+  - 2 000 samples: a 0.8 m wavy arc.
 
-**Drawing, synthetic arm** (1.5 rad per metre of pen motion): circle 0.05%, square 0.01%, zigzag
-0.00% speed error. Where the joints must move 150 rad per metre of line, the pen slows to
-10.6 mm/s there and stays at 20 mm/s elsewhere.
+| case | old (load 63) | new (load 40) | target |
+|---|---|---|---|
+| free-space path, 3 waypoints | 357 ms | 2.6 ms | 5 ms |
+| free-space path, 10 waypoints | 1 176 ms | 4.0 ms | 5 ms |
+| free-space path, 30 waypoints | 14 066 ms | 5.4 ms | 5 ms |
+| drawing, 250 samples | 3 407 ms | 10.0 ms | 10 ms |
+| drawing, 2 000 samples | 789 ms | 21.6 ms | 40 ms |
+| short, sharp drawing path | refused after 7 424 ms | timed in 2.6 ms | |
+| impossible pen budget (1 nm): refused | | 20 ms | 50 ms |
 
-**Other results.**
-- Ends: velocity exactly 0; configuration equal to the input's (the tests check to 1e-12).
-  Acceleration at the very ends is below 0.01 rad/s²; the smooth spline doesn't force it to zero.
-- Determinism: the same input gives a bit-identical output.
-- Speed, CPU time of one process: a 2 000-sample drawing path takes 66 ms; a 2 000-sample
-  jittery free path takes 242 ms. The long random zigzags (about 10 rad of joint travel with
-  sharp corners, a smoothing grid of about 500 000 points) take 0.9–1.2 s each.
+The test suite's own least-disturbed runs, with the test arm: 3.7 ms for 30 waypoints, 4.9 ms
+for 250 samples, 10.9 ms for 2 000 samples.

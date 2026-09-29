@@ -1,184 +1,168 @@
-"""Curves for the timing step: smoothing a joint polyline, and the cubic that a Trajectory means.
+"""Curves for the timing step: rounding the corners of a joint polyline, and the cubic that a
+Trajectory means.
 
 A path made of straight pieces has corners, and at a corner the acceleration is an impulse
-however slowly the corner is flown (lesson L44).  So before any timing, the polyline is replaced
-by a smooth path that stays within a given distance of it:
+however slowly the corner is flown (lesson L44).  So before any timing each corner is rounded:
 
-    each point of the path is replaced by a weighted average of its neighbours along the path.
+    near a corner, each point is replaced by an average of its neighbours along the path
+    (three box averages in a row, over a window of width w).
 
-On a straight piece the average of a straight line is the line itself, so straight pieces are
-kept exactly; only the corners are rounded.  The weights are three box averages in a row, which
-makes the result smooth up to its third derivative (acceleration and jerk stay finite).  The
-window is as wide as the deviation budget allows at each place: the narrowest width that fits
-everywhere is found first, then wider ones (4x, 16x, ...) are blended in wherever they fit too.  The two ends are handled by mirroring the path through its end
-points, which keeps both end points exactly where they were.
+A straight piece averages to itself, so a corner's rounding only reaches 1.5 w either side of
+it, and the rounded path is the polyline plus one small, exactly known bump per corner:
 
-Deviation is measured pointwise at equal path parameter: the smooth path at parameter u against
-the polyline at the same u, as a Euclidean distance in joint space (radians).
+    q(u) = polyline(u) + sum over corners j of  dm_j * bump(u - u_j, w_j)
+
+where dm_j is the change of direction (slope) at corner j.  The bump and its first three
+derivatives are short polynomials, so the path can be evaluated exactly at any u without a grid,
+and each corner gets its own window.  A lone corner moves the path by 0.203 w |dm| at the corner
+and nowhere more; the window is the widest that keeps every point within the deviation budget
+(and the pen tip within its budget, if one is given), found by narrowing only the corners that
+break it.  Each window also stays 1.5 w clear of the path's ends, so the ends are exact.
+
+Deviation is measured at equal path parameter u, as a Euclidean distance in joint space.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.interpolate import CubicSpline
-from scipy.ndimage import correlate1d, minimum_filter1d, uniform_filter1d
+from scipy.linalg import solve_banded
 
-WIDTH_LEVELS = 8       # window widths tried: the narrowest that fits everywhere, times 4^k
+BUMP_AT_CORNER = 0.203125   # bump(0, w) / w: the deviation of a lone corner per unit turn and width
+NARROW_TRIES = 40           # rounds of narrowing the corners that break a budget
+DENSE_WIDTH = 4.0           # a window never spans more than this many sample spacings: wider
+                            # averaging gains nothing on a densely sampled curve, and costs time
+_C = np.array([1.0, -3.0, 3.0, -1.0])   # truncated-power weights of three box averages
 
 
-# --------------------------------------------------------------------------- the smooth path
+# --------------------------------------------------------------------------- the rounded path
 
 
 @dataclass(frozen=True)
-class SmoothPath:
-    """A smooth joint path sampled on a fine uniform grid of the path parameter u in [0, L]."""
-    u: np.ndarray          # (M,) grid, u[0] = 0, u[-1] = L, spacing h
-    q: np.ndarray          # (M, 7)
-    dq: np.ndarray         # (M, 7) dq/du
-    ddq: np.ndarray        # (M, 7) d2q/du2
-    dddq: np.ndarray       # (M, 7) d3q/du3
-    width: np.ndarray      # (M,) the averaging window used at each point, in units of u
-    deviation: float       # largest joint-space distance to the polyline at equal u, rad
-
-    @property
-    def h(self) -> float:
-        return float(self.u[1] - self.u[0])
+class Rounded:
+    """A polyline with rounded corners.  Evaluate it with `evaluate`."""
+    u_knots: np.ndarray    # (N,) path parameter of the samples, 0 .. L
+    q_knots: np.ndarray    # (N, 7)
+    slope: np.ndarray      # (N-1, 7) dq/du of each straight piece
+    u_c: np.ndarray        # (C,) where the corners are
+    dm: np.ndarray         # (C, 7) change of slope at each corner
+    w: np.ndarray          # (C,) window width at each corner
+    deviation: float       # largest joint-space distance found from the polyline, rad
+    tip_deviation: float | None   # largest pen-tip distance found from the polyline's pen path
 
 
 def polyline_at(u_knots: np.ndarray, q_knots: np.ndarray, u: np.ndarray) -> np.ndarray:
     """The input polyline evaluated at parameters u (clamped to its ends)."""
-    return np.stack([np.interp(u, u_knots, q_knots[:, j]) for j in range(q_knots.shape[1])],
-                    axis=1)
+    u = np.clip(np.asarray(u, dtype=float), u_knots[0], u_knots[-1])
+    k = np.clip(np.searchsorted(u_knots, u, side="right") - 1, 0, len(u_knots) - 2)
+    f = ((u - u_knots[k]) / (u_knots[k + 1] - u_knots[k]))[:, None]
+    return q_knots[k] + f * (q_knots[k + 1] - q_knots[k])
 
 
-def smooth_path(u_knots: np.ndarray, q_knots: np.ndarray, deviation: float,
-                oversample: int = 8, max_points: int = 1_000_000,
-                min_points: int = 2000) -> SmoothPath | str:
-    """Round the corners of a polyline, staying within `deviation` of it.
+def _bump(t, order):
+    """The bump and its derivatives in units of the window: t = x / w + 1.5, 0 < t < 3.
 
-    u_knots must be strictly increasing, starting at 0.  Returns a reason string if the corners
-    are so sharp, for the length of the path, that the grid would exceed `max_points`.  The grid
-    has at least `min_points`, so that the speed can be chosen finely along a straight path too.
+    order 0: bump / w     1: d bump / dx     2: w d2/dx2     3: w^2 d3/dx3
+    """
+    d = np.maximum(t[:, None] - np.arange(4.0), 0.0)
+    if order == 0:
+        return (d ** 4) @ _C / 24.0 - np.maximum(t - 1.5, 0.0)
+    if order == 1:
+        return (d ** 3) @ _C / 6.0 - (t >= 1.5)
+    if order == 2:
+        return (d ** 2) @ _C / 2.0
+    return d @ _C
+
+
+def _pairs(u_c, w, u):
+    """(point index, corner index, t) for every point of sorted `u` inside a corner's window."""
+    lo = np.searchsorted(u, u_c - 1.5 * w, side="right")
+    hi = np.searchsorted(u, u_c + 1.5 * w, side="left")
+    count = np.maximum(hi - lo, 0)
+    corner = np.repeat(np.arange(len(u_c)), count)
+    start = np.repeat(np.cumsum(count) - count, count)
+    point = np.arange(len(corner)) - start + lo[corner]
+    return point, corner, (u[point] - u_c[corner]) / w[corner] + 1.5
+
+
+def evaluate(r: Rounded, u: np.ndarray, orders=(0,)) -> list[np.ndarray]:
+    """The rounded path (order 0) and its derivatives d^k q / du^k at sorted points u."""
+    u = np.asarray(u, dtype=float)
+    point, corner, t = _pairs(r.u_c, r.w, u)
+    out = []
+    for k in orders:
+        if k == 0:
+            base = polyline_at(r.u_knots, r.q_knots, u)
+        elif k == 1:
+            seg = np.clip(np.searchsorted(r.u_knots, u, side="right") - 1, 0, len(r.slope) - 1)
+            base = r.slope[seg].copy()
+        else:
+            base = np.zeros((len(u), r.q_knots.shape[1]))
+        weight = _bump(t, k) * r.w[corner] ** (1 - k)
+        m = base.shape[1]
+        flat = (point[:, None] * m + np.arange(m)).ravel()
+        base += np.bincount(flat, (weight[:, None] * r.dm[corner]).ravel(),
+                            minlength=len(u) * m).reshape(len(u), m)
+        out.append(base)
+    return out
+
+
+def round_corners(u_knots: np.ndarray, q_knots: np.ndarray, deviation: float,
+                  tip_of=None, tip_budget: float | None = None) -> Rounded | str:
+    """Round every corner of the polyline as widely as the budgets allow; a reason if it can't.
+
+    u_knots strictly increasing from 0.  Budgets are checked at the corners and halfway between
+    samples, where a rounded path is furthest from its polyline.
     """
     L = float(u_knots[-1])
-    slopes = np.diff(q_knots, axis=0) / np.diff(u_knots)[:, None]
-    turn = np.linalg.norm(np.diff(slopes, axis=0), axis=1)
-    # A single rounded corner deviates by about 0.2 * turn * width; start just below that.
-    width = L / 3.0
-    if turn.size and turn.max() > 0.0:
-        width = min(width, 4.0 * deviation / turn.max())
-    for _ in range(60):
-        grid = _grid(L, width, oversample, max_points, min_points)
-        if grid is None:
-            return (f"corners too sharp for the length of the path: a window of {width:.3g} "
-                    f"over a length of {L:.3g} needs more than {max_points} grid points")
-        h, n_box = grid
-        width = h * n_box
-        n = int(round(L / h))
-        pad = 3 * (n_box // 2) + 4
-        u, q_lin = _extend(u_knots, q_knots, h, n, pad)
-        q = _box3(q_lin, n_box)
-        err = float(np.max(np.linalg.norm((q - q_lin)[pad:pad + n + 1], axis=1)))
-        if err <= deviation:
-            return _widen(u_knots, q_knots, h, n, n_box, deviation)
-        width *= max(0.3, 0.95 * deviation / err)
-    return "smoothing did not converge"
+    slope = np.diff(q_knots, axis=0) / np.diff(u_knots)[:, None]
+    dm = np.diff(slope, axis=0)
+    turn = np.linalg.norm(dm, axis=1)
+    keep = turn > 1e-12 * max(1.0, float(np.abs(slope).max()))
+    u_c, dm, turn = u_knots[1:-1][keep], dm[keep], turn[keep]
+    spacing = 0.5 * (np.diff(u_knots)[:-1] + np.diff(u_knots)[1:])[keep]
+    # Widest window for a lone corner; for a densely sampled curve, the window whose average
+    # bends the curve by the budget; and never past the ends of the path.
+    w = np.minimum.reduce([deviation / (BUMP_AT_CORNER * np.maximum(turn, 1e-300)),
+                           0.85 * np.sqrt(8.0 * deviation * spacing / np.maximum(turn, 1e-300)),
+                           DENSE_WIDTH * spacing,
+                           np.minimum(u_c, L - u_c) / 1.5])
+    # Probe at every sample, and halfway along every piece that is long next to the windows at
+    # its ends (on a densely sampled curve the deviation varies too slowly to need both).
+    w_end = np.full(len(u_knots), np.inf)
+    w_end[1:-1][keep] = w
+    long_piece = np.diff(u_knots) > 0.25 * np.minimum(w_end[:-1], w_end[1:])
+    probe = np.unique(np.concatenate([u_knots, 0.5 * (u_knots[1:] + u_knots[:-1])[long_piece]]))
+    lin = polyline_at(u_knots, q_knots, probe)
+    tip_lin = tip_of(lin) if tip_budget is not None else None
+    over = np.zeros(len(probe))
+    tip_over = np.zeros(len(probe))
+    redo = np.arange(len(probe))              # the points whose rounded position may have moved
+    for _ in range(NARROW_TRIES):
+        r = Rounded(u_knots, q_knots, slope, u_c, dm, w, 0.0, None)
+        q = evaluate(r, probe[redo])[0]
+        over[redo] = np.linalg.norm(q - lin[redo], axis=1) / deviation
+        if tip_lin is not None:
+            tip_over[redo] = np.linalg.norm(tip_of(q) - tip_lin[redo], axis=1) / tip_budget
+        worst = np.maximum(over, tip_over)
+        if worst.max() <= 1.0:
+            tip_dev = float(tip_over.max()) * tip_budget if tip_lin is not None else None
+            return Rounded(u_knots, q_knots, slope, u_c, dm, w, float(over.max()) * deviation,
+                           tip_dev)
+        narrowed = _narrow(u_c, w, probe, worst)
+        moved = narrowed < w
+        redo = np.unique(_pairs(u_c[moved], w[moved], probe)[0])
+        w = narrowed
+    return f"corners could not be rounded within the budget in {NARROW_TRIES} rounds"
 
 
-def _widen(u_knots, q_knots, h, n, n_box0, deviation) -> SmoothPath:
-    """Smooth at widths n_box0 * 4^k and, wherever a wider window stays inside the budget, blend
-    it in gradually.  Each blend is a weighted average of two paths that are both inside the
-    budget there, so the result is too.  One sharp corner then does not force a narrow window
-    (and tight, slow curves) on the whole path."""
-    boxes = [n_box0]
-    while len(boxes) < WIDTH_LEVELS and (4 * boxes[-1] + 1) * h <= u_knots[-1] / 3.0:
-        boxes.append(4 * boxes[-1] + 1)
-    pad = 3 * (boxes[-1] // 2) + 4
-    u, q_lin = _extend(u_knots, q_knots, h, n, pad)
-    q = _box3(q_lin, n_box0)
-    width = np.full(len(u), n_box0 * h)
-    for n_box in boxes[1:]:
-        wide = _box3(q_lin, n_box)
-        ok = (np.linalg.norm(wide - q_lin, axis=1) <= deviation).astype(float)
-        step = (2 * n_box // 3) | 1                 # blend over about two window widths
-        reach = 3 * (step // 2) + 1
-        alpha = minimum_filter1d(ok, 2 * reach + 1, mode="nearest")
-        for _ in range(3):
-            alpha = uniform_filter1d(alpha, step, mode="nearest")
-        alpha = np.clip(alpha, 0.0, 1.0)
-        q += alpha[:, None] * (wide - q)
-        width += alpha * (n_box * h - width)
-    d1 = np.gradient(q, h, axis=0)
-    d2 = np.gradient(d1, h, axis=0)
-    d3 = np.gradient(d2, h, axis=0)
-    keep = slice(pad, pad + n + 1)
-    qk = q[keep].copy()
-    qk[0], qk[-1] = q_knots[0], q_knots[-1]
-    err = float(np.max(np.linalg.norm(qk - q_lin[keep], axis=1)))
-    return SmoothPath(u[keep] * 1.0, qk, d1[keep], d2[keep], d3[keep], width[keep], err)
-
-
-def _grid(L: float, width: float, oversample: int, max_points: int, min_points: int):
-    """Grid spacing h (dividing L exactly) and box length in samples; None if too many points."""
-    for k in range(oversample, 2, -1):
-        n_box = 2 * k + 1
-        n = int(np.ceil(L / (width / n_box)))
-        if n < min_points:                      # short or straight path: longer box, same width
-            n = min_points
-            n_box = max(n_box, int(width / (L / n)) // 2 * 2 + 1)
-        if n + 3 * n_box + 10 <= max_points:
-            return L / n, n_box
-    return None
-
-
-def _extend(u_knots, q_knots, h, n, pad):
-    """The polyline on the grid, continued past both ends by mirroring through the end points
-    (odd reflection): a symmetric average at an end point is then the end point itself."""
-    L = float(u_knots[-1])
-    i = np.arange(-pad, n + pad + 1)
-    u = i * h
-    q = polyline_at(u_knots, q_knots, np.abs(u))
-    lo, hi = i < 0, i > n
-    q[lo] = 2.0 * q_knots[0] - q[lo]
-    q[hi] = 2.0 * q_knots[-1] - polyline_at(u_knots, q_knots, 2.0 * L - u[hi])
-    return u, q
-
-
-def box3_kernel(n: int) -> np.ndarray:
-    """Weights of three box averages of n samples in a row (3 n - 2 of them, summing to 1).
-
-    Built from exact integer running sums: np.convolve on long boxes goes through a threaded
-    BLAS dot product, which stalls on a loaded machine.
-    """
-    tri = np.minimum(np.arange(1, 2 * n), np.arange(2 * n - 1, 0, -1)).astype(float)
-    run = np.concatenate([[0.0], np.cumsum(tri)])
-    k = np.arange(3 * n - 2)
-    return (run[np.minimum(k + 1, 2 * n - 1)] - run[np.clip(k - n + 1, 0, 2 * n - 1)]) / float(n) ** 3
-
-
-def _box3(q, n_box):
-    """Three box averages of n_box samples in a row.
-
-    A sliding sum: the cost does not grow with the width, and its rounding error changes by one
-    rounding per step, so even the third difference of the result stays clean.  (A running sum
-    over the whole path would not: its rounding grows with the total.)
-    """
-    rows = np.ascontiguousarray(q.T)            # one contiguous row per joint: 10x faster
-    for _ in range(3):
-        rows = uniform_filter1d(rows, n_box, axis=1, mode="nearest")
-    return rows.T
-
-
-def path_at(path: SmoothPath, u: np.ndarray) -> np.ndarray:
-    """The smooth path at arbitrary u, by cubic Hermite interpolation on its grid."""
-    h = path.h
-    x = np.clip(np.asarray(u, dtype=float), 0.0, path.u[-1]) / h
-    k = np.minimum(np.floor(x).astype(int), len(path.u) - 2)
-    tau = (x - k)[:, None]
-    q, qn = path.q[k], path.q[k + 1]
-    m, mn = path.dq[k] * h, path.dq[k + 1] * h
-    return _hermite_value(q, qn, m, mn, tau)
+def _narrow(u_c, w, probe, over):
+    """Narrow every corner whose window covers a point over budget, by that point's excess."""
+    bad = over > 1.0
+    point, corner, _ = _pairs(u_c, w, probe[bad])
+    factor = np.ones(len(w))
+    np.minimum.at(factor, corner, 0.95 / over[bad][point])
+    return w * factor
 
 
 # --------------------------------------------------------------------------- the cubic between samples
@@ -217,11 +201,56 @@ def hermite(t_knots: np.ndarray, q: np.ndarray, qd: np.ndarray, t):
 def rest_to_rest_velocities(t_knots: np.ndarray, q: np.ndarray) -> np.ndarray:
     """Knot velocities that make the piecewise cubic twice differentiable, at rest at both ends.
 
-    This is the clamped cubic spline through the knots.  With these velocities the acceleration
-    is continuous across every knot, so jerk is finite everywhere and a finite-difference
-    measurement does not grow with the sampling rate.
+    This is the clamped cubic spline through the knots: continuity of acceleration at every
+    inner knot is one tridiagonal equation per knot.  With these velocities the acceleration
+    is continuous, so jerk is finite everywhere and a finite-difference measurement does not
+    grow with the sampling rate.
     """
-    qd = CubicSpline(t_knots, q, axis=0, bc_type="clamped")(t_knots, 1)
-    qd[0] = 0.0
-    qd[-1] = 0.0
+    h = np.diff(t_knots)
+    qd = np.zeros_like(q)
+    if len(h) < 2:
+        return qd
+    slope = np.diff(q, axis=0) / h[:, None]
+    band = np.zeros((3, len(h) - 1))
+    band[0, 1:] = h[:-2]                          # above the diagonal: h_{i-1} v_{i+1}
+    band[1] = 2.0 * (h[:-1] + h[1:])
+    band[2, :-1] = h[2:]                          # below the diagonal: h_{i+1} v_{i-1}
+    rhs = 3.0 * (h[1:, None] * slope[:-1] + h[:-1, None] * slope[1:])
+    qd[1:-1] = solve_banded((1, 1), band, rhs)
     return qd
+
+
+def peaks(t_knots: np.ndarray, q: np.ndarray, qd: np.ndarray):
+    """Exact extremes of the piecewise cubic, per joint: lowest and highest position, largest
+    |velocity|, |acceleration| and |jerk|.  Any sampled finite difference is an average of the
+    true derivative, so it can never read more than these."""
+    h = np.diff(t_knots)[:, None]
+    q0, q1, v0, v1 = q[:-1], q[1:], qd[:-1], qd[1:]
+    c2 = (3 * (q1 - q0) / h - 2 * v0 - v1) / h          # q = q0 + v0 s + c2 s^2 + c3 s^3
+    c3 = (v0 + v1 - 2 * (q1 - q0) / h) / (h * h)
+    a0, a1 = 2 * c2, 2 * c2 + 6 * c3 * h
+    s_turn = np.where(c3 != 0, -c2 / np.where(c3 != 0, 3 * c3, 1.0), -1.0)   # where |v| peaks
+    inner = (s_turn > 0) & (s_turn < h)
+    s_in = np.where(inner, s_turn, 0.0)
+    v_in = np.where(inner, v0 + 2 * c2 * s_in + 3 * c3 * s_in ** 2, 0.0)
+    vel = np.maximum.reduce([np.abs(v0), np.abs(v1), np.abs(v_in)]).max(axis=0)
+    acc = np.maximum(np.abs(a0), np.abs(a1)).max(axis=0)
+    jerk = np.abs(6 * c3).max(axis=0)
+    lo, hi = np.minimum(q0, q1).min(axis=0), np.maximum(q0, q1).max(axis=0)
+    # A position extreme between knots needs the velocity to change sign there.
+    k, j = np.nonzero((v0 * v1 < 0) | (v0 * v_in < 0) | (v1 * v_in < 0))
+    hk, a, b, c, d = h[k, 0], q0[k, j], v0[k, j], c2[k, j], c3[k, j]
+    for sign in (-1.0, 1.0):                              # where the velocity is zero
+        disc = np.maximum(c * c - 3 * d * b, 0.0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            s = np.where(d != 0, (-c + sign * np.sqrt(disc)) / (3 * d),
+                         np.where(c != 0, -b / (2 * c), -1.0))
+        ok = (s > 0) & (s < hk)
+        s = np.where(ok, s, 0.0)
+        x = a + b * s + c * s ** 2 + d * s ** 3
+        np.minimum.at(lo, j, x)
+        np.maximum.at(hi, j, x)
+    # The trajectory holds still before and after: an end acceleration is a step a 1 kHz
+    # third difference reads as |a| / 1 ms.
+    jerk = np.maximum(jerk, np.maximum(np.abs(a0[0]), np.abs(a1[-1])) / 1e-3)
+    return lo, hi, vel, acc, jerk
