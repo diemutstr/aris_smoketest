@@ -7,7 +7,7 @@ two trees meet and the path is read off both.
 
 A round's steps are checked in one batch and its runs in another (every step of every run at
 once, then each run keeps its free prefix): one call into the collision check costs far more
-than one configuration inside it.  The search stops after a fixed number of configurations
+than one configuration inside it.  The search stops after a fixed number of edges
 checked (not after a time), so the same question gets the same answer on any machine.
 """
 from __future__ import annotations
@@ -43,8 +43,10 @@ class Tree:
             self.n += 1
         return parent
 
-    def nearest(self, q: np.ndarray) -> int:
-        return int(np.argmin(np.sum((self.q[:self.n] - q) ** 2, axis=1)))
+    def nearest(self, Q: np.ndarray) -> np.ndarray:
+        """(M,7) -> (M,) index of the nearest node to each."""
+        d = self.q[None, :self.n] - Q[:, None]
+        return np.argmin(np.einsum("mnj,mnj->mn", d, d), axis=1)
 
     def branch(self, i: int) -> np.ndarray:
         """Configurations from node i back to the root."""
@@ -69,20 +71,22 @@ class SearchResult:
 
 
 def connect(checker, q_a: np.ndarray, q_b: np.ndarray, rng: np.random.Generator,
-            max_checks: int, step: float = 1.0, batch: int = 8) -> SearchResult:
-    """A free joint path from q_a to q_b, or none within `max_checks` configurations checked.
+            max_edges: int, step: float = 1.0, batch: int = 8,
+            run_step: float = 1.0) -> SearchResult:
+    """A free joint path from q_a to q_b, or none within `max_edges` edges checked.
 
     Each round grows one tree toward `batch` random targets at once and then lets the other
-    tree run at every new node, all edges of a round in two batched checks."""
+    tree run at every new node in pieces of `run_step`, keeping the free prefix; all edges of a
+    round go in two batched checks."""
     lo, hi = checker.q_lo, checker.q_hi
     trees = [Tree.rooted(q_a), Tree.rooted(q_b)]
-    start = checker.n_checked
+    start = checker.n_edges
     rounds = 0
-    while checker.n_checked - start < max_checks:
+    while checker.n_edges - start < max_edges:
         rounds += 1
         grow, other = trees[(rounds - 1) % 2], trees[rounds % 2]
         targets = rng.uniform(lo, hi, (batch, 7))
-        near = [grow.nearest(t) for t in targets]
+        near = grow.nearest(targets)
         q_near = grow.q[near]
         d = targets - q_near
         dist = np.linalg.norm(d, axis=1, keepdims=True)
@@ -91,10 +95,8 @@ def connect(checker, q_a: np.ndarray, q_b: np.ndarray, rng: np.random.Generator,
         new = [(grow.add(q[None], i), q) for i, q, g in zip(near, q_new, good) if g]
         if not new:
             continue
-        runs = []                                    # (index in other, chain to the new node)
-        for _, q in new:
-            j = other.nearest(q)
-            runs.append((j, _steps(other.q[j], q, step)))
+        js = other.nearest(np.array([q for _, q in new]))
+        runs = [(int(j), _steps(other.q[j], q, run_step)) for j, (_, q) in zip(js, new)]
         ok = checker.edges(np.concatenate([np.concatenate([other.q[j][None], c[:-1]])
                                            for j, c in runs]),
                            np.concatenate([c for _, c in runs]))

@@ -24,7 +24,7 @@ from aris.free.check import Checker
 from aris.free.flown import flown_verdict
 from aris.free.lift import paper_plane, raise_end
 from aris.free.rrt import connect
-from aris.free.shortcut import dedupe, length, shorten
+from aris.free.shortcut import length, shorten
 from aris.kernel import collide
 from aris.kernel.retime import retime_detailed
 from aris.types import DrawRules, Gates, JointPath, Motion, Obstacles, Refusal, Trajectory
@@ -33,10 +33,12 @@ from aris.types import DrawRules, Gates, JointPath, Motion, Obstacles, Refusal, 
 @dataclass(frozen=True)
 class Options:
     lift_to: float | None = 0.06   # m above the paper for the raised ends; None: no lift
-    max_checks: int = 50_000       # configurations the tree search may check
-    step: float = 1.0              # rad, the tree's step
-    batch: int = 8                 # random targets per tree round
-    shortcut_rounds: int = 3
+    max_edges: int = 20_000         # straight edges the tree search may check (its cap)
+    step: float = 1.5              # rad, the tree's step
+    batch: int = 4                 # random targets per tree round
+    run_step: float = np.inf       # rad, pieces in which a tree runs at the other's new node
+                                   # (inf: one straight edge, all or nothing)
+    shortcut_rounds: int = 1
     budget_max: float = 0.03       # rad, the largest corner-rounding budget tried
     budget_min: float = 1.5e-4     # rad, retime's default; below it we give up
     corner_rate: float = 1.3       # m/rad, for the first corner-rounding guess (see below)
@@ -55,7 +57,7 @@ class Stats:
     t_time: float = 0.0
     t_check: float = 0.0
     cpu: float = 0.0               # s of this process's CPU time, all steps
-    checked: int = 0               # configurations measured, all steps
+    checked: int = 0               # straight edges checked, all steps
     checked_search: int = 0        # of which by steps 1-4
     checked_shorten: int = 0       # of which by step 5
     rounds: int = 0                # tree rounds
@@ -63,7 +65,7 @@ class Stats:
     straight: float = 0.0          # rad, |q_goal - q_start|
     duration: float = 0.0          # s
     budget: float = 0.0            # rad
-    clearance: tuple = ()          # (obstacles, self) of the flown trajectory, m
+    clearance: tuple = ()          # (clearance of the flown trajectory, m,): obstacles and self
     notes: list = field(default_factory=list)
 
 
@@ -113,22 +115,23 @@ def _plan(arm, q_start, q_goal, obstacles, rules, gates, seed_extra, options, st
         st.method = "straight"
         return Motion("free", traj)
     rng = np.random.default_rng(seed_of(q_start, q_goal, obstacles, seed_extra))
-    checker.need_obst = min(options.pad, 0.5 * float(c_ends.min()))
-    checker.need_self = min(options.pad, 0.5 * float(s_ends.min()))
+    room = min(float(c_ends.min()), float(s_ends.min()))
+    checker.set_need(min(options.pad, 0.5 * float(c_ends.min())),
+                     min(options.pad, 0.5 * float(s_ends.min())), min(5e-4, 0.25 * room))
 
-    path = _search(arm, checker, q_start, q_goal, obstacles, rng, options, st)
+    path, head, tail = _search(arm, checker, q_start, q_goal, obstacles, rng, options, st)
     st.t_search = time.perf_counter() - t0
-    st.checked = st.checked_search = checker.n_checked
+    st.checked = st.checked_search = checker.n_edges
     if path is None:
-        return Refusal("no_free_path", f"no free path found within {options.max_checks} "
-                       f"configurations checked ({st.rounds} tree rounds)")
+        return Refusal("no_free_path", f"no free path found within {options.max_edges} "
+                       f"edges checked ({st.rounds} tree rounds)")
     t1 = time.perf_counter()
     if len(path) > 2:
-        path = shorten(checker, path, rng, options.shortcut_rounds)
+        path = shorten(checker, path, rng, options.shortcut_rounds, head, tail)
     st.t_shorten = time.perf_counter() - t1
-    st.checked_shorten = checker.n_checked - st.checked_search
+    st.checked_shorten = checker.n_edges - st.checked_search
     result = _time_and_verify(checker, arm, path, rules, gates, options, st)
-    st.checked = checker.n_checked
+    st.checked = checker.n_edges
     return result
 
 
@@ -141,10 +144,7 @@ def _ends_refusal(arm, checker, gates, q_start, q_goal):
             j = int(np.argmin(np.minimum(Q[i] - arm.limits.q_min, arm.limits.q_max - Q[i])))
             return Refusal("outside_limits", f"{name}: joint {j + 1} is {margin[i]:.4f} rad from "
                            f"its limit, the gate asks {gates.limit_margin} rad"), None, None
-    det = collide.clearance_detail_q(checker.tables, Q, checker.packed, backend=checker.backend)
-    own = collide.self_clearance_q(checker.tables, Q, checker.pairs, checker.self_margin,
-                                   backend=checker.backend)
-    checker.n_checked += 2
+    det, own = checker.ends(Q)
     for name, i in (("start", 0), ("goal", 1)):
         if det.value[i] < 0.0:
             return Refusal("blocked", f"{name}: {det.capsule_names[det.capsule[i]]} is "
@@ -160,23 +160,24 @@ def _search(arm, checker, q_start, q_goal, obstacles, rng, options, st):
     """Steps 2-4: a free piecewise-straight joint path from q_start to q_goal, or None."""
     if checker.edges(q_start[None], q_goal[None])[0]:
         st.method = "straight"
-        return np.stack([q_start, q_goal])
+        return np.stack([q_start, q_goal]), 0, 0
     paper = paper_plane(obstacles)
     up_s = raise_end(arm, checker, q_start, paper, options.lift_to)
     up_g = raise_end(arm, checker, q_goal, paper, options.lift_to)
     st.lifted = (up_s is not None, up_g is not None)
     head = up_s if up_s is not None else q_start[None]
     tail = (up_g if up_g is not None else q_goal[None])[::-1]
+    ends = len(head) - 1, len(tail) - 1            # lift pieces at either end
     if (up_s is not None or up_g is not None) and checker.edges(head[-1:], tail[:1])[0]:
         st.method = "lifted"                       # up, straight across, down: no tree needed
-        return dedupe(np.concatenate([head, tail]))
+        return np.concatenate([head, tail]), *ends
     st.method = "tree"
-    found = connect(checker, head[-1], tail[0], rng, options.max_checks, options.step,
-                    options.batch)
+    found = connect(checker, head[-1], tail[0], rng, options.max_edges, options.step,
+                    options.batch, options.run_step)
     st.rounds = found.rounds
     if found.path is None:
-        return None
-    return dedupe(np.concatenate([head[:-1], found.path, tail[1:]]))
+        return None, 0, 0
+    return np.concatenate([head[:-1], found.path, tail[1:]]), *ends
 
 
 def _time_and_verify(checker, arm, path, rules, gates, options, st) -> Motion | Refusal:
@@ -186,11 +187,11 @@ def _time_and_verify(checker, arm, path, rules, gates, options, st) -> Motion | 
     trajectory fails, the next is what the whole path's lower bound provably pays for, then
     halving.  Each is kept only if the flown trajectory passes `flown_verdict`."""
     r_obst = float(np.max(np.linalg.norm(checker.reach, axis=0)))
-    r_self = float(np.max(np.linalg.norm(checker.self_w, axis=1)))
+    r_self = 2.0 * r_obst                           # a pair closes by both capsules' moves
     pays = lambda o, s: 0.9 * max(min(o / r_obst, s / r_self), 0.0)
     if len(path) > 2:
-        cap, own = checker.measure(path[1:-1])
-        first = 0.9 * max(min(float(cap.min()), float(own.min())), 0.0) / options.corner_rate
+        det, own = checker.ends(path[1:-1])
+        first = 0.9 * max(min(float(det.value.min()), float(own.min())), 0.0) / options.corner_rate
     else:
         first = options.budget_max                  # nothing to round
     budgets = [float(np.clip(first, options.budget_min, options.budget_max))]
@@ -204,7 +205,7 @@ def _time_and_verify(checker, arm, path, rules, gates, options, st) -> Motion | 
             why = f"retime: {res.reason} {res.detail}"
         else:
             t = time.perf_counter()
-            why, st.clearance = flown_verdict(checker, arm, res, gates)
+            why, st.clearance = flown_verdict(checker, arm, res, gates, path)
             st.t_check += time.perf_counter() - t
             if why is None:
                 st.budget, st.duration = budget, float(res.traj.t[-1])
@@ -213,7 +214,8 @@ def _time_and_verify(checker, arm, path, rules, gates, options, st) -> Motion | 
         st.notes.append(f"budget {budget:.2e}: {why}")
         if not budgets and budget > options.budget_min:
             t = time.perf_counter()
-            safe = pays(*checker.path_margins(path))
+            flat = float(np.min(checker.edge_margins(path[:-1], path[1:])))
+            safe = pays(flat, flat)
             st.t_check += time.perf_counter() - t
             budgets = [max(options.budget_min, min(0.5 * budget, safe))]
     return Refusal("cannot_time", f"no timing whose flown path is free: {why}")

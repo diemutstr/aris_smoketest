@@ -82,7 +82,24 @@ def dedupe(q: np.ndarray, tol: float = 1e-9) -> np.ndarray:
     return q[keep + [len(q) - 1]]
 
 
-def shorten(checker, q: np.ndarray, rng: np.random.Generator, rounds: int = 12) -> np.ndarray:
-    q = drop(checker, q)
-    q = cut_corners(checker, q, rng, rounds)
-    return drop(checker, q)
+def shorten(checker, q: np.ndarray, rng: np.random.Generator, rounds: int = 3,
+            head: int = 0, tail: int = 0) -> np.ndarray:
+    """Shorten q.  The first `head` and last `tail` pieces are lifts off the paper: close to
+    the paper every check is expensive, so a lift is kept whole or skipped whole, never
+    trimmed sample by sample."""
+    n = len(q)
+    mid = q[head:n - tail]
+    mid = drop(checker, cut_corners(checker, drop(checker, mid), rng, rounds))
+    out = np.concatenate([q[:head], mid, q[n - tail:]])
+    if (head or tail) and len(mid) > 2 - (not head) - (not tail):
+        # skip a lift whole: from the low end straight to the first waypoint past its top
+        a, b = [], []
+        if head:
+            a.append(q[0]), b.append(mid[1])
+        if tail:
+            a.append(mid[-2]), b.append(q[-1])
+        ok = list(checker.edges(np.array(a), np.array(b)))
+        pre = np.concatenate([q[:1], mid[1:]]) if head and ok.pop(0) else out[:head + len(mid)]
+        out = (np.concatenate([pre[:-1], q[-1:]]) if tail and ok.pop(0)
+               else np.concatenate([pre, q[n - tail:]]))
+    return dedupe(out)

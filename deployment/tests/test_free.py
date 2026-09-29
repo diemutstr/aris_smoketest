@@ -21,8 +21,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import free_cases  # noqa: E402
 
 from aris.free import Options, plan, plan_detailed, seed_of  # noqa: E402
-from aris.free.bound import accel_bound  # noqa: E402
-from aris.free.check import Checker  # noqa: E402
 from aris.free.lift import lift_path, paper_plane  # noqa: E402
 from aris.kernel import collide, retime  # noqa: E402
 from aris.rig import Rig  # noqa: E402
@@ -95,35 +93,6 @@ def test_motions_are_free_timed_and_exact(scenes, cases):
         print(f"{a:3d} {i:4d} {m:8s} {dur:6.2f} s  {c * 1e3:6.2f} mm  {s * 1e3:6.1f} mm "
               f"{p * 1e3:6.2f} mm  {cpu * 1e3:5.0f} ms")
     assert {"straight", "tree"} <= {r[2] for r in rows}
-
-
-def test_travel_bound_holds(scenes):
-    """The first-order bound on how far a capsule moves is never exceeded (dense sampling)."""
-    arm, obs, rules = scenes[31]
-    ck = Checker(arm, obs, rules.gates)
-    rng = np.random.default_rng(3)
-    lim = arm.limits
-    worst = 0.0
-    for scale in (1.0, 0.1, 0.01):
-        qa = rng.uniform(lim.q_min, lim.q_max, (100, 7))
-        qb = np.clip(qa + rng.normal(size=(100, 7)) * scale, lim.q_min, lim.q_max)
-        U = qb - qa
-        va = ck.measure(qa, U)[2]
-        vb = ck.measure(qb, U)[2]
-        A = accel_bound(np.abs(U), ck.reach)
-        Z = np.abs(U) @ ck.reach
-        da, db = np.minimum(Z, va + A / 2), np.minimum(Z, vb + A / 2)
-        s = np.linspace(0.0, 1.0, 101)
-        b = arm.body((qa[:, None] + s[None, :, None] * U[:, None]).reshape(-1, 7))
-        P0, P1 = b.p0.reshape(100, 101, -1, 3), b.p1.reshape(100, 101, -1, 3)
-        move = lambda ref: np.maximum(np.linalg.norm(P0 - P0[:, ref], axis=-1),
-                                      np.linalg.norm(P1 - P1[:, ref], axis=-1))
-        ok_a = move([0]) <= da[:, None] * s[None, :, None] + 1e-12
-        ok_b = move([-1]) <= db[:, None] * (1 - s)[None, :, None] + 1e-12
-        assert ok_a.all() and ok_b.all()
-        with np.errstate(divide="ignore", invalid="ignore"):
-            worst = max(worst, np.nanmax(move([0])[:, 1:] / (da[:, None] * s[None, 1:, None])))
-    print(f"\nlargest displacement / bound: {worst:.6f}")
 
 
 def test_lift_keeps_the_hand_and_rises_along_the_normal(scenes, cases):
@@ -245,7 +214,7 @@ def test_refusals(rig, scenes, cases):
     side = arm.tip(q)[:, 1]
     a, b = q[side < -0.2][0], q[side > 0.2][0]
     c0 = time.process_time()
-    r = plan(arm, a, b, walled, rules, options=Options(max_checks=3000))
+    r = plan(arm, a, b, walled, rules, options=Options(max_edges=300))
     print(f"\nwalled: {r.reason}: {r.detail} ({time.process_time() - c0:.2f} s cpu)")
     assert isinstance(r, Refusal) and r.reason == "no_free_path"
 
@@ -282,4 +251,4 @@ def test_fixed_set_solve_rate():
               f"worst {cpu.max() * 1e3:.0f} ms; refusals "
               f"{sorted({r[3] for r in mine if not r[2]})}")
         assert solved >= FLOOR[a]
-        assert np.median(cpu) < 10 * 0.21          # generous: ten times the measured median
+        assert np.median(cpu) < 10 * 0.10          # generous: ten times the measured median

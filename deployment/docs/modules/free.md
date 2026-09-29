@@ -6,10 +6,9 @@ arm. Everything is in the arm's base frame. It knows nothing about the table, th
 other arms: walls, parked arms, steel and the paper all arrive as geometry.
 
 Files: `aris/free/planner.py` (the seven steps), `check.py` (what "free" means, in batches),
-`bound.py` (how far the arm can move between two checked configurations), `lift.py`,
-`rrt.py`, `shortcut.py`, `flown.py` (the final verdict). Tests: `tests/test_free.py`; the fixed
-test set: `tests/free_cases.py` builds `tests/data/free_cases_{31,13}.npz`; measurement:
-`tests/free_bench.py`.
+`lift.py`, `rrt.py`, `shortcut.py`, `flown.py` (the final verdict). Tests: `tests/test_free.py`;
+the fixed test set: `tests/free_cases.py` builds `tests/data/free_cases_{31,13}.npz`;
+measurement: `tests/free_bench.py` (`--package` measures another copy side by side).
 
 ## In and out
 
@@ -24,44 +23,44 @@ test set: `tests/free_cases.py` builds `tests/data/free_cases_{31,13}.npz`; meas
   end, the joint or the part of the arm and the obstacle), `no_free_path` (the search cap was
   reached), `cannot_time`, `bad_input`. Never an exception.
 - `plan_detailed` also returns what it did: which way it found the path, times per step, how
-  many configurations it checked, path length, flown duration, clearance as flown.
+  many straight edges it checked, path length, flown duration, clearance as flown.
 
 ## How it works: seven steps
 
 1. **Check the ends.** Each end must be inside the joint limits by the gate's margin, clear of
    every obstacle and clear of itself. If not, refuse at once and say which.
-2. **Try the straight joint-space move.** 13 % to 17 % of the test pairs need nothing more.
-3. **Raise both ends.** A lift-off configuration has the pen tip 25 mm above the paper, where the
-   pen holder is 5 mm from the paper's 20 mm margin: the hardest place to grow a search from. If
-   the obstacles contain the paper, each end is moved straight up along the paper normal to
-   0.06 m, the hand keeping its orientation and joint 7 its angle, the arm following its own
-   shape (every step takes the IK answer nearest the last one). If that short move is not free
-   (it often reaches a joint-limit margin or a wall), the end stays where it is. Then the straight
-   move between the raised ends is tried.
+2. **Try the straight joint-space move.** 26 % to 31 % of the test pairs need nothing more.
+3. **Raise both ends.** A lift-off configuration has the pen tip 25 mm above the paper: the
+   hardest place to grow a search from. If the obstacles contain the paper, each end is moved
+   straight up along the paper normal to 0.06 m, the hand keeping its orientation and joint 7
+   its angle, the arm following its own shape (every step of 12 mm takes the IK answer nearest
+   the last one). If that short move is not free (it often reaches a joint-limit margin or a
+   wall), the end stays where it is. Then the straight move between the raised ends is tried.
 4. **Bidirectional tree search** (RRT-Connect) between the (raised) ends: each round grows one
-   tree a step of up to 1 rad toward 8 random configurations and lets the other tree run straight
-   at every new node; the trees swap every round. Capped by 50 000 configurations checked, not by
-   time, so a result does not depend on the machine.
-5. **Shorten.** Drop every waypoint whose neighbours can see each other, then three rounds of
-   cutting corners between random points along the path, then drop again. Every replacement is
-   checked before it is accepted.
+   tree a step of up to 1.5 rad toward 4 random configurations, then tries one straight edge
+   from the other tree to every new node; the trees swap every round. Capped by 20 000 edges
+   checked, not by time, so a result does not depend on the machine.
+5. **Shorten.** Drop every waypoint whose neighbours can see each other, one round of cutting
+   corners between 16 pairs of random points along the path, then drop again; a lift is kept or
+   skipped whole (near the paper every check is expensive). Every replacement is checked before
+   it is accepted, and each round's candidates go in one batch.
 6. **Time it** with `kernel.retime`. Timing rounds the corners, and a larger rounding budget is
-   both faster to compute and faster to fly (on the same path 0.15 mrad took 40 times the computing of
-   4 mrad). The budget is chosen from the clearance at the path's corners
-   (median 6.7 mrad).
-7. **Check what is flown.** The verdict is taken on the timed trajectory itself: the kernel's
-   `path_clearance` over its samples, the arm against itself the same way, the joint limits (with
-   the gate's margin) at 1 kHz. Between two samples a trajectory is a cubic, not a straight
-   piece; how far it can bend away is charged on top. If the verdict fails, the budget is
-   lowered and the trajectory checked again; nothing unchecked is ever returned.
+   both faster to compute and faster to fly. The budget is chosen from the clearance at the
+   path's corners; if the flown check fails, a budget the path provably pays for, then halving.
+7. **Check what is flown.** Timing keeps the straight pieces of the path exactly. A piece of the
+   timed trajectory that lies on a straight piece of the path (measured, with its extremes
+   computed exactly and any rounding error charged) is covered by that piece's bound, the one
+   the search proved with room to spare. The rest, the rounded corners, is bounded now: the
+   kernel's bound on the chord between points of the flown curve, plus how far the cubic can
+   bend away from it, charged per piece. The joint limits come from retime's exact extremes, with
+   the gate's margin. If the verdict fails, the budget is lowered; nothing unchecked is returned.
 
-**What "free" means while searching.** Between two configurations the arm moves along a straight
-line in joint space. From the joints' speeds at each end and how fast those can change, the
-planner bounds how far any point of each capsule can travel (`bound.py`; checked on random moves
-against dense sampling: never exceeded, worst 0.9997 of the bound). That turns the clearance
-measured at both ends into a lower bound all along; where the bound cannot prove the move free,
-the move is halved and the middle measured. The search also keeps 2 mm beyond every margin (at
-most half of what the ends have), so the path still reads free after its corners are rounded.
+**What "free" means while searching.** Every straight joint-space edge goes to the kernel in
+batches (`collide.edges_clearance_q`): it bounds the clearance all along each edge, obstacles
+and the arm against itself, and stops as soon as an edge is proven free or a point on it is
+found not free. The search keeps 2 mm beyond every margin (at most half of what the ends have),
+asked of the kernel by adding it to the margins, so the path still reads free after its corners
+are rounded.
 
 **Same question, same answer.** The random seed is a hash of the bytes of both ends, every
 obstacle array and `seed_extra`. The test re-plans in a fresh process with another hash seed and
@@ -70,48 +69,54 @@ trajectories too (100 of 100 compared).
 
 ## What it cannot do
 
-- It is slower than the 0.1 s target when the tree is needed: 0.15 to 0.25 s median CPU per
-  plan. About half the time is Python bookkeeping around the collision calls (about 2 000
-  configurations checked per plan). A compiled edge check (the halving loop of `check.edges`
-  inside the collision module) is the next step; retiming (20 to 50 ms) is the second.
-- Paths are shortened, not optimised: median path length 1.05 to 1.09 times the straight
-  joint-space distance, but up to 1.9 times at the 95th percentile.
+- It meets the 0.1 s target for straight and raised moves, not for the tree on a busy machine:
+  tree moves take 106 ms (arm 13) and 191 ms (arm 31) median CPU at load 58. 94 % of that time is
+  inside the kernel's edge call, not in the planner's Python. What would cut it: a tighter bound
+  on how far the arm moves along an edge inside the kernel. The kernel charges each joint's
+  largest lever; a bound from the joints' actual speeds at the edge's ends (first order, plus
+  the reach table for the change) measured 2.5 to 3 times fewer evaluations per edge in this
+  module's earlier numpy version (17 to 20 against about 55).
+- A refusal with `no_free_path` costs the whole cap: 20 000 edges, 10 to 30 s. The hardest
+  solvable pair of the test set needed 15 000.
+- Paths are shortened, not optimised: median path length 1.08 to 1.12 times the straight
+  joint-space distance. One round of corner cutting costs about 45 % of a tree plan's time and
+  saves 0.55 s of flying per tree move (5.7 against 6.3 s median); `shortcut_rounds=0` trades
+  that back.
 - It does not prefer the arm's own side of the table or keep the arm tidy (that would shrink a
   leader's footprint, OPTIMIZATION_NOTES 16).
 - A refusal with `no_free_path` means "not found within the cap", not "no path exists". The
   test's walled scenario (a wall across the arm's axis below the shoulder, the ends on either
-  side) finds nothing
-  with 50 times the cap, which is evidence, not proof.
+  side) found nothing with 1 000 000 configurations checked, which is evidence, not proof.
 - Raising the ends is only an attempt, and it measurably helps little (below).
 
-## Measured (2026-09-29, compiled collision engine, one core per plan, 16 plans in parallel; machine load 37 on 32 cores)
+## Measured (2026-09-29, compiled collision engine, one core per plan, 16 plans in parallel)
 
 The fixed set: 1 000 pairs of lift-off configurations for arm 31 (phase 2 obstacles: parked
 arms 2, 13, 71, walls 17-31 and 31-97, steel, paper) and 1 000 for arm 13 (phase 1: parked 17,
 31, wall 13-71); tips 25 mm above the paper, random spin, no lean; four groups of 250: near
 (tips under 0.15 m apart), far (over 0.6 m), same IK branch, different IK branch.
 
-| arm | solved | straight / raised-straight / tree | CPU per plan: median, 95 %, worst | wall: search, shorten, time, check (medians) | checked | length / straight | flown duration median, 95 % |
-|---|---|---|---|---|---|---|---|
-| 13 | 1000 / 1000 | 173 / 130 / 697 | 141, 322, 2 930 ms | 31, 58, 22, 19 ms | 1 764 | 1.05 | 4.7, 7.5 s |
-| 31 | 1000 / 1000 | 133 / 142 / 725 | 207, 501, 4 515 ms | 51, 83, 29, 31 ms | 2 002 | 1.09 | 4.8, 8.3 s |
+Before (the first version: its own halving loop in numpy) and now, run back to back on the same
+kernel and rig, machine load 62 and 58 on 32 cores. CPU time per plan, milliseconds.
 
-- By group (arm 31, CPU median): near 188 ms, far 251, same branch 200, other branch 184. Far
-  pairs need the tree most (229 of 250). A straight move alone takes 31 to 46 ms median, of which
-  retiming is about 20 ms.
-- A second run under load 55 read 185 and 242 ms CPU median: times on this machine move by a
-  third with the load. Counts, paths and durations do not change.
-- The numpy collision engine: 4 times slower (straight 179 ms, tree 702 ms CPU median on a
-  100-pair sample), same trajectories.
-- Every one of the 2 000 motions was re-checked independently in the test: at 1 kHz, clearance
-  at every sample at least 0 (smallest 0.14 mm), the arm against itself at least 0, limits and
-  margins held, ends exact.
-- **Cap.** With a cap of 20 000 configurations, 8 pairs were unsolved (2 on arm 13, 6 on arm
-  31). All had a path: with 20 times the cap each was found within 22 000 to 43 000. Hence the
-  default of 50 000. One was a timing failure (the goal only 0.36 mm clear, the flown check too
-  coarse); the verdict now re-checks a failure on every sample before it counts.
-- **Raising the ends** (both at the 20 000 cap): arm 13 solved 998 either way, arm 31 994 raised
-  against 990 not; raised-straight replaces the tree for 13 % of pairs; flown duration 0.1 s
-  shorter; planning time not better (arm 13 144 against 150 ms, arm 31 180 against 152 ms CPU
-  median). A raise fails for a quarter of the ends, for example where the lifted arm would
-  come within 0.15 rad of a joint limit.
+| arm | version | solved | straight / raised / tree | all: median, 95 % | straight | raised | tree: median, 95 % | edges checked | length / straight | flown duration median, 95 % |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 13 | before | 1000 | 310 / 62 / 628 | 221, 476 | 36 | 163 | 279, 528 | (1 568 configurations) | 1.03 | 4.6, 7.0 s |
+| 13 | now | 1000 | 306 / 60 / 634 | 74, 227 | 11 | 33 | 106, 252 | 29 | 1.08 | 4.9, 8.2 s |
+| 31 | before | 999 | 265 / 75 / 659 | 321, 694 | 48 | 217 | 387, 822 | (1 770 configurations) | 1.04 | 4.4, 7.9 s |
+| 31 | now | 1000 | 261 / 75 / 664 | 133, 424 | 17 | 42 | 191, 470 | 39 | 1.12 | 5.0, 9.2 s |
+
+- Split of a tree plan now (wall medians, arm 13 / arm 31): search 43 / 80 ms, shortening 49 /
+  91, timing 3 / 3, flown check 12 / 18. A straight move: 9 / 16 ms to check the ends and the
+  edge, 2 ms timing, 0.3 ms flown check.
+- Earlier the same day at load 30 (before a change of the rig's tool margins that made more
+  pairs straight): tree 66 and 108 ms median. Times on this machine move by half with the load.
+- Every one of the 2 000 motions is re-checked independently in the slow test: at 1 kHz,
+  clearance at every sample at least 0, the arm against itself at least 0, limits and margins
+  held, ends exact.
+- The first version: with 20 times its cap every then-unsolved pair was found (22 000 to 43 000
+  configurations); the numpy collision engine gave the same trajectories, 4 times slower.
+- **Raising the ends** (first version, cap 20 000 configurations): arm 13 solved 998 either
+  way, arm 31 994 raised against 990 not; raised-straight replaces the tree for 6 to 14 % of
+  pairs; flown duration 0.1 s shorter; planning time not better. A raise fails for a quarter of
+  the ends, for example where the lifted arm would come within 0.15 rad of a joint limit.

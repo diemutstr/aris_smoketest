@@ -15,7 +15,7 @@ import numpy as np
 
 from aris.types import Obstacles, Plane
 
-STEP = 0.005          # m of tip rise between IK samples
+STEP = 0.012          # m of tip rise between IK samples (fewer samples, fewer corners to time)
 MAX_JUMP = 0.1        # rad; a larger joint change between samples is a change of arm shape
 SAME = 1e-6           # rad; the IK answer that reproduces the end itself
 

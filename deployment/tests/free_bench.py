@@ -18,7 +18,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import free_cases  # noqa: E402
 
-from aris.free import Options, plan_detailed  # noqa: E402
+import importlib  # noqa: E402
+
 from aris.kernel import collide  # noqa: E402
 from aris.rig import Rig  # noqa: E402
 from aris.types import Motion  # noqa: E402
@@ -27,7 +28,8 @@ _scene = {}
 
 
 def _run(args):
-    arm_id, i, opts = args
+    arm_id, i, opts, package = args
+    plan_detailed = importlib.import_module(package).plan_detailed
     if arm_id not in _scene:
         _scene[arm_id] = free_cases.scene(Rig.load(free_cases.CONFIG), arm_id)
     arm, obs, rules = _scene[arm_id]
@@ -42,8 +44,8 @@ def _run(args):
                 clearance=st.clearance[0] if st.clearance else np.nan)
 
 
-def run(arms, opts: Options, workers: int, subset=None):
-    jobs = [(a, i, opts) for a in arms for i in (subset if subset is not None else range(1000))]
+def run(arms, opts, workers: int, subset=None, package: str = "aris.free"):
+    jobs = [(a, i, opts, package) for a in arms for i in (subset if subset is not None else range(1000))]
     with ProcessPoolExecutor(workers) as ex:
         return list(ex.map(_run, jobs, chunksize=8))
 
@@ -95,13 +97,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--no-lift", action="store_true")
-    ap.add_argument("--cap", type=int, default=Options().max_checks)
+    ap.add_argument("--cap", type=int, default=None)
     ap.add_argument("--arms", type=int, nargs="+", default=[31, 13])
     ap.add_argument("--cases", type=int, nargs="*", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--package", default="aris.free",
+                    help="another copy of the planner to measure side by side (on PYTHONPATH)")
     a = ap.parse_args()
-    opts = Options(lift_to=None if a.no_lift else Options().lift_to, max_checks=a.cap)
-    rows = run(a.arms, opts, a.workers, a.cases)
+    Opt = importlib.import_module(a.package).Options
+    opts = Opt(**({"lift_to": None} if a.no_lift else {}),
+               **({} if a.cap is None else {"max_edges": a.cap}))
+    rows = run(a.arms, opts, a.workers, a.cases, a.package)
     report(rows)
     if a.out:
         keys = [k for k in rows[0] if k not in ("detail", "lifted")]
