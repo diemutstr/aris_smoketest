@@ -301,9 +301,11 @@ def test_speed():
 
 
 def test_compiled_and_numpy_sweeps_agree():
-    import aris.kernel.retime as rt
+    import aris.kernel.speed as rt
     if rt._native_sweeps is None:
         pytest.skip("aris_retime_native is not installed")
+    from aris.kernel.retime import backend
+    assert backend() == "native"
     rng = np.random.default_rng(3)
     for n in (1, 5, 400):
         x = rng.uniform(0, 4, n + 1)
@@ -314,6 +316,7 @@ def test_compiled_and_numpy_sweeps_agree():
     saved, rt._native_sweeps = rt._native_sweeps, None
     try:
         fallback = retime(JointPath(random_zigzag(4)), LIMITS, RULES)
+        assert backend() == "numpy"
     finally:
         rt._native_sweeps = saved
     assert native.t.tobytes() == fallback.t.tobytes() and native.q.tobytes() == fallback.q.tobytes()

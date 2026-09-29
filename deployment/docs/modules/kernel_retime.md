@@ -61,7 +61,9 @@ are left alone.
 - **Joint budget:** 0.15 mrad by default. That keeps the pen within 0.2 mm, because over the
   FR3's whole joint range one milliradian of joint motion moves the pen at most 1.28 mm
   (measured on 20 000 random configurations).
-- **Pen budget:** with `tip_of`, the pen is also compared with where the input path puts it.
+- **Pen budget:** with `tip_of`, the pen is also compared with where the input path puts it,
+  that is, the pen positions of the input joint path. Any sag of that path between its IK
+  samples belongs to the planner that made it; the rounding adds at most the pen budget to it.
 
 Deviation is always measured at the same position along the path.
 
@@ -93,9 +95,10 @@ points.
    backward pass brakes as hard as they allow. This runs over about 500 points spread along the
    path, plus 12 across every narrow, sharp corner. The speed is also capped at the velocity
    limit times `speed_fraction`, where bending would make acceleration or jerk too large, and at
-   the draw speed for drawing. The two passes are a small compiled function
-   (`native/retime`). A numpy version gives the same numbers bit for bit, and is used when the
-   compiled one isn't installed.
+   the draw speed for drawing. This step lives in `kernel/speed.py`. The two passes are a small
+   compiled function (`native/retime`). A numpy version gives the same numbers bit for bit, and
+   is used when the compiled one isn't installed. `retime.backend()` says which one ran:
+   `"native"` or `"numpy"`.
 2. **Turns take at least 20 ms.** A turn shorter than that would last only a few driver ticks,
    and the reading would depend on where the ticks fall. Turns too gentle to use more than 10%
    of the acceleration and jerk limits are exempt.
