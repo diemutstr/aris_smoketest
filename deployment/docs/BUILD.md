@@ -60,8 +60,8 @@ Types are in `aris/types.py`. The calls:
 | kernel.collide | from capsules: `clearance(body, obstacles, drawing=False)`, `clearance_detail(...)`, `self_clearance(body, pairs, margin)`, `path_clearance(arm.body, q, obstacles, arm.reach)`. From joint angles, in one compiled call: `pack(obstacles)`, `arm_tables(arm)`, then `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q`. `backend()` says whether the compiled engine is in use | metres beyond the demanded margin; at least 0 means free. `path_clearance` is a lower bound that also covers the motion between samples |
 | kernel.retime | `retime(path, limits, rules, s=None)` (with `s`, the arc length per sample, for drawing motions), `sample(traj, t)`, `check(traj, limits)` | `Trajectory` or `Refusal`, arrays, a report |
 | rig | `Rig.load(config_dir)`, `to_base(arm_id, line)`, `obstacles(arm_id, parked, walls)`, `wall_between(a, b)`, `arm(arm_id)` | `Line`, `Obstacles`, `Plane`, `Arm` |
-| local | `plan(arm, lines, obstacles, rules)` | `list[Bunch]`, `list[Leftover]` |
-| free | `plan(arm, q_start, q_goal, obstacles, rules)` | a free `Motion` (timed, and checked as flown) or a `Refusal` |
+| local | `plan(arm, lines, obstacles, rules, gates=None, workers=1, settings=None)`; `plan_detailed` also returns counts and times; `verify_plan`, `reverse_plan` | `list[Bunch]`, `list[Leftover]` |
+| free | `plan(arm, q_start, q_goal, obstacles, rules, gates=None, seed_extra=b"", options=None)`; `plan_detailed` also returns counts and times | a free `Motion` (timed, and checked as flown) or a `Refusal` with reason `outside_limits`, `blocked`, `self_collision`, `no_free_path`, `cannot_time` or `bad_input` |
 | sequencer | `tour(arm, bunches, q_start, obstacles, rules)` | iterator of `Motion`, then `list[Leftover]` |
 | arm_planner | `plan(arm, lines, obstacles, q_start, rules)` | iterator of `Motion`, then `list[Leftover]` |
 | system | `plan(rig, drawing, arm_configs)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]` |
