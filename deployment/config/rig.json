@@ -1,0 +1,146 @@
+{
+  "about": {
+    "what": "The installation: table, paper, where the six arms hang, the steel around them, and the clearances every plan must keep.",
+    "units": "metres and radians everywhere; every key that holds a length ends in _m, every angle in _rad or _deg",
+    "table_frame": "origin at the table centre on the paper surface; x across the table (short side), y along it (long side), z up",
+    "old_frame": "the old code (aris_sixarm) puts the origin at a canvas corner: table = old - (0.9017, 1.81532, 0). 1.81532 is half the old canvas length 3.63064.",
+    "read_by": "deployment/aris/rig.py and nothing else"
+  },
+
+  "table": {
+    "source": "scripts/draw_axes_frame.py (Pete's tape, 2026-09-16: 416.6 cm long)",
+    "size_x_m": 2.188,
+    "size_y_m": 4.1656,
+    "paper_surface_z_m": 0.0
+  },
+
+  "canvas": {
+    "source": "old layout.SHEET_FINAL6 = (1.8034, 3.63064), centred on the table. The task sheet rounds the length to 3.6306.",
+    "size_x_m": 1.8034,
+    "size_y_m": 3.63064,
+    "centre_xy_m": [0.0, 0.0]
+  },
+
+  "arms": {
+    "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for arm 31, 2026-09-14 against the seam bars, at the lateral holder tool).",
+    "strut_wide_side_note": "Pete measured 0.240 from the outside face of one hanging strut to the arm's axis and 0.156 to the outside face of the other. Which side the 0.240 is on is NOT confirmed. \"-x\" means the 0.240 side is toward table -x, \"+x\" toward table +x.",
+    "list": [
+      {"id": 13, "axis_xy_m": [-0.305, -1.2102133333333333], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [-0.6162, 1.0125, 1.3275, -1.7335, 2.1074, 1.2793, 2.1750]},
+      {"id": 17, "axis_xy_m": [0.305, -1.2102133333333333], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [-0.7230, -1.0365, -1.5768, -2.1834, 2.0188, 1.2693, -2.1750]},
+      {"id": 31, "axis_xy_m": [-0.305, 0.0], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [0.3615, 1.0868, -1.1631, -1.5285, -2.1041, 1.2335, -1.3841]},
+      {"id": 71, "axis_xy_m": [0.305, 0.0], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [0.9167, -1.1814, 1.2489, -2.2444, -2.0707, 1.5627, 2.1750]},
+      {"id": 2, "axis_xy_m": [-0.305, 1.2102133333333333], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [0.0003, 1.0443, 1.4169, -1.8606, 2.0498, 1.2968, 2.1750]},
+      {"id": 97, "axis_xy_m": [0.305, 1.2102133333333333], "base_z_m": 0.970,
+       "R_table_base": [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
+       "strut_wide_side": "-x",
+       "park_q_rad": [0.0046, -1.0778, 1.7029, -1.8578, -2.0201, 1.3231, -0.5932]}
+    ]
+  },
+
+  "rows_and_phases": {
+    "source": "docs/DESIGN.md section 3 (Pete, 2026-09-29): three rows of two arms; phase 1 leaders 13, 71, 2; phase 2 leaders 17, 31, 97",
+    "rows": [[13, 17], [31, 71], [2, 97]],
+    "leaders": {"1": [13, 71, 2], "2": [17, 31, 97]}
+  },
+
+  "hanger": {
+    "source": "the steel each arm hangs from, placed relative to its own axis. Struts: Pete's tape 2026-09-16 (scripts/draw_axes_frame.py), 3 x 6 in section with the long side along y, centred on the arm's row line. Strut heights, plate and clamp: old aris_sixarm/system_model.py (drawing entities down_boom, down_plate, down_clamps; z ladder at h = 0.970).",
+    "strut_size_x_m": 0.0762,
+    "strut_size_y_m": 0.1524,
+    "wide_side_outer_face_to_axis_m": 0.240,
+    "narrow_side_outer_face_to_axis_m": 0.156,
+    "strut_bottom_z_m": 0.93502,
+    "strut_top_z_m": 1.62362,
+    "strut_source": "section and x positions: Pete's tape 2026-09-16. Bottom: old system_model POST_OVER, the posts run 34.98 mm below the plate underside (0.970 - 0.03498). Top: old system_model GRID_U, the runway underside 1.62362.",
+    "plate_size_x_m": 0.22582,
+    "plate_size_y_m": 0.190,
+    "plate_bottom_z_m": 0.970,
+    "plate_top_z_m": 0.9827,
+    "plate_centre_toward_wide_side_m": 0.042,
+    "plate_source": "size: old system_model PLATE (drawing down_plate 225.82 x 190 x 12.7 mm); its underside is the mount plane. Placed centred in the slot between Pete's struts (slot 0.2436 wide, 8.9 mm free each side), which puts its centre 0.042 toward the wide side. The old model put it 25.15 mm toward table +x, which does not fit between Pete's struts.",
+    "clamp_size_x_m": 0.226,
+    "clamp_size_y_m": 0.1524,
+    "clamp_bottom_z_m": 0.9827,
+    "clamp_top_z_m": 1.0784,
+    "clamp_source": "old system_model CLAMP (drawing down_clamps 226 x 152.4 x 95.7 mm), sitting on the plate, same centre as the plate. Envelope only; no part number in the drawing.",
+    "own_arm_skips": ["strut", "plate", "clamp"],
+    "own_arm_skips_note": "an arm is bolted to its own plate and clamp, so they are not obstacles for it. Its own struts are real steel its moving links could in principle touch, but the arm's base (kernel link0 capsules, radius 0.171-0.177 about the axis up to 0.238 above the mount plane) sits inside them, and the obstacle types cannot say 'every capsule except the base'. So they are left out until the collision check skips the base capsules; then remove \"strut\" from this list. tests/test_rig.py measures what leaving them out risks."
+  },
+
+  "steel": {
+    "source": "the cage, in the table frame, as axis-aligned boxes (lo_m and hi_m corners). From old aris_sixarm/system_model.py cage_bodies() and mounts.SEAM_BARS_MM, shifted into the table frame. Gussets are left out: they are ASSUMED in the old model, placed on the old post positions, and sit 1.50 m and more above the paper.",
+    "boxes": [
+      {"name": "runway_row0", "lo_m": [-1.016, -1.2864133333333333, 1.62362], "hi_m": [1.016, -1.1340133333333333, 1.69982],
+       "source": "old system_model runway_r0_S + runway_r0_N (drawing: central double beam, 2 x 76.2 mm, on the row line), merged into one box"},
+      {"name": "runway_row1", "lo_m": [-1.016, -0.0762, 1.62362], "hi_m": [1.016, 0.0762, 1.69982],
+       "source": "old system_model runway_r1_S + runway_r1_N (the two butted half-cage end rails), merged into one box"},
+      {"name": "runway_row2", "lo_m": [-1.016, 1.1340133333333333, 1.62362], "hi_m": [1.016, 1.2864133333333333, 1.69982],
+       "source": "old system_model runway_r2_S + runway_r2_N, merged into one box"},
+      {"name": "seam_bar_W", "lo_m": [-1.0922, -0.0762, -0.02738], "hi_m": [-1.016, 0.0762, 1.62362],
+       "source": "old mounts.SEAM_BARS_MM: REPRESENTATIVE seam support, 'a bar as wide as two of the corner struts' (Pete, 2026-09-14), tabletop to runway underside; not measured"},
+      {"name": "seam_bar_E", "lo_m": [1.016, -0.0762, -0.02738], "hi_m": [1.0922, 0.0762, 1.62362],
+       "source": "old mounts.SEAM_BARS_MM, as seam_bar_W; not measured"},
+      {"name": "side_rail_W", "lo_m": [-1.0922, -2.00582, 1.62362], "hi_m": [-1.016, 2.00582, 1.69982],
+       "source": "old system_model frame_side_W (drawing: 3 in perimeter rail at the grid plane)"},
+      {"name": "side_rail_E", "lo_m": [1.016, -2.00582, 1.62362], "hi_m": [1.0922, 2.00582, 1.69982],
+       "source": "old system_model frame_side_E"},
+      {"name": "end_rail_S", "lo_m": [-1.016, -2.00582, 1.62362], "hi_m": [1.016, -1.92962, 1.69982],
+       "source": "old system_model frame_end_S"},
+      {"name": "end_rail_N", "lo_m": [-1.016, 1.92962, 1.62362], "hi_m": [1.016, 2.00582, 1.69982],
+       "source": "old system_model frame_end_N"},
+      {"name": "leg_SW", "lo_m": [-1.0922, -2.00582, -0.02738], "hi_m": [-1.016, -1.92962, 1.62362],
+       "source": "old system_model leg_FL (ASSUMED in the old model: section and plan position mirror the drawing's corner post)"},
+      {"name": "leg_SE", "lo_m": [1.016, -2.00582, -0.02738], "hi_m": [1.0922, -1.92962, 1.62362],
+       "source": "old system_model leg_FR (ASSUMED in the old model)"},
+      {"name": "leg_NW", "lo_m": [-1.0922, 1.92962, -0.02738], "hi_m": [-1.016, 2.00582, 1.62362],
+       "source": "old system_model leg_BL (ASSUMED in the old model)"},
+      {"name": "leg_NE", "lo_m": [1.016, 1.92962, -0.02738], "hi_m": [1.0922, 2.00582, 1.62362],
+       "source": "old system_model leg_BR (ASSUMED in the old model)"}
+    ]
+  },
+
+  "reach": {
+    "source": "how far any part of an arm's body can be from its shoulder, fully stretched. Bound: shoulder -> elbow 0.3266, elbow -> wrist 0.3928, wrist -> flange 0.1385 (FR3 DH), plus 0.25 for the hand, holder and pen, plus 0.08 for the fattest capsule radius = 1.188, rounded up. tests/test_rig.py checks it against the old capsule model on random configurations and against kernel.arm when present.",
+    "shoulder_below_base_m": 0.333,
+    "body_reach_from_shoulder_m": 1.20
+  },
+
+  "clearances": {
+    "source": "the old gates (docs/STAGED_LESSONS_2026-09-29.md L135); they do not change. The checker demands these.",
+    "steel_m": 0.050,
+    "arm_to_arm_m": 0.050,
+    "wall_m": 0.025,
+    "wall_note": "half of arm_to_arm: two arms on opposite sides of a wall are then arm_to_arm apart",
+    "body_to_paper_m": 0.020,
+    "pen_lifted_to_paper_m": 0.003,
+    "self_m": 0.020
+  },
+
+  "planning_allowance": {
+    "source": "added on top of the demanded clearances when a planner asks (for_planning=True), so the checker is a second opinion and not a coin toss (lesson L32). steel and self are the old numbers (STATIC_PLAN_MARGIN - STATIC_MARGIN = 0.013: 0.010 checker half-step + 0.00275 Lipschitz, rounded; SELF_PLAN_PAD = 0.003).",
+    "steel_m": 0.013,
+    "arm_to_arm_m": 0.013,
+    "arm_to_arm_note": "a parked arm is as still as the steel, so it gets the steel allowance. Not an old number: chosen here.",
+    "wall_m": 0.0065,
+    "wall_note": "half of arm_to_arm, because both arms at a wall pay it. Not an old number: chosen here.",
+    "body_to_paper_m": 0.0,
+    "pen_lifted_to_paper_m": 0.0,
+    "paper_note": "zero: the old planner used the checker's own paper numbers, and a pen that hovers a few millimetres over the paper before touching down cannot pay more",
+    "self_m": 0.003
+  }
+}

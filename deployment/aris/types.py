@@ -87,6 +87,11 @@ class Body:
     radius: np.ndarray                 # (K,)
     names: tuple[str, ...]             # K names, e.g. "forearm", "hand", "pen"
     is_pen: np.ndarray                 # (K,) bool
+    # Capsules that do not move with the joints: the base and what is bolted to it.  They
+    # hang inside the arm's own mount, so they are never checked against obstacles; whether
+    # the mount fits is a fact about the rig, settled once.  They still count for the arm
+    # against itself, and they are part of what a neighbour sees of this arm.
+    is_fixed: np.ndarray | None = None # (K,) bool; None means no capsule is fixed
 
 
 @dataclass(frozen=True)
