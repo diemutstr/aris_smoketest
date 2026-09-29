@@ -56,6 +56,9 @@ class Plane:
     # The pen touches the paper when drawing and hovers close to it when lifted, so the pen
     # gets its own, smaller clearance against a plane.  None means: same as `margin`.
     pen_margin: float | None = None
+    # The pen holder and the gripper that holds it work a few millimetres above the paper, so
+    # the tool gets its own clearance too.  None means: same as `margin`.
+    tool_margin: float | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,8 @@ class Body:
     # the mount fits is a fact about the rig, settled once.  They still count for the arm
     # against itself, and they are part of what a neighbour sees of this arm.
     is_fixed: np.ndarray | None = None # (K,) bool; None means no capsule is fixed
+    # The tool: what is bolted to the flange (gripper, blades, pen holder), the pen excluded.
+    is_tool: np.ndarray | None = None  # (K,) bool; None means no capsule is a tool capsule
 
 
 @dataclass(frozen=True)
