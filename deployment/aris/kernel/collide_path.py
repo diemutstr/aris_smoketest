@@ -34,17 +34,24 @@ def _interval_bound(ca, cb, delta):
     return np.maximum(ca - delta * s, cb - delta * (1.0 - s))
 
 
-def _refine(values, q, R, tol, max_depth, max_evals, floor=None) -> float:
-    """The halving loop.  `values(Q)` -> (n, I) clearance of I items (capsules or capsule
-    pairs); `R` (J, I) bounds how far each item moves per radian of each joint.
+CAP = 0.25   # m: above this nobody needs the exact clearance, so no interval is refined for it
 
-    With `floor`, stop as soon as the bound is proven at least `floor` (return it) or a sample
-    reads below 0 (return that sample's clearance, which proves the path is not free).
+
+def _refine(values, q, R, tol, max_depth, max_evals, floor=None, cap=CAP) -> float:
+    """The halving loop.  `values(Q)` -> (n, I) clearance of I items (capsules or capsule
+    pairs); `R(I)` -> (J, I) bounds how far each item moves per radian of each joint.
+
+    An interval is halved only while its bound is more than `tol` below both the smallest
+    clearance seen so far and `cap`; so the answer is within `tol` of the true minimum when
+    that is below `cap`, and at least `cap - tol` otherwise.  Nothing to hit anywhere: +inf at
+    once.  With `floor`, stop as soon as the bound is proven at least `floor` (return it) or a
+    sample reads below 0 (return that sample's clearance, which proves the path is not free).
     """
     c = values(q)
     m = float(np.min(c, initial=np.inf))
-    if len(q) == 1 or (floor is not None and m < 0.0):
+    if len(q) == 1 or m == np.inf or (floor is not None and m < 0.0):
         return m
+    R = R(c.shape[1])
     qa, qb, ca, cb = q[:-1], q[1:], c[:-1], c[1:]
     done, evals = np.inf, 0
     for depth in range(max_depth + 1):
@@ -53,7 +60,7 @@ def _refine(values, q, R, tol, max_depth, max_evals, floor=None) -> float:
         now = min(done, float(np.min(lb, initial=np.inf)))
         if floor is not None and now >= floor:
             return now
-        split = lb < m - tol
+        split = lb < min(m, cap) - tol
         if depth == max_depth or evals + split.sum() > max_evals:
             split[:] = False
         done = min(done, float(np.min(lb[~split], initial=np.inf)))
@@ -75,6 +82,13 @@ def _reach(reach, J, K):
     return np.ascontiguousarray(np.broadcast_to(np.asarray(reach, float).reshape(J, -1), (J, K)))
 
 
+def _pair_reach(reach, J, pairs):
+    """(J, P): a pair closes no faster than both its capsules move together."""
+    R = np.asarray(reach, float).reshape(J, -1)
+    i, j = (pairs[:, 0], pairs[:, 1]) if R.shape[1] > 1 else (np.zeros(len(pairs), int),) * 2
+    return np.ascontiguousarray(R[:, i] + R[:, j])
+
+
 def _pair_values(body: Body, pairs, margin) -> np.ndarray:
     """(N, P) clearance of each capsule pair of the arm against itself."""
     i, j = pairs[:, 0], pairs[:, 1]
@@ -87,7 +101,7 @@ def _pair_values(body: Body, pairs, margin) -> np.ndarray:
 def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacles,
                    reach: np.ndarray, drawing: bool = False, tol: float = 5e-4,
                    max_depth: int = 30, max_evals: int = 200_000, backend: str | None = None,
-                   threads: int = 1) -> float:
+                   threads: int = 1, cap: float = CAP) -> float:
     """A lower bound on the clearance along the whole piecewise-linear joint path q (N, 7).
 
     `reach` (7,) or (7, K): for joint j (and capsule k), an upper bound on the distance from
@@ -101,28 +115,29 @@ def path_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, obstacl
     smallest clearance seen at any sample is halved, and both halves are looked at again,
     until no interval is.  The result then lies within `tol` below the true minimum, whatever
     the sampling it was handed; if `max_depth` or `max_evals` stop the halving first it is
-    still a lower bound, only a looser one.
+    still a lower bound, only a looser one.  Clearance above `cap` is not refined: there the
+    answer is only promised to be at least `cap - tol`.  No obstacles to check: +inf at once.
     """
     P = pack(obstacles)
     q = np.asarray(q, float).reshape(-1, 7)
     values = lambda Q: capsule_clearance(body_of(Q), P, drawing, True, backend, threads)
-    K = np.shape(body_of(q[:1]).p0)[1]
-    return _refine(values, q, _reach(reach, 7, K), tol, max_depth, max_evals)
+    if not len(P.names):
+        return np.inf
+    return _refine(values, q, lambda K: _reach(reach, 7, K), tol, max_depth, max_evals, cap=cap)
 
 
 def path_self_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, pairs, margin,
                         reach: np.ndarray, tol: float = 5e-4, max_depth: int = 30,
-                        max_evals: int = 200_000) -> float:
+                        max_evals: int = 200_000, cap: float = CAP) -> float:
     """As `path_clearance`, for the arm against itself over the capsule pairs (numpy).  A pair
     moves apart or together at most as fast as both its capsules together."""
     q = np.asarray(q, float).reshape(-1, 7)
     pairs = np.asarray(pairs, np.int64).reshape(-1, 2)
     if not len(pairs):
         return np.inf
-    K = np.shape(body_of(q[:1]).p0)[1]
-    R = _reach(reach, 7, K)
-    return _refine(lambda Q: _pair_values(body_of(Q), pairs, margin), q,
-                   R[:, pairs[:, 0]] + R[:, pairs[:, 1]], tol, max_depth, max_evals)
+    Rp = _pair_reach(reach, 7, pairs)
+    return _refine(lambda Q: _pair_values(body_of(Q), pairs, margin), q, lambda _: Rp, tol,
+                   max_depth, max_evals, cap=cap)
 
 
 # --------------------------------------------------------------------------- from joint angles
@@ -163,20 +178,20 @@ def self_clearance_q(tables: ArmTables, Q, pairs, margin: float, backend: str | 
 
 def path_clearance_q(tables: ArmTables, reach, q, obstacles, drawing: bool = False,
                      tol: float = 5e-4, max_depth: int = 30, max_evals: int = 200_000,
-                     backend: str | None = None, threads: int = 1) -> float:
+                     backend: str | None = None, threads: int = 1, cap: float = CAP) -> float:
     """`path_clearance` with the body computed from the tables; the same method and answer."""
     q, P = _Q(tables, q), pack(obstacles)
     R = _reach(reach, len(tables.dh), len(tables.radius))
     if _cn.native_on(backend):
         return _cn._native.path_clearance_q(tables.chain, tables.caps, P.scene, R, q, drawing, tol,
-                                            max_depth, max_evals, threads)
+                                            max_depth, max_evals, threads, cap)
     return path_clearance(lambda Q: body_q(tables, Q, "numpy"), q, P, R, drawing, tol,
-                          max_depth, max_evals, backend="numpy")
+                          max_depth, max_evals, backend="numpy", cap=cap)
 
 
 def path_self_clearance_q(tables: ArmTables, reach, q, pairs, margin: float, tol: float = 5e-4,
                           max_depth: int = 30, max_evals: int = 200_000,
-                          backend: str | None = None) -> float:
+                          backend: str | None = None, cap: float = CAP) -> float:
     """`path_self_clearance` with the body computed from the tables."""
     q = _Q(tables, q)
     pairs = np.ascontiguousarray(np.asarray(pairs, np.int64).reshape(-1, 2))
@@ -185,15 +200,16 @@ def path_self_clearance_q(tables: ArmTables, reach, q, pairs, margin: float, tol
         return np.inf
     if _cn.native_on(backend):
         return _cn._native.path_self_q(tables.chain, tables.caps, R, q, pairs, float(margin), tol,
-                                       max_depth, max_evals)
+                                       max_depth, max_evals, cap)
     return path_self_clearance(lambda Q: body_q(tables, Q, "numpy"), q, pairs, margin, R, tol,
-                               max_depth, max_evals)
+                               max_depth, max_evals, cap)
 
 
 def edges_clearance_q(tables: ArmTables, reach, Qa, Qb, obstacles, drawing: bool = False,
                       tol: float = 5e-4, self_pairs=None, self_margin: float = 0.0,
                       floor: float | None = 0.0, threads: int = 0, max_depth: int = 30,
-                      max_evals: int = 200_000, backend: str | None = None) -> np.ndarray:
+                      max_evals: int = 200_000, backend: str | None = None,
+                      cap: float = CAP) -> np.ndarray:
     """(E,) one bound per straight joint-space edge Qa[e] -> Qb[e].
 
     With `floor=None` each is exactly `path_clearance_q` of the two-sample path, or, with
@@ -215,16 +231,17 @@ def edges_clearance_q(tables: ArmTables, reach, Qa, Qb, obstacles, drawing: bool
         return _cn._native.edges_clearance_q(tables.chain, tables.caps, P.scene, R, Qa, Qb,
                                              drawing, pairs, float(self_margin), tol, max_depth,
                                              max_evals, use_floor, float(floor or 0.0),
-                                             max(1, threads))
+                                             max(1, threads), cap)
     body_of = lambda Q: body_q(tables, Q, "numpy")
     obst = lambda Q: capsule_clearance(body_of(Q), P, drawing, True, "numpy")
     selfv = lambda Q: _pair_values(body_of(Q), pairs, self_margin)
-    R_pairs = R[:, pairs[:, 0]] + R[:, pairs[:, 1]]
+    R_pairs = _pair_reach(R, J, pairs)
     out = np.empty(len(Qa))
     for e in range(len(Qa)):
         q = np.stack([Qa[e], Qb[e]])
-        b = _refine(obst, q, R, tol, max_depth, max_evals, floor)
+        b = np.inf if not len(P.names) else \
+            _refine(obst, q, lambda _: R, tol, max_depth, max_evals, floor, cap)
         if len(pairs) and not (use_floor and b < 0.0):
-            b = min(b, _refine(selfv, q, R_pairs, tol, max_depth, max_evals, floor))
+            b = min(b, _refine(selfv, q, lambda _: R_pairs, tol, max_depth, max_evals, floor, cap))
         out[e] = b
     return out

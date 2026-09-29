@@ -19,6 +19,7 @@ struct Refine {
     int64_t max_evals = 200000;
     bool use_floor = false;  // stop once the bound is proven >= floor, or a sample is below 0
     double floor = 0.0;
+    double cap = 0.25;       // clearance above this is never refined for
 };
 
 // The halving loop over a path q (N,J).  `eval(Q, n, vals)` fills vals (n, I) with the
@@ -31,7 +32,7 @@ double refine(int J, int I, const double* reach, const double* q, int64_t N, Eva
     eval(q, N, c.data());
     double m = INF;
     for (double v : c) m = std::min(m, v);
-    if (N <= 1 || (o.use_floor && m < 0.0)) return m;
+    if (N <= 1 || m == INF || (o.use_floor && m < 0.0)) return m;  // INF: nothing to hit
     std::vector<double> qa(q, q + (N - 1) * J), qb(q + J, q + N * J);
     std::vector<double> ca(c.begin(), c.end() - I), cb(c.begin() + I, c.end());
     double done = INF;
@@ -48,7 +49,7 @@ double refine(int J, int I, const double* reach, const double* q, int64_t N, Eva
                 for (int j = 0; j < J; ++j) delta += std::fabs(qb[i * J + j] - qa[i * J + j]) * reach[j * I + k];
                 lb[i] = std::min(lb[i], interval_bound(ca[i * I + k], cb[i * I + k], delta));
             }
-            split[i] = lb[i] < m - o.tol;
+            split[i] = lb[i] < std::min(m, o.cap) - o.tol;
             n_split += split[i];
             now = std::min(now, lb[i]);
         }
@@ -113,6 +114,7 @@ inline double self_config(const double* p0, const double* p1, const double* r, c
 // Bound against the obstacles along the path q (N,J); reach is (J,K).
 inline double path_obstacles(const Chain& H, const Caps& C, const Scene& S, const double* reach,
                              const double* q, int64_t N, bool drawing, const Refine& o, int threads) {
+    if (S.Mb + S.Mp + S.Mc == 0) return INF;
     std::vector<int64_t> arg;
     auto eval = [&](const double* Q, int64_t n, double* vals) {
         arg.resize(size_t(n) * C.K);

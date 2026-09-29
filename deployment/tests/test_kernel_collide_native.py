@@ -206,7 +206,7 @@ def test_speed_report_arm31():
     rng = np.random.default_rng(27)
     r = _speed_rows("arm 31, phase 2 (walls to 17 and 97, arm 71 parked)", arm.body, T, obs,
                     int((~T.is_fixed).sum()), rng, arm.limits.q_min, arm.limits.q_max)
-    assert r > 8_000                                    # ten times below the 85 000/s measured
+    assert r > 2_000                                    # ten times below the 22 000/s measured (62-capsule arm)
     # one path of 50 samples through the free space
     q_free = rng.uniform(arm.limits.q_min, arm.limits.q_max, (4000, 7))
     q_free = q_free[collide.clearance_q(T, q_free, obs) > 0.0][:2]
@@ -322,4 +322,15 @@ def test_edges_speed_report():
             worst = max(worst, dt / len(Qa))
             rows.append(f"{label} {len(Qa) / dt:8.0f}/s")
         print(f"  {length:4.2f} rad: " + "  ".join(rows))
-    assert worst < 10 * 2e-3                            # generous: ten times the slowest seen
+    assert worst < 10 * 3e-3                            # generous: ten times the slowest seen
+
+
+def test_q_calls_with_nothing_to_hit():
+    arm = _arm()
+    T = collide.arm_tables(arm)
+    Qa, Qb = _q(arm, 5, 33), _q(arm, 5, 34)
+    for backend in ("native", "numpy"):
+        assert collide.path_clearance_q(T, arm.reach, np.vstack([Qa, Qb]), Obstacles(),
+                                        backend=backend) == np.inf
+        assert np.all(collide.edges_clearance_q(T, arm.reach, Qa, Qb, Obstacles(), floor=None,
+                                                backend=backend) == np.inf)

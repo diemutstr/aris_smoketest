@@ -213,8 +213,10 @@ py::array_t<double> self_clearance_q(py::tuple chain, Arr r, Arr Q, IArr pairs, 
     return out;
 }
 
-acol::Refine refine_opts(double tol, int max_depth, int64_t max_evals, bool use_floor, double floor) {
+acol::Refine refine_opts(double tol, int max_depth, int64_t max_evals, bool use_floor, double floor,
+                         double cap) {
     acol::Refine o;
+    o.cap = cap;
     o.tol = tol;
     o.max_depth = max_depth;
     o.max_evals = max_evals;
@@ -229,27 +231,27 @@ void check_pairs(const IArr& pairs, int K) {
 }
 
 double path_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr reach, Arr q, bool drawing,
-                        double tol, int max_depth, int64_t max_evals, int threads) {
+                        double tol, int max_depth, int64_t max_evals, int threads, double cap) {
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
     const py::ssize_t N = check_q(q, H.h.J);
-    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0);
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0, cap);
     py::gil_scoped_release release;
     return acol::path_obstacles(H.h, C.c, S.s, reach.data(), q.data(), N, drawing, o, threads);
 }
 
 double path_self_q(py::tuple chain, py::tuple caps, Arr reach, Arr q, IArr pairs, double margin,
-                   double tol, int max_depth, int64_t max_evals) {
+                   double tol, int max_depth, int64_t max_evals, double cap) {
     ChainIn H(chain);
     CapsIn C(caps);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
     check_pairs(pairs, C.c.K);
     const py::ssize_t N = check_q(q, H.h.J);
-    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0);
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, false, 0.0, cap);
     py::gil_scoped_release release;
     return acol::path_self(H.h, C.c, reach.data(), pairs.data(), pairs.size() / 2, margin, q.data(),
                            N, o);
@@ -258,7 +260,7 @@ double path_self_q(py::tuple chain, py::tuple caps, Arr reach, Arr q, IArr pairs
 py::array_t<double> edges_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr reach,
                                       Arr Qa, Arr Qb, bool drawing, IArr pairs, double margin,
                                       double tol, int max_depth, int64_t max_evals, bool use_floor,
-                                      double floor, int threads) {
+                                      double floor, int threads, double cap) {
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
@@ -267,7 +269,7 @@ py::array_t<double> edges_clearance_q(py::tuple chain, py::tuple caps, py::tuple
     check_pairs(pairs, C.c.K);
     const py::ssize_t E = check_q(Qa, H.h.J);
     if (check_q(Qb, H.h.J) != E) throw std::invalid_argument("Qa and Qb must have the same shape");
-    const acol::Refine o = refine_opts(tol, max_depth, max_evals, use_floor, floor);
+    const acol::Refine o = refine_opts(tol, max_depth, max_evals, use_floor, floor, cap);
     py::array_t<double> out(E);
     double* op = out.mutable_data();
     {

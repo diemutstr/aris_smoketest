@@ -207,7 +207,7 @@ def self_clearance(body: Body, pairs: np.ndarray, margin: float, backend: str | 
 
 # The calls along a path and from joint angles live in collide_path.py; every public name is
 # importable from here.  Imported last because collide_path uses the calls above.
-from aris.kernel.collide_path import (clearance_detail_q, clearance_q,  # noqa: E402,F401
+from aris.kernel.collide_path import (CAP, clearance_detail_q, clearance_q,  # noqa: E402,F401
                                       edges_clearance_q, path_clearance, path_clearance_q,
                                       path_self_clearance, path_self_clearance_q,
                                       self_clearance_q)

@@ -85,6 +85,13 @@ nothing. Where this bound falls more than `tol` below the smallest clearance mea
 sample, the interval is halved and measured again. The answer ends up at most `tol` below the
 true minimum, however coarse or fine the path came in.
 
+Refining stops as soon as it cannot change the answer. An interval is halved only while its
+bound is below both the smallest clearance measured so far and a cap of 0.25 m (`CAP`).
+Nobody needs the exact figure above the cap, so there the answer is only promised to be at
+least 0.25 m less `tol`. A path far from everything therefore costs one body evaluation per
+sample. With nothing to check against (no obstacles, or only paper for a pen while drawing)
+the answer is +inf at once. `path_self_clearance` and `edges_clearance_q` behave the same.
+
 ## Many edges at once
 
 A free-space planner checks thousands of short straight moves. `edges_clearance_q` takes them
@@ -110,31 +117,32 @@ segment to box is within 3.3e-16 m. The old code's box search was up to 3.9e-10 
 Compiled against numpy: 0 difference on the distance cases, forward kinematics within 5e-16 m
 of `Arm.body`, path bounds within 6e-17 m.
 
-Speed of arm 31 in phase 2: the real FR3 body (33 checked capsules) against 23 steel boxes,
-the paper, walls to arms 17 and 97, and parked arm 71's 40 capsules, which is 2 178 pairs. The
-machine was heavily loaded by other jobs (load average 50 to 75 on 32 cores), so the figures
-are the better of two runs and may be low.
+Speed of arm 31 in phase 2: the real FR3 body (62 capsules, 55 checked, 33 of them on the tool)
+against 23 steel boxes, the paper, walls to arms 17 and 97, and parked arm 71's 62 capsules,
+which is 4 840 pairs. The arm has 784 self pairs. Speeds were measured in CPU time while other
+jobs loaded the machine heavily (load average about 60 on 32 cores), so the figures may be low.
+The threaded rows are wall clock and suffer most from the load.
 
 | batch | numpy, configurations/s | compiled, 1 thread | compiled, 8 threads | compiled, 32 threads |
 |---|---|---|---|---|
-| 1 | 1 600 | 47 000 | | |
-| 100 | 8 400 | 60 000 | | |
-| 10 000 | 12 700 | 85 000 (186 M pairs/s) | 590 000 | 880 000 |
+| 1 | 1 100 | 19 000 | | |
+| 100 | 4 100 | 22 000 | | |
+| 10 000 | 4 100 | 22 000 (106 M pairs/s) | 66 000 | 109 000 |
 
-Edges on arm 31, one thread, CPU time (per second; the old way is `path_clearance_q` in a
-Python loop, which gives the same numbers as `floor=None`):
+Edges on arm 31, one thread, CPU time, per second. The old way calls `path_clearance_q` in a
+Python loop, which gives the same numbers as `floor=None`:
 
 | edge length | floor 0 | floor 0, with self check | floor None | Python loop |
 |---|---|---|---|---|
-| 0.05 rad | 17 000 to 23 000 | 10 000 to 14 000 | 8 000 to 12 000 | 7 000 to 10 000 |
-| 0.3 rad | 7 000 to 10 000 | 4 300 to 5 900 | 2 700 to 3 100 | 2 100 to 2 400 |
-| 1.0 rad | 3 600 to 4 000 | 2 200 to 2 700 | 840 to 1 040 | 850 to 1 090 |
+| 0.05 rad | 8 100 | 4 700 | 4 200 | 3 600 |
+| 0.3 rad | 3 600 | 1 900 | 1 200 | 1 200 |
+| 1.0 rad | 1 700 | 1 200 | 390 | 440 |
 
 Most of the gain comes from stopping early at the floor. Once an edge has to be refined all
 the way, the refinement dominates and the Python loop costs little extra.
 
-One path check over a 50-sample path takes 10 to 20 ms in numpy and 1.3 to 1.8 ms compiled.
-The 12-capsule case from the first measurement (588 pairs) runs at 45 000 per second in numpy
-and 275 000 compiled on 1 thread, and 1.9 to 2.3 million on 8 to 32 threads. With the compiled
-engine, the first pass (midpoint against every obstacle, about 4 ns per pair) is most of the
-time. Fewer than 4 pairs per configuration need the exact distance.
+One path check over a 50-sample path takes 29 ms in numpy and 4.1 ms compiled. For
+comparison, 12 capsules against 49 obstacles (588 pairs) runs at 31 000 per second in numpy
+and 146 000 compiled on 1 thread. With the compiled engine, most of the time goes to the
+first pass (each capsule's midpoint against every obstacle, a few nanoseconds per pair). Only
+a handful of pairs per configuration need the exact distance.

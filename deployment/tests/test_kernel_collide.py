@@ -614,3 +614,54 @@ def test_is_tool_none_changes_nothing():
     zeros = collide.clearance_detail(Body(body.p0, body.p1, body.radius, body.names, body.is_pen,
                                           None, np.zeros(12, bool)), obs)
     assert np.array_equal(none.value, zeros.value) and np.array_equal(none.obstacle, zeros.obstacle)
+
+
+# --------------------------------------------------------------------------- nothing to decide
+
+
+class _Counting:
+    """body_of that counts how many configurations it was asked for."""
+    def __init__(self, body_of):
+        self.body_of, self.n = body_of, 0
+
+    def __call__(self, Q):
+        self.n += len(np.atleast_2d(Q))
+        return self.body_of(Q)
+
+
+def test_path_with_nothing_to_hit_returns_inf_at_once():
+    q = _resample(_paths()[0], 3)
+    reach = _toy_reach()
+    for obs, drawing in [(Obstacles(), False),
+                         (Obstacles(planes=(Plane("paper", np.array([0, 0, 1.0]), -0.3, 0.02,
+                                                  "paper"),)), True)]:
+        def pen_only(Q):
+            b = _toy_body(Q)
+            fixed = ~b.is_pen                           # only the pen is checked ...
+            return Body(b.p0, b.p1, b.radius, b.names, b.is_pen, fixed)
+        for backend in ("numpy", "native"):
+            if backend == "native" and collide.backend() != "native":
+                continue
+            body_of = _Counting(pen_only)
+            got = collide.path_clearance(body_of, q, obs, reach, drawing=drawing, backend=backend)
+            assert got == np.inf                        # ... and drawing takes it off the paper
+            assert body_of.n <= len(q)
+    body_of = _Counting(_toy_body)
+    assert collide.path_self_clearance(body_of, q, np.zeros((0, 2)), 0.02, reach) == np.inf
+    assert body_of.n == 0
+
+
+def test_path_far_from_everything_costs_one_evaluation_per_sample():
+    far = Obstacles(planes=(Plane("floor", np.array([0, 0, 1.0]), -3.0, 0.02),))
+    reach = _toy_reach()
+    for q in _paths():
+        q = _resample(q, 4)
+        body_of = _Counting(_toy_body)
+        b = collide.path_clearance(body_of, q, far, reach, backend="numpy")
+        truth = collide.clearance(_toy_body(q), far).min()
+        assert collide.CAP - 5e-4 <= b <= truth and body_of.n <= len(q)
+    # the arm against itself, two capsules that never come near each other: base and pen
+    q = np.array([0.0, 0.0, 0.0, -0.2, 0.0, 0.3, 0.0]) + np.linspace(0, 0.2, 9)[:, None]
+    body_of = _Counting(_toy_body)
+    b = collide.path_self_clearance(body_of, q, np.array([[0, 7]]), 0.02, reach)
+    assert b >= collide.CAP - 5e-4 and body_of.n <= len(q)
