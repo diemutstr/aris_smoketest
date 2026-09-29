@@ -69,9 +69,9 @@ trajectories too (100 of 100 compared).
 
 ## What it cannot do
 
-- It meets the 0.1 s target for straight and raised moves, not for the tree on a busy machine:
-  tree moves take 106 ms (arm 13) and 191 ms (arm 31) median CPU at load 58. 94 % of that time is
-  inside the kernel's edge call, not in the planner's Python. What would cut it: a tighter bound
+- On a quiet machine it meets the 0.1 s target (tree moves 48 and 75 ms median, 118 and 177 ms
+  at the 95th percentile); on a busy one it does not (106 and 191 ms median at load 58). 94 % of
+  the time is inside the kernel's edge call, not in the planner's Python. What would cut it: a tighter bound
   on how far the arm moves along an edge inside the kernel. The kernel charges each joint's
   largest lever; a bound from the joints' actual speeds at the edge's ends (first order, plus
   the reach table for the change) measured 2.5 to 3 times fewer evaluations per edge in this
@@ -96,21 +96,25 @@ arms 2, 13, 71, walls 17-31 and 31-97, steel, paper) and 1 000 for arm 13 (phase
 31, wall 13-71); tips 25 mm above the paper, random spin, no lean; four groups of 250: near
 (tips under 0.15 m apart), far (over 0.6 m), same IK branch, different IK branch.
 
-Before (the first version: its own halving loop in numpy) and now, run back to back on the same
-kernel and rig, machine load 62 and 58 on 32 cores. CPU time per plan, milliseconds.
+CPU time per plan, milliseconds. Before (the first version: its own halving loop in numpy) and
+now were run back to back on the same kernel and rig at machine load 62 and 58 on 32 cores;
+"now, quiet" is the same code at load 8.
 
-| arm | version | solved | straight / raised / tree | all: median, 95 % | straight | raised | tree: median, 95 % | edges checked | length / straight | flown duration median, 95 % |
+| arm | version | solved | straight / raised / tree | all: median, 95 % | straight: median, 95 % | raised | tree: median, 95 % | edges checked (tree) | length / straight | flown duration median, 95 % |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 13 | before | 1000 | 310 / 62 / 628 | 221, 476 | 36 | 163 | 279, 528 | (1 568 configurations) | 1.03 | 4.6, 7.0 s |
-| 13 | now | 1000 | 306 / 60 / 634 | 74, 227 | 11 | 33 | 106, 252 | 29 | 1.08 | 4.9, 8.2 s |
-| 31 | before | 999 | 265 / 75 / 659 | 321, 694 | 48 | 217 | 387, 822 | (1 770 configurations) | 1.04 | 4.4, 7.9 s |
-| 31 | now | 1000 | 261 / 75 / 664 | 133, 424 | 17 | 42 | 191, 470 | 39 | 1.12 | 5.0, 9.2 s |
+| 13 | before, load 62 | 1000 | 310 / 62 / 628 | 221, 476 | 36, 73 | 163 | 279, 528 | (1 998 configurations) | 1.03 | 4.6, 7.0 s |
+| 13 | now, load 58 | 1000 | 306 / 60 / 634 | 74, 227 | 11, 26 | 33 | 106, 252 | 45 | 1.08 | 4.9, 8.2 s |
+| 13 | now, load 8 | 1000 | 306 / 60 / 634 | 37, 103 | 9, 16 | 18 | 48, 118 | 45 | 1.08 | 4.9, 8.0 s |
+| 31 | before, load 62 | 999 | 265 / 75 / 659 | 321, 694 | 48, 113 | 217 | 387, 822 | (2 131 configurations) | 1.04 | 4.4, 7.9 s |
+| 31 | now, load 58 | 1000 | 261 / 75 / 664 | 133, 424 | 17, 46 | 42 | 191, 470 | 65 | 1.12 | 5.0, 9.2 s |
+| 31 | now, load 8 | 1000 | 261 / 75 / 664 | 53, 154 | 12, 20 | 20 | 75, 177 | 65 | 1.11 | 5.0, 9.0 s |
 
-- Split of a tree plan now (wall medians, arm 13 / arm 31): search 43 / 80 ms, shortening 49 /
-  91, timing 3 / 3, flown check 12 / 18. A straight move: 9 / 16 ms to check the ends and the
-  edge, 2 ms timing, 0.3 ms flown check.
-- Earlier the same day at load 30 (before a change of the rig's tool margins that made more
-  pairs straight): tree 66 and 108 ms median. Times on this machine move by half with the load.
+- Split of a tree plan, quiet (wall medians, arm 13 / arm 31): search 21 / 32 ms, shortening
+  20 / 31, timing 2 / 2, flown check 4 / 5. A straight move: 7 / 10 ms to check the ends and the
+  edge, 1.5 ms timing, 0.2 ms flown check. 94 % of a tree plan's time is inside the kernel's
+  edge call.
+- Times on this machine move by a factor of two to three with the load; counts, paths and
+  durations do not.
 - Every one of the 2 000 motions is re-checked independently in the slow test: at 1 kHz,
   clearance at every sample at least 0, the arm against itself at least 0, limits and margins
   held, ends exact.

@@ -18,7 +18,7 @@ pytest tests -q -m "not slow"`, under a minute).
 | `kernel/collide` + `native/collide` | done; two-level check IN PROGRESS | exact distances; real arm 31 scene 22 000 configurations per second on one thread since the tool refit (85 000 before it); target 100 000 |
 | `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; limits hold at any sampling rate; pen within 0.1 mm |
 | `check` | done | agrees with the kernel to 1e-15 on 60 000 configurations; 14 built-in faults caught; 0.2 s for a 7 s motion |
-| `free` | works; speed work IN PROGRESS | 2 000 of 2 000 test pairs solved; 141 / 207 ms median per plan, 31 / 46 ms when the straight move works; target under 100 ms |
+| `free` | done; target met on a quiet machine | 2 000 of 2 000 test pairs solved; CPU per plan at machine load 8 (arm 13 / arm 31): tree needed 48 / 75 ms median, 118 / 177 ms at the 95th percentile; straight move 9 / 12 ms; all plans 37 / 53 ms. At load 58 the tree case is 106 / 191 ms |
 | `local` | works; measurements and speed work IN PROGRESS | arm 31, paper only: random lines and curves 100 %, corpus 98 %, word 93 % (the rest is beyond the 0.784 m reach); about 9 in 10 random lines without a lift; 0.7 to 2.8 s of CPU per line |
 | `sequencer`, `arm_planner` | not started (round 3) | |
 | `system` | not started (round 4) | |
@@ -79,14 +79,21 @@ disk and in the snapshot commit. Restart these three tasks from the descriptions
      corner-to-corner timing workaround (retime handles a whole drawing in one call; use
      `tip_budget_m` with `tip_of=arm.tip`)
    - target: tens of milliseconds of CPU per line at the median
-2. **Free-space planner** (`aris/free/`): switch every edge check to
-   `kernel.collide.edges_clearance_q` (a compiled batch of edges), cut the Python bookkeeping;
-   target under 100 ms median when the tree is needed, under 20 ms for the straight move; report
-   the table of `docs/modules/free.md` before and after. The files in the snapshot are mid-change:
-   run `tests/test_free.py` first.
+2. **Free-space planner** (`aris/free/`): DONE and committed. Every edge check goes through the
+   compiled batch of edges. 94 % of what remains is inside the kernel's edge call. A refusal
+   "no free path" costs the full cap of 20 000 edges, 10 to 30 s. The fixed test set still comes
+   from random lift-off configurations; regenerate it from the local planner's alternatives.
 3. **Collision, two-level check** (`aris/kernel/collide*.py`, `native/collide/`): bounds per link
    and per parked arm first, exact capsules only for what is close; same answers to 1e-12;
    target 100 000 configurations per second on the real arm 31 scene, one thread.
+   The code is in the snapshot commit and the tests pass, but its owner had not reported or
+   measured when the session ended: measure it first.
+   Also asked for by the free-space planner: a tighter bound on how far the arm moves along an
+   edge. The kernel charges each joint its largest possible lever arm and needs about 55 body
+   evaluations per edge; a bound from the joints' actual speeds at the two ends of the edge plus
+   a reach-based change term needed 17 to 20 (measured by the free-space planner's owner before
+   that code was deleted; see git history of `aris/free/bound.py`). That is a 2.5 to 3 times
+   cut for both planners.
 
 ## If the tests fail right after picking up
 
