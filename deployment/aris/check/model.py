@@ -39,6 +39,7 @@ class ArmModel:
     names: tuple
     is_pen: np.ndarray         # (K,) bool
     is_fixed: np.ndarray       # (K,) bool, bolted to the mount
+    is_tool: np.ndarray        # (K,) bool, bolted to the flange, the pen excluded
     tip_hand: np.ndarray       # (3,)
     q_min: np.ndarray
     q_max: np.ndarray
@@ -80,6 +81,8 @@ def load_model(tip_hand=None) -> ArmModel:
         joint_R=joint_R, joint_t=joint_t, hand_R=hand_R, hand_t=hand_t,
         cap_frame=cap_frame, cap_a=cap_a, cap_b=cap_b, radius=radius, names=names,
         is_pen=np.array([n in d["tool"]["pen"] for n in names]), is_fixed=cap_frame == 0,
+        is_tool=np.array([b in d["tool"]["tool_bodies"] and n not in d["tool"]["pen"]
+                          for b, n in zip(body, names)]),
         tip_hand=tip, q_min=np.array(lim["q_min"], float), q_max=np.array(lim["q_max"], float),
         qd_max=np.array(lim["qd_max"], float), qdd_max=np.array(lim["qdd_max"], float),
         qddd_max=np.array(lim["qddd_max"], float), self_pairs=pairs,

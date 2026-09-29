@@ -29,6 +29,7 @@ class RigData:
     box_hi: np.ndarray             # (B,3)
     clearance: dict                # the demanded clearances, metres
     paper_z: float
+    notes: tuple = ()              # anything the verdict should say about how rig.json was read
 
 
 def read_rig(config_dir) -> RigData:
@@ -53,8 +54,13 @@ def read_rig(config_dir) -> RigData:
     if np.any(hi < lo):
         raise ValueError("rig.json: a steel box has hi below lo")
     clearance = {k: float(v) for k, v in cfg["clearances"].items() if k.endswith("_m")}
+    notes = []
+    if "tool_to_paper_m" not in clearance:
+        clearance["tool_to_paper_m"] = clearance["body_to_paper_m"]
+        notes.append("rig.json has no clearances.tool_to_paper_m: the tool keeps "
+                     "body_to_paper_m")
     return RigData(mounts, tuple(names), lo, hi, clearance,
-                   float(cfg["table"]["paper_surface_z_m"]))
+                   float(cfg["table"]["paper_surface_z_m"]), tuple(notes))
 
 
 def _need_rigid(T, what):

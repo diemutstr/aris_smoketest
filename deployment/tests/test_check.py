@@ -6,12 +6,13 @@ compare answers; the checker itself may not (the first test enforces that).
 import ast
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from aris.check import check
+from aris.check import check, check_phase_end
 from aris.check import geometry as cgeo
 from aris.check.config import read_rig
 from aris.check.model import capsules, frames, load_model
@@ -28,6 +29,8 @@ CONFIG = DEPLOY / "config"
 REPO = DEPLOY.parent
 RIG = Rig.load(CONFIG)
 MINE = read_rig(CONFIG)
+MINE_MODEL = load_model()
+KB = "numpy"          # the kernel's numpy engine: the reference, whatever is compiled
 N_AGREE = 10_000
 
 
@@ -39,19 +42,29 @@ def phase_of(arm_id) -> Phase:
 
 
 def kernel_classes(arm_id, phase, Q, drawing=False) -> dict:
-    """The planners' answer per obstacle class (gap minus the demanded clearance)."""
+    """The planners' answer per obstacle class (gap minus the demanded clearance).  Against the
+    paper the kernel's raw gaps are taken per capsule and the demanded clearances of rig.json
+    subtracted here, so the comparison does not depend on how the kernel splits them."""
     arm = RIG.arm(arm_id)
     body = arm.body(Q)
     walls = [w for w in phase.walls if arm_id in w.arms]
     obs = RIG.obstacles(arm_id, parked=phase.parked, walls=walls, for_planning=False)
-    per = collide.capsule_clearance(body, Obstacles(planes=obs.planes[:1]), drawing, prune=False)
+    raw = replace(obs.planes[0], margin=0.0, pen_margin=0.0, tool_margin=0.0)
+    per = collide.capsule_clearance(body, Obstacles(planes=(raw,)), drawing, prune=False,
+                                     backend=KB)
+    tool = MINE_MODEL.is_tool if body.is_tool is None else body.is_tool
+    links = ~body.is_pen & ~tool
+    c = MINE.clearance
     return dict(
-        steel=collide.clearance(body, Obstacles(boxes=obs.boxes), prune=False),
-        paper=per[:, ~body.is_pen].min(1),
-        pen=per[:, body.is_pen].min(1) if not drawing else np.full(len(Q), np.inf),
-        walls=collide.clearance(body, Obstacles(planes=obs.planes[1:]), prune=False),
-        parked=collide.clearance(body, Obstacles(capsules=obs.capsules), prune=False),
-        self=collide.self_clearance(body, arm.self_pairs, RIG.clearance["self_m"]))
+        steel=collide.clearance(body, Obstacles(boxes=obs.boxes), prune=False, backend=KB),
+        links=per[:, links].min(1) - c["body_to_paper_m"],
+        tool=per[:, tool].min(1) - c["tool_to_paper_m"],
+        pen=(per[:, body.is_pen].min(1) - c["pen_lifted_to_paper_m"]) if not drawing
+        else np.full(len(Q), np.inf),
+        walls=collide.clearance(body, Obstacles(planes=obs.planes[1:]), prune=False, backend=KB),
+        parked=collide.clearance(body, Obstacles(capsules=obs.capsules), prune=False, backend=KB),
+        self=collide.self_clearance(body, arm.self_pairs, RIG.clearance["self_m"],
+                                     backend=KB))
 
 
 def my_classes(arm_id, phase, Q, drawing=False, chunk=500) -> dict:
@@ -202,8 +215,12 @@ def test_capsule_table_matches_the_planners():
     arm = RIG.arm(13)
     if {tuple(p) for p in arm.self_pairs} != {tuple(p) for p in mine.self_pairs}:
         diffs.append("self-collision pairs differ")
-    if not np.array_equal(arm.body(np.zeros((1, 7))).is_fixed, mine.is_fixed):
+    kb = arm.body(np.zeros((1, 7)))
+    if not np.array_equal(kb.is_fixed, mine.is_fixed):
         diffs.append("fixed capsules differ")
+    if kb.is_tool is not None and not np.array_equal(kb.is_tool, mine.is_tool):
+        diffs.append(f"tool capsules differ: planner {np.array(kb.names)[kb.is_tool]} "
+                     f"checker {np.array(mine.names)[mine.is_tool]}")
     assert not diffs, "\n".join(diffs)
 
 
@@ -312,6 +329,7 @@ def _fails(v, name):
     assert name in v.failed, f"expected {name} to fail, failed: {v.failed}"
 
 
+@pytest.mark.slow
 def test_fault_path_through_a_strut():
     ph = phase_of(31)
     path = find_through(31, ph, "steel", seed=1)
@@ -319,18 +337,21 @@ def test_fault_path_through_a_strut():
     _fails(v, "clearance steel")
 
 
+@pytest.mark.slow
 def test_fault_path_crosses_a_wall():
     ph = phase_of(31)
     path = find_through(31, ph, "walls", seed=2)
     _fails(check(CONFIG, 31, free_motion(31, path), ph, path[0]), "clearance walls")
 
 
+@pytest.mark.slow
 def test_fault_path_touches_a_parked_neighbour():
     ph = phase_of(31)
     path = find_through(31, ph, "parked", seed=3)
     _fails(check(CONFIG, 31, free_motion(31, path), ph, path[0]), "clearance parked arms")
 
 
+@pytest.mark.slow
 def test_fault_self_collision():
     ph = phase_of(13)
     path = find_through(13, ph, "self", seed=4)
@@ -343,8 +364,8 @@ def test_fault_pen_dips_into_the_paper_when_lifted():
     z = 0.030 - 0.031 * (1 - np.abs(2 * u - 1))                    # down to -1 mm, back up
     Q, _ = ik_path(31, np.column_stack([xy, z]))
     v = check(CONFIG, 31, free_motion(31, Q), phase_of(31), Q[0])
-    _fails(v, "pen above paper")
-    assert -0.0017 < v.get("pen above paper").value < -0.0009
+    _fails(v, "clearance paper (pen)")
+    assert -0.0017 < v.get("clearance paper (pen)").value < -0.0009
 
 
 def test_fault_corner_reads_differently_at_4_khz():
@@ -390,14 +411,15 @@ def good_draw():
 
 
 def test_a_straight_line_draws(good_draw):
-    """Every pen measurement passes.  The body against the paper does not: see the page."""
+    """A straight line drawn on the paper passes everything.  Needs the tool's own clearance
+    to the paper in rig.json and the refitted tool capsules; until both have landed the old
+    holder capsule touches the paper (it reaches 0.08 mm into it) and this is expected to fail."""
+    body = RIG.arm(31).body(good_draw.q_start[None])
+    if body.is_tool is None or MINE.notes:
+        pytest.xfail("waiting for clearances.tool_to_paper_m and the tool capsule refit")
     v = check(CONFIG, 31, good_draw, phase_of(31), good_draw.q_start)
     print(f"\n{v}")
-    for name in ("tip on paper", "tip on line", "never backwards", "never stops", "tip speed",
-                 "velocity at 1 kHz", "acceleration at 1 kHz", "jerk at 1 kHz",
-                 "1 kHz vs 4 kHz", "clearance steel", "clearance walls",
-                 "clearance parked arms", "clearance self"):
-        assert v.get(name).passed, name
+    assert v.passed, v.failed
 
 
 def test_fault_drawing_leaves_the_line(good_draw):
@@ -491,6 +513,7 @@ def test_same_verdict_at_any_sampling(good_free):
         assert abs(v.min_clearance - ref.min_clearance) < 5e-4
 
 
+@pytest.mark.slow
 def test_clearance_is_a_true_bound(good_free):
     """The reported clearance never exceeds the truth measured by the planners' kernel on a
     20 kHz sampling of the same flown curve, and lies within the tolerance (0.25 mm) of it."""
@@ -504,6 +527,7 @@ def test_clearance_is_a_true_bound(good_free):
     assert v.min_clearance >= truth - 2.5e-4
 
 
+@pytest.mark.slow
 def test_same_verdict_with_twice_the_samples():
     """A motion that fails, handed over again with a sample inserted between every two."""
     ph = phase_of(31)
@@ -578,3 +602,48 @@ def test_speed():
               f"checked in {sec * 1e3:.0f} ms CPU ({v.min_clearance_at}); "
               f"{'PASS' if v.passed else v.failed}")
     assert rows[0] < 1.5 and rows[1] < 6.0
+
+
+# =========================================================================== phase end
+
+
+def _at_park(phase, moved):
+    """The active arms of the phase at park, except those in `moved`."""
+    return {a: moved.get(a, RIG.park_q(a)) for a in RIG.phase(phase).active}
+
+
+def test_phase_end_everyone_at_park_passes():
+    ph = RIG.phase(1)
+    v = check_phase_end(CONFIG, ph, {a: RIG.park_q(a) for a in ph.active})
+    print(f"\n{v}")
+    assert v.passed
+    assert len([m for m in v.measurements if m.name.startswith("arms ")]) == 15
+
+
+def test_phase_end_pairs_agree_with_the_planners():
+    """Arm 71 at random configurations, 31 at park: the pair clearance equals the kernel's
+    clearance of 71's whole body (base included, which a moving arm's check leaves out)
+    against parked 31."""
+    rng = np.random.default_rng(9)
+    Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(40, 7))
+    body = RIG.arm(71).body(Q)
+    body = replace(body, is_fixed=np.zeros_like(body.is_fixed))
+    parked = RIG.obstacles(71, parked=(31,), for_planning=False).capsules
+    k = collide.clearance(body, Obstacles(capsules=parked), prune=False, backend=KB)
+    worst = 0.0
+    for q, kv in zip(Q, k):
+        v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {71: q}))
+        m = v.get("arms 31 and 71")
+        worst = max(worst, abs((m.value - m.limit) - kv))
+    print(f"\npair clearance vs kernel, 40 configurations: {worst:.1e} m")
+    assert worst < 1e-9
+
+
+def test_phase_end_catches_a_touching_pair_and_a_missing_arm():
+    ph = Phase("pair", (71,), (31,), ())
+    rng = np.random.default_rng(10)
+    Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(3000, 7))
+    q = Q[np.argmax(kernel_classes(71, ph, Q)["parked"] < -0.01)]
+    v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {71: q}))
+    _fails(v, "arms 31 and 71")
+    _fails(check_phase_end(CONFIG, RIG.phase(1), {13: RIG.park_q(13)}), "well formed")

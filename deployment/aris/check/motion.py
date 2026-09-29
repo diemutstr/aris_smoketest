@@ -15,8 +15,8 @@ REST = 1e-6           # rad/s, "at rest"; rad, "starts where the arm is"
 MOVES = 1e-5          # rad, a motion that turns no joint further than this does nothing
 POSITION_TOL = 1e-7   # rad, the driver's own tolerance on the joint position box
 
-_TITLE = dict(steel="clearance steel", paper="clearance paper (body)",
-              pen="pen above paper", walls="clearance walls", parked="clearance parked arms",
+_TITLE = dict(steel="clearance steel", links="clearance paper (links)",
+              tool="clearance paper (tool)", pen="clearance paper (pen)", walls="clearance walls", parked="clearance parked arms",
               self="clearance self")
 
 
@@ -56,7 +56,7 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
     r1, r4 = timing.rates(traj.t, traj.q, traj.qd, 1000.0, sub=4)
     ms += _limits(scene.model, r1, r4, rate_tol)                     # item 3
     sw = sweep(scene, traj, step, tol)
-    ms += _clearances(scene, sw, r4, drawing)                        # items 3-6, 8
+    ms += _clearances(scene, sw, r4, drawing, rig.notes)                      # items 3-6, 8
     if drawing:                                                      # item 7
         ms += _pen(scene, traj, motion.tip_base, r1, tip_height_tol, line_tol, back_tol,
                    draw_speed, speed_tol, stop_fraction)
@@ -80,7 +80,7 @@ def _ends(traj, q_before):
     return ms
 
 
-def _clearances(scene, sw, r4, drawing):
+def _clearances(scene, sw, r4, drawing, notes=()):
     m = scene.model
     q_margin = min(sw.q_min_margin, float(np.min(np.minimum(r4.q - m.q_min, m.q_max - r4.q))))
     ms = [measure("joint positions", q_margin, 0.0, "min", "rad",
@@ -89,8 +89,9 @@ def _clearances(scene, sw, r4, drawing):
         if c == "pen" and drawing:
             continue
         res = sw.per_class[c]
+        note = "".join(n + "; " for n in notes) if c == "tool" else ""
         ms.append(measure(_TITLE[c], res.value + scene.margin[c], scene.margin[c], "min", "m",
-                          ("" if res.exact else "at least; ") +
+                          note + ("" if res.exact else "at least; ") +
                           (f"{res.where} at t = {res.t:.3f} s" if res.where else "")))
     return ms
 

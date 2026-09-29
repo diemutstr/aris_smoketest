@@ -30,7 +30,8 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 3 | `velocity`, `acceleration`, `jerk` at 1 kHz, by finite differences as the driver reads them, with three samples of standing still at both ends | the FR3 limits (2.62/5.26/4.18 rad/s; 10 rad/s²; 5000 rad/s³) |
 | 3 | `1 kHz vs 4 kHz`: the same three readings at 4 kHz. A smooth trajectory reads the same; a corner reads higher the finer you look | differ by at most 5 % (readings under a tenth of the limit are not compared) |
 | 4 | `clearance steel`: every box of rig.json and every arm's struts, plate and clamp (its own included) | 0.050 m |
-| 4 | `clearance paper (body)`: every moving capsule except the pen | 0.020 m |
+| 4 | `clearance paper (links)`: the arm's moving links | 0.020 m (`body_to_paper_m`) |
+| 4 | `clearance paper (tool)`: everything bolted to the flange except the pen (gripper, blades, holder, pencil tail) | `tool_to_paper_m`; if rig.json lacks it, `body_to_paper_m`, and the verdict says so |
 | 4 | `clearance walls`: the phase's walls that have this arm on one side | 0.025 m |
 | 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, base included | 0.050 m |
 | 5 | `clearance self`: the capsule pairs at least four joints apart | 0.020 m |
@@ -40,13 +41,23 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 7 | drawing: `never backwards` along the line (a numerical allowance) | 0.01 mm |
 | 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 5 % of the drawing speed (1 mm/s) |
 | 7 | drawing: `tip speed` | drawing speed + 2 % |
-| 8 | free: `pen above paper`: the pen capsule, whose surface ends exactly at the tip | 0.003 m |
+| 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip | 0.003 m (`pen_lifted_to_paper_m`) |
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
 
 The clearances are the **demanded** ones of rig.json (`clearances`), not the planning allowance
 on top. Capsules bolted to the base are not checked against obstacles (they hang inside the
 mount), only against the arm itself. During a drawing motion the pen is not checked against the
 paper.
+
+## Before the next phase: `check_phase_end`
+
+`check_phase_end(config_dir, phase, q_by_arm)` takes where every arm stands (active arms at the
+end of their queues; a parked arm left out stands at its park configuration; an active arm left
+out fails). Everything stands still, so it checks one configuration per arm: every one of the 15
+pairs of arms against each other, whole bodies with their bases, at `arm_to_arm_m` (one row per
+pair, `arms 31 and 71`), and every arm against the steel, the paper (links, tool, pen) and itself
+(one row per arm, the tightest of those). No walls: the pairs are measured directly. The
+coordinator calls it before it starts the next phase.
 
 ## How the motion between samples is covered
 
@@ -91,12 +102,13 @@ consecutive samples, then a ball per capsule, then the exact distance.
 changes (a capsule, a radius, a limit, the tip, the pair rule), `test_capsule_table_matches_the_
 planners` fails and lists every entry that differs. Edit `aris/check/fr3.json` by hand to match,
 checking each number against its source (the mesh fit, the datasheet), and run the tests again.
-The pen capsule's far end is written as `"tip"`: it is always the tip moved back by the radius,
+Which capsules are the tool is `tool.tool_bodies` in the same file; when the planners' `Body`
+carries `is_tool`, the test compares it too. The pen capsule's far end is written as `"tip"`: it is always the tip moved back by the radius,
 so it follows a calibrated tip.
 
 ## Files
 
-`motion.py` (the call), `sweep.py` (clearance along the motion), `scene.py` (obstacles and their
+`motion.py` (the call), `phase.py` (`check_phase_end`), `sweep.py` (clearance along the motion), `scene.py` (obstacles and their
 distances), `model.py` (kinematics), `geometry.py` (distances), `timing.py` (the flown curve and
 the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig reader),
 `verdict.py` (the answer), `fr3.json` (the data copy).
@@ -114,6 +126,9 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
 | reported against the truth (planners' kernel on a 20 kHz sampling) | 13.592 mm reported, 13.842 true: below, within 0.25 mm |
 | good free motions (arms 13, 31, 97) | pass |
+| phase end: all arms at park | pass; tightest arm 31 against its own strut, 63.8 mm (demanded 50) |
+| phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
+| phase end: arm 71 into parked arm 31; an active arm missing | caught |
 | speed, CPU time, one core | 0.7 s free motion 52 ms; 1.6 s free motion 66 ms; 7.1 s free motion 130 ms; 14 s drawing line 180 ms; 60 s drawing motion 530 ms |
 
 Where the time goes (60 s drawing motion): about 10 000 clearance samples, then the 1 kHz and
@@ -124,13 +139,12 @@ native code), or a tighter bound on how far a capsule moves.
 
 ## What it cannot do, and what it found
 
-- **The pen holder cannot keep 20 mm from the paper while drawing.** With the hand square to the
-  paper the holder's lowest capsule (`holder.2`) is 0.03 mm above it; over the whole 15° lean cone
-  the best is 2.6 mm. The same holds within a few millimetres of the paper when lifted. So under
-  the demanded `body_to_paper_m` = 0.020 every drawing motion fails `clearance paper (body)`, and so
-  does every free motion that starts or ends a few millimetres above the paper. The planners'
-  kernel measures the same. This needs a decision (for example: the holder gets the pen's
-  clearance against the paper), not a change in the checker.
+- **The pen holder works within millimetres of the paper.** With the hand square to the paper the
+  holder's lowest capsule (`holder.2`) is 0.03 mm above it; over the whole 15° lean cone the best
+  is 2.6 mm. Decided 2026-09-29: the tool gets its own clearance to the paper
+  (`tool_to_paper_m`, provisionally 0: it must not touch), and the tool capsules near the cap are
+  being refitted. Until both have landed, the straight-line drawing test is marked as an expected
+  failure (the old `holder.2` capsule reaches 0.08 mm into the paper).
 - The old hover run of arm 71 (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
   flown curve (the old code read 89 at 48 Hz), jerk and the 1 kHz/4 kHz comparison, and link 6
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).

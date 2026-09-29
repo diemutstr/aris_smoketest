@@ -2,8 +2,9 @@
 
 Obstacle classes, each with the clearance `rig.json` demands (not the planning allowance):
   steel    every steel box of the rig, the arm's own struts, plate and clamp included
-  paper    the paper plane, for every moving capsule except the pen
-  pen      the pen against the paper (free motions only), at the lifted-pen clearance
+  links    the paper, for the arm's moving links
+  tool     the paper, for the tool (gripper, blades, holder, pencil tail), its own clearance
+  pen      the paper, for the pen (free motions only), at the lifted-pen clearance
   walls    the walls of the phase that have this arm on one side
   parked   the arms standing parked in this phase, at their park configurations
   self     the arm against itself
@@ -22,7 +23,7 @@ from aris.check import geometry as geo
 from aris.check.config import RigData
 from aris.check.model import ArmModel, capsules, load_model
 
-CLASSES = ("steel", "paper", "pen", "walls", "parked", "self")
+CLASSES = ("steel", "links", "tool", "pen", "walls", "parked", "self")
 _BLOCK = 16                     # consecutive samples that share one ball per capsule
 
 
@@ -79,7 +80,7 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool) -> Scen
         o_names += [f"parked{p}:{x}" for x in m.names]
         o_a.append(a[0]), o_b.append(b[0]), o_r.append(m.radius)
     c = rig.clearance
-    margin = dict(steel=c["steel_m"], paper=c["body_to_paper_m"],
+    margin = dict(steel=c["steel_m"], links=c["body_to_paper_m"], tool=c["tool_to_paper_m"],
                   pen=c["pen_lifted_to_paper_m"], walls=c["wall_m"],
                   parked=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
@@ -107,14 +108,16 @@ def clearance_of(scene: Scene, A, B, thr=None) -> Clearance:
     m = scene.model
     names = np.array(m.names)
     move = ~m.is_fixed
-    body, pen = move & ~m.is_pen, move & m.is_pen
+    links, tool, pen = move & ~m.is_pen & ~m.is_tool, move & m.is_tool, move & m.is_pen
     up, paper = np.array([[0.0, 0.0, 1.0]]), np.array([scene.paper_z])
     Am, Bm, rm = A[:, move], B[:, move], m.radius[move]
     t = lambda c: thr.get(c, np.inf)
     out = {
         "steel": _boxes(scene, Am, Bm, rm, names[move], t("steel")),
-        "paper": _plane(A[:, body], B[:, body], m.radius[body], names[body], up, paper,
-                        ("paper",), scene.margin["paper"]),
+        "links": _plane(A[:, links], B[:, links], m.radius[links], names[links], up, paper,
+                        ("paper",), scene.margin["links"]),
+        "tool": _plane(A[:, tool], B[:, tool], m.radius[tool], names[tool], up, paper,
+                       ("paper",), scene.margin["tool"]),
         "pen": (_nothing(len(A)) if scene.drawing else
                 _plane(A[:, pen], B[:, pen], m.radius[pen], names[pen], up, paper, ("paper",),
                        scene.margin["pen"])),
