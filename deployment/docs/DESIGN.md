@@ -55,6 +55,14 @@ nothing about the table, the canvas or the other arms.
 - shorten the result, re-checking every shortcut
 - fixed random seed derived from the inputs, so the same question gives the same path
 - the pen is part of the arm's collision body; the paper is an obstacle
+- both ends sit a few millimetres above the paper, which is the hardest place for an RRT to start
+  from; so each end is first raised straight up to a comfortable height, and the RRT connects the
+  two raised configurations
+
+**How we find out how good it is.** A fixed test set per arm: a thousand pairs of lift-off
+configurations taken from the local planner's bunches, near and far, same branch and different
+branch. Reported: how many are solved, the time per plan, and the path length against the straight
+joint-space distance. This is the acceptance test of the free-space planner.
 
 ## Shared kernel
 
@@ -91,6 +99,17 @@ Only ever calls the arm planner, with different lines and different walls.
 
 Pete's scheme (2026-09-29): leaders get as much space as they need; followers get started with
 what they can do without interfering with the leaders; then the roles swap; then a fill phase.
+
+**Build order.**
+- Step 1: leaders only. The three leaders of a phase draw; the three followers stay parked the
+  whole phase and are plain obstacles. Then the roles swap. No footprints needed.
+- Step 2: followers draw next to the leaders, against the leader's footprint, as described below.
+
+**Leaders can reach each other.** The diagonal pairs (13-71 and 71-2) hang 1.36 m apart and each
+arm reaches about 0.9 m, so they can touch; the audit found 0.7 % of their pose pairs closer than
+the margin. The two outer leaders of one column (2.42 m apart) cannot. The row walls are what
+turns "almost never" into "never", and the independent checker confirms it afterwards by
+measuring the distance between the leaders' footprints.
 
 **Rows.** The rig is three rows of two arms. A wall between neighbouring rows (a plane in the
 table frame; every arm stays on its own side, half the arm-to-arm margin away) makes the three
