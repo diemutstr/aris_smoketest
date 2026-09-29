@@ -7,11 +7,12 @@ Three levels. Each level has one job, calls only the level below it, and returns
 what it planned, and what it could not plan and why.
 
 ```
-system planner      which arm draws which line, in which phase, behind which walls
-  arm planner       one arm: a tour of drawing and free-space motions
-    sequencer         order, direction, which alternative
-    local planner     one line -> a bunch of alternative drawing plans
-    free-space planner  one configuration to another, pen up
+drawing server      takes a whole drawing, runs it on the rig, reports progress
+  system planner      which arm draws which line, in which phase, behind which walls
+    arm planner       one arm: a tour of drawing and free-space motions
+      sequencer         order, direction, which alternative
+      local planner     one line -> a bunch of alternative drawing plans
+      free-space planner  one configuration to another, pen up
 ```
 
 ## 1. Local planner
@@ -217,6 +218,29 @@ every arm reports parked, start the next.
 **When a motion fails.** That arm stops and holds; the rest of its queue is dropped; the arm
 planner is called again with the lines still to draw and the configuration the arm is actually
 in. The other arms are not affected, because the walls make them independent.
+
+## 5. Drawing server
+
+The top of the hierarchy and the one front door. The GUI and the command line talk only to it.
+It is the only part that touches both planning and hardware; the planners stay pure.
+
+**In:** a drawing, as a list of lines in the table frame.
+**Out:** progress while it runs, and at the end what was drawn and what was not, with reasons.
+
+**What it does**
+- loads the rig description and the calibration; refuses to start without a valid calibration
+- reads where the arms are and which are available
+- calls the system planner phase by phase
+- passes each motion through the checker into the arm's queue
+- owns the executors and the coordinator (section 4)
+- stop, pause, resume
+- keeps the state of the job: waiting, planning, drawing, paused, done, failed
+
+One job at a time. Calibration and "park all arms" are other kinds of job run by the same server
+through the same executors.
+
+**Where it runs.** The server and the planners run on the planning machine. The executors run on
+the operator PC next to the arms. Only motions and status messages cross between the two.
 
 ## Checker
 
