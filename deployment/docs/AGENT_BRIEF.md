@@ -55,6 +55,12 @@ Repository root: `/home/franka/aris_project/aris_sixarm`. New code: `deployment/
 - An ordinary refusal is a return value with a reason, never an exception.
 - Units: metres, radians, seconds. Name the frame in the variable (`p_base`, `T_table_base`).
 - A file over 400 lines or a function over 60 lines needs a reason. Comments say why, not what.
+- Tests that measure speed report the number and assert only a generous ceiling (ten times what
+  you measured), using CPU time of the process (`time.process_time`), not wall-clock time: this
+  machine is shared and often heavily loaded. Tests that take more than a few seconds each are
+  marked `@pytest.mark.slow`; the quick set (`-m "not slow"`) must finish in under a minute.
+- `aris/check/` reads `config/` with its own reader, by design (it shares no code with the rest).
+  Everything else gets rig facts from `aris/rig.py`.
 - Your module page (`docs/modules/<module>.md`) is one page, plain language, no internal jargon:
   the job, what goes in, what comes out, how it works, what it cannot do, the measured numbers.
 
