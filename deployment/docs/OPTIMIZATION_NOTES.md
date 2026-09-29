@@ -41,6 +41,11 @@ first, measure on the corpus, then pick from this list. Numbers marked (est.) ar
 12. Not yet: one bound around a group of obstacles (for example a parked arm's 40 capsules) as a
     first pass; most of the remaining time is the cheap per-pair first pass, 4 ns per pair.
 
+12a. The body has 62 capsules since the tool was refitted to its meshes (33 of them on the tool,
+    several only 2-3 mm thick near the paper), and 784 self pairs. Collision cost grows roughly in
+    proportion. Idea: two levels, a coarse body of a few capsules against everything far away and
+    the fine tool capsules only against the paper and whatever the coarse check says is close.
+
 ## IK
 
 12b. IN PROGRESS (round 1): the vendored solver has the Panda's joint limits built in and returns
