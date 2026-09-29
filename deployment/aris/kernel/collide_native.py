@@ -7,10 +7,11 @@ native/collide) runs.  Everything public here is also importable from `aris.kern
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
+from aris.kernel.collide_groups import body_groups, group_margins, obstacle_groups
 from aris.types import Body, Obstacles
 
 try:
@@ -42,7 +43,11 @@ def backend() -> str:
 @dataclass(frozen=True)
 class Packed:
     """Obstacles as flat arrays.  Build once with `pack` and reuse; every call also accepts
-    plain `Obstacles` and packs them itself."""
+    plain `Obstacles` and packs them itself.
+
+    Margins may be changed with `dataclasses.replace` (the groups follow them); moving an
+    obstacle needs a fresh `pack`, because the groups' fat capsules are built from the geometry.
+    """
     box_R: np.ndarray        # (Mb, 3, 3)
     box_c: np.ndarray        # (Mb, 3)
     box_h: np.ndarray        # (Mb, 3)
@@ -57,25 +62,50 @@ class Packed:
     cap_rm: np.ndarray       # (Mc,) obstacle radius + margin
     names: tuple[str, ...]   # boxes, then planes, then capsules: the obstacle index order
     pl_tool_m: np.ndarray | None = None   # (Mp,) margin for tool capsules; None: pl_m
+    cap_r: np.ndarray | None = None       # (Mc,) obstacle radius; None: treated as 0
+    # obstacle groups (collide_groups.py); None: built from positions alone when needed
+    og_start: np.ndarray | None = None
+    og_members: np.ndarray | None = None
+    og_a: np.ndarray | None = None
+    og_b: np.ndarray | None = None
+    og_r: np.ndarray | None = None
 
     @property
     def tool_m(self) -> np.ndarray:
         return self.pl_m if self.pl_tool_m is None else self.pl_tool_m
 
     @property
+    def radius(self) -> np.ndarray:
+        return np.zeros(len(self.cap_rm)) if self.cap_r is None else self.cap_r
+
+    @property
+    def groups(self) -> tuple:
+        """(start, members, a, b, r, margin) of the obstacle groups."""
+        Mb, Mp = len(self.box_m), len(self.pl_m)
+        g = (self.og_start, self.og_members, self.og_a, self.og_b, self.og_r)
+        if g[0] is None:
+            g = obstacle_groups(self.box_R, self.box_c, self.box_h, self.cap_a, self.cap_b,
+                                self.radius, [""] * len(self.cap_rm), Mp)
+        marg = group_margins(g[0], g[1], self.box_m, self.cap_rm - self.radius, Mb, Mp)
+        return g + (marg,)
+
+    @property
     def scene(self) -> tuple:
         """The arrays in the order the compiled module takes them."""
+        c = np.ascontiguousarray
         return (self.box_R, self.box_c, self.box_h, self.box_m, self.pl_n, self.pl_off, self.pl_m,
                 self.pl_pen_m, self.pl_paper.astype(np.uint8), self.cap_a, self.cap_b, self.cap_rm,
-                np.ascontiguousarray(self.tool_m, float))
+                c(self.tool_m, float)) + tuple(
+                    c(x, np.int64) if i < 2 else c(x, float) for i, x in enumerate(self.groups))
 
 
 def pack(obs: Obstacles | Packed) -> Packed:
+    """The obstacles as flat arrays, with their groups for the first pass (collide_groups.py)."""
     if isinstance(obs, Packed):
         return obs
     f = lambda xs, shape: np.ascontiguousarray(np.asarray(xs, float).reshape(shape))
     b, p, c = obs.boxes, obs.planes, obs.capsules
-    return Packed(
+    P = Packed(
         box_R=f([x.T_base_box[:3, :3] for x in b], (len(b), 3, 3)),
         box_c=f([x.T_base_box[:3, 3] for x in b], (len(b), 3)),
         box_h=f([x.half for x in b], (len(b), 3)),
@@ -91,7 +121,11 @@ def pack(obs: Obstacles | Packed) -> Packed:
         names=tuple(x.name for x in (*b, *p, *c)),
         pl_tool_m=f([x.margin if getattr(x, "tool_margin", None) is None else x.tool_margin
                      for x in p], (len(p),)),
+        cap_r=f([x.radius for x in c], (len(c),)),
     )
+    g = obstacle_groups(P.box_R, P.box_c, P.box_h, P.cap_a, P.cap_b, P.cap_r,
+                        [x.name for x in c], len(p))
+    return replace(P, og_start=g[0], og_members=g[1], og_a=g[2], og_b=g[3], og_r=g[4])
 
 
 # --------------------------------------------------------------------------- from joint angles
@@ -132,7 +166,7 @@ class ArmTables:
     @property
     def caps(self) -> tuple:
         return (self.radius, self.is_pen.astype(np.uint8), self.is_fixed.astype(np.uint8),
-                self.tool.astype(np.uint8))
+                self.tool.astype(np.uint8)) + body_groups(self.names)
 
 
 def arm_tables(arm) -> ArmTables:

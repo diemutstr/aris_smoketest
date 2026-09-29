@@ -32,6 +32,10 @@ class Settings:
     table_dr: float = 0.01         # m between tabulated distances of the tip from the base axis
     table_r_max: float = 0.95      # m, the farthest tabulated distance
 
+    # ---- the lazy obstacle check (optimisation note 4)
+    lazy: bool = True              # check nodes against the obstacles only on the routes used
+    lazy_rounds: int = 12          # searches per route before every surviving node is checked
+
     # ---- the search
     lift_cost: float = 5.0         # rad of joint motion one lift is worth
     gap_cost: float = 1000.0       # per layer step left undrawn; far above any drawing route

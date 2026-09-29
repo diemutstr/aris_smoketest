@@ -259,7 +259,8 @@ def per_line(lines, bunches, leftovers, stats) -> dict:
     return rows
 
 
-def run(rig, arm_id: int, workers: int, sets=SETS, obstacles=None, cache_dir=None):
+def run(rig, arm_id: int, workers: int, sets=SETS, obstacles=None, cache_dir=None,
+        settings=None):
     """Plan every set for one arm.  -> {set: (lines, bunches, leftovers, stats, wall seconds)}."""
     import time
 
@@ -272,7 +273,7 @@ def run(rig, arm_id: int, workers: int, sets=SETS, obstacles=None, cache_dir=Non
             continue
         t = time.perf_counter()
         b, lo, st = plan_detailed(arm, lines, obs, rules, gates, workers=workers,
-                                  cache_dir=cache_dir)
+                                  settings=settings, cache_dir=cache_dir)
         out[name] = (lines, b, lo, st, time.perf_counter() - t)
     return out
 

@@ -44,6 +44,8 @@ class LineStats:
     nodes: int = 0                   # stored nodes (inside the gates without obstacles)
     ik_poses: int = 0                # poses handed to the IK, graph and exact paths
     lookups: int = 0                 # graph nodes read from the kinematic table
+    checked: int = 0                 # nodes checked against the obstacles
+    rounds: int = 0                  # searches over the whole line
     widened: int = 0                 # layers opened to the lean
     repairs: int = 0                 # sweeps run again after an exact path failed
     seconds: dict = field(default_factory=lambda: dict(graph=0.0, search=0.0, dense=0.0,
@@ -122,7 +124,7 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
     s = polyline.layer_positions(length, cfg.step)
     lat = clock("graph", Lattice, arm, judge, polyline.at(points, s_points, s), s,
                 rules.lean_max, cfg, table)
-    route = clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
+    route = _search(lat, cfg, clock, stats)
     for _ in range(3):                                   # open the lean where the plan fails
         wanted = _trouble(route, lat, cfg)
         if not len(wanted) or len(lat.leans) == 1:
@@ -131,7 +133,7 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
         stats.widened += opened
         if not opened:
             break
-        route = clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
+        route = _search(lat, cfg, clock, stats)
     route, checked, lost = _repair(lat, judge, route, points, s_points, cfg, clock, stats)
     bunches, leftovers = [], []
     gap_from, gap_to = {}, {}                  # where the undrawn stretches really begin and end
@@ -150,6 +152,8 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
             bunches.append(Bunch(piece, tuple(plans)))
         else:
             leftovers.append(Leftover(piece, "unreachable", f"cannot be timed: {why}"))
+    # the reason of an undrawn stretch ("blocked by ...") needs its nodes checked
+    clock("graph", lat.check_layers, sorted({k for a, b in route.gaps for k in range(a, b + 1)}))
     leftovers += gap_leftovers(lat, judge, line.id, route.gaps, gap_from, gap_to)
     leftovers += [Leftover(Piece(line.id, float(s[k0]), float(s[k1])), *REPAIRED)
                   for k0, k1 in lost]
@@ -158,7 +162,30 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
     stats.nodes = int(sum(len(L.q) for L in lat.layers))
     stats.ik_poses += lat.ik_poses
     stats.lookups = lat.lookups
+    stats.checked = lat.checked
     return bunches, leftovers, stats
+
+
+def _search(lat: Lattice, cfg: Settings, clock, stats) -> Route:
+    """The cheapest route whose nodes are all free of the obstacles.
+
+    Lazily (`cfg.lazy`) the graph's nodes count as free until checked; so the route is found,
+    its nodes and their neighbours are checked in one batch, and if any of the route's own
+    nodes is not free the search runs again.  After `lazy_rounds` searches every surviving node
+    of the line is checked, as in the eager planner."""
+    for _ in range(cfg.lazy_rounds if cfg.lazy else 1):
+        route = clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
+        stats.rounds += 1
+        if not cfg.lazy:
+            return route
+        picks = [(r.k0 + i, lat.band(r.k0 + i, [n])) for r in route.runs
+                 for i, n in enumerate(r.nodes)]
+        clock("graph", lat.check, picks)
+        if all(lat.layers[r.k0 + i].free[n] for r in route.runs for i, n in enumerate(r.nodes)):
+            return route
+    clock("graph", lat.check_layers, range(lat.n_layers))
+    stats.rounds += 1
+    return clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
 
 
 def _trouble(route: Route, lat: Lattice, cfg: Settings) -> np.ndarray:
@@ -198,7 +225,7 @@ def _repair(lat, judge, route, points, s_points, cfg, clock, stats):
                 if run.k0 <= kk <= run.k1:
                     lat.ban(kk, [run.nodes[kk - run.k0]])
         stats.repairs += 1
-        route = clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
+        route = _search(lat, cfg, clock, stats)
     lost = [(r.k0, r.k1) for r, _, _ in bad]
     good = tuple(r for r in route.runs if (r.k0, r.k1) not in lost)
     return Route(good, route.gaps, route.cost), checked, lost
@@ -259,8 +286,21 @@ def _alternatives(lat, judge, run, piece, checked, points, s_points, rules, cfg,
     """Up to `n_alternatives` verified, timed plans for one piece: the best route of each
     family, cheapest family first, each starting or ending at least `distinct` away (in some
     joint) from every plan already taken."""
-    sweep = clock("search", piece_routes, lat, run.k0, run.k1)
-    ends = families(lat, sweep, cfg.spin_sectors)
+    for _ in range(cfg.lazy_rounds if cfg.lazy else 1):
+        sweep = clock("search", piece_routes, lat, run.k0, run.k1)
+        ends = families(lat, sweep, cfg.spin_sectors)[: 3 * cfg.n_alternatives]
+        if not cfg.lazy:
+            break
+        routes = [sweep.route(e) for e in ends]
+        picks = [(run.k0 + i, lat.band(run.k0 + i, [r[i] for r in routes]))
+                 for i in range(run.k1 - run.k0 + 1)]
+        clock("graph", lat.check, picks)
+        if all(lat.layers[run.k0 + i].free[r[i]] for r in routes for i in range(len(r))):
+            break
+    else:
+        clock("graph", lat.check_layers, range(run.k0, run.k1 + 1))
+        sweep = clock("search", piece_routes, lat, run.k0, run.k1)
+        ends = families(lat, sweep, cfg.spin_sectors)
     primary = _family(lat, run.k0, run.k1, run.nodes[0], run.nodes[-1], cfg.spin_sectors)
     extent = (piece.s0, piece.s1)
     layers = (float(lat.s[run.k0]), float(lat.s[run.k1]))

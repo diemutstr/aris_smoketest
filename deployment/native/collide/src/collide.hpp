@@ -1,10 +1,11 @@
 // The collision check over a batch: obstacles, the arm's capsules, the arm's kinematic chain.
 //
-// Mirrors aris/kernel/collide.py: the same clearance per pair, the same midpoint pruning, the
-// same "first smallest" choice of the closest obstacle, the same path bound.  No robot numbers
+// Mirrors aris/kernel/collide.py: the same clearance per pair, the same definition of each
+// capsule's value, the same "first smallest" choice of the closest obstacle, the same path bound.  No robot numbers
 // live here: the chain and the capsules are tables handed in by the caller.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -29,6 +30,12 @@ struct Scene {  // the packed obstacles
     // first pass runs as straight loops over obstacles that the compiler vectorises.
     const double* box_soa;   // (15, Mb): R00 R01 R02 R10 .. R22, cx cy cz, hx hy hz
     const double* cap_soa;   // (10, Mc): ax ay az, dx dy dz (d = b - a), dd = d.d, (3 unused)
+    // Obstacle groups (boxes and capsules; planes are always checked one by one).  Group h
+    // holds obstacles og_members[og_start[h] .. og_start[h+1]) (global obstacle indices), all
+    // inside one fat capsule og_a/og_b/og_r, and demands at most og_margin[h].
+    int G = 0;
+    const int64_t *og_start, *og_members;
+    const double *og_a, *og_b, *og_r, *og_margin;
 };
 
 // Fill the row-per-coordinate copies of a scene's boxes and capsules.
@@ -93,6 +100,17 @@ struct Caps {  // the arm's capsules, per capsule
     int K = 0;
     const double* r;
     const uint8_t *is_pen, *is_fixed, *is_tool;
+    // body groups: group g holds capsules bg_members[bg_start[g] .. bg_start[g+1])
+    int NG = 0;
+    const int64_t *bg_start, *bg_members;
+};
+
+// How one evaluation may save work.  The answer does not depend on it (see eval_config).
+struct Mode {
+    bool prune = true;    // skip pairs by the midpoint bound
+    bool groups = true;   // skip whole groups first (needs prune)
+    double span = 0.0;    // per-capsule values are exact up to (configuration minimum + span)
+    int64_t* count = nullptr;  // if set, adds the number of exact pair distances taken
 };
 
 struct Chain {  // serial arm: modified DH rows, then fixed extra frames, then capsules on frames
@@ -106,69 +124,199 @@ struct Chain {  // serial arm: modified DH rows, then fixed extra frames, then c
 };
 
 struct Scratch {
-    std::vector<double> pl, ub, R, p, p0, p1;
+    std::vector<double> pl, ub, R, p, p0, p1, mid, half, sph, gl;
+    std::vector<int> order;
 };
 
-// Clearance of each capsule of one configuration: val[k] (smallest over obstacles), arg[k]
-// (which obstacle: boxes, then planes, then capsules; -1 none).  With `prune`, pairs that
-// cannot be the configuration's minimum keep their midpoint lower bound, as in collide.py.
+// A pair's clearance, given the obstacle's global index o (boxes, planes, capsules).
+inline double pair_exact(const Scene& S, const double* a, const double* b, double r, int64_t o) {
+    if (o < S.Mb)
+        return segment_box_distance(a, b, S.box_R + 9 * o, S.box_c + 3 * o, S.box_h + 3 * o) - r -
+               S.box_m[o];
+    const int64_t m = o - S.Mb - S.Mp;
+    return segment_segment_distance(a, b, S.cap_a + 3 * m, S.cap_b + 3 * m) - r - S.cap_rm[m];
+}
+
+// The same pair measured from the capsule's midpoint c (an upper bound on the pair's value
+// plus half the capsule's length; minus that half length, a lower bound).
+inline double pair_mid(const Scene& S, const double* c, double r, int64_t o) {
+    if (o < S.Mb)
+        return point_box_distance(c, S.box_R + 9 * o, S.box_c + 3 * o, S.box_h + 3 * o) - r - S.box_m[o];
+    const int64_t m = o - S.Mb - S.Mp;
+    return point_segment_distance(c, S.cap_a + 3 * m, S.cap_b + 3 * m) - r - S.cap_rm[m];
+}
+
+// Keep the smaller value; on a tie the smaller obstacle index, so the order of work is moot.
+inline void keep(double v, int64_t o, double& val, int64_t& arg) {
+    if (v < val || (v == val && o < arg && std::isfinite(v))) {
+        val = v;
+        arg = o;
+    }
+}
+
+// Clip every capsule's value at (configuration minimum + span): the answer is then the same
+// whichever pairs the work-saving skipped, because a skipped pair is proven above that.
+inline void finish(const Caps& C, double span, double* val, int64_t* arg) {
+    double m = INF;
+    for (int k = 0; k < C.K; ++k)
+        if (!C.is_fixed[k]) m = std::min(m, val[k]);
+    if (!std::isfinite(m)) return;
+    for (int k = 0; k < C.K; ++k)
+        if (!C.is_fixed[k] && val[k] > m + span) {
+            val[k] = m + span;
+            arg[k] = -1;
+        }
+}
+
+// Bounding sphere (centre, radius) of each body group's live capsules, into w.sph (NG,4);
+// radius -1 for a group with nothing live.
+inline void group_spheres(const Caps& C, const double* p0, const double* p1, bool live_only,
+                          Scratch& w) {
+    w.sph.assign(size_t(C.NG) * 4, 0.0);
+    for (int g = 0; g < C.NG; ++g) {
+        double lo[3] = {INF, INF, INF}, hi[3] = {-INF, -INF, -INF};
+        bool any = false;
+        for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n) {
+            const int64_t k = C.bg_members[n];
+            if (live_only && C.is_fixed[k]) continue;
+            any = true;
+            for (int i = 0; i < 3; ++i) {
+                lo[i] = std::min(lo[i], std::min(p0[3 * k + i], p1[3 * k + i]));
+                hi[i] = std::max(hi[i], std::max(p0[3 * k + i], p1[3 * k + i]));
+            }
+        }
+        double* sp = w.sph.data() + 4 * g;
+        if (!any) { sp[3] = -1.0; continue; }
+        for (int i = 0; i < 3; ++i) sp[i] = 0.5 * (lo[i] + hi[i]);
+        double R = 0.0;
+        for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n) {
+            const int64_t k = C.bg_members[n];
+            if (live_only && C.is_fixed[k]) continue;
+            double u[3], v[3];
+            for (int i = 0; i < 3; ++i) {
+                u[i] = p0[3 * k + i] - sp[i];
+                v[i] = p1[3 * k + i] - sp[i];
+            }
+            R = std::max(R, std::sqrt(std::max(dot(u, u), dot(v, v))) + C.r[k]);
+        }
+        sp[3] = R;
+    }
+}
+
+// Lower bound gl (NG, G) for every body group g against every obstacle group h, into w.gl
+// (+inf for a body group with nothing live); returns the index g * G + h of the smallest.
+inline int group_bounds(const Scene& S, const Caps& C, Scratch& w) {
+    w.gl.assign(size_t(C.NG) * S.G, INF);
+    int arg = -1;
+    double lo = INF;
+    for (int g = 0; g < C.NG; ++g) {
+        const double* sp = w.sph.data() + 4 * g;
+        if (sp[3] < 0.0) continue;
+        double* gl = w.gl.data() + size_t(g) * S.G;
+        for (int h = 0; h < S.G; ++h)
+            gl[h] = point_segment_distance(sp, S.og_a + 3 * h, S.og_b + 3 * h) - S.og_r[h] - sp[3] -
+                    S.og_margin[h];
+        for (int h = 0; h < S.G; ++h)
+            if (gl[h] < lo) { lo = gl[h]; arg = g * S.G + h; }
+    }
+    return arg;
+}
+
+// Clearance of each capsule of one configuration against the obstacles.
+//
+// val[k] = min(true clearance of capsule k, m + span), m being the configuration's minimum;
+// arg[k] = the obstacle attaining val[k] (smallest index on a tie), -1 if clipped or none.
+// Fixed capsules: +inf, -1.  These are exact definitions, so every Mode gives the same
+// numbers: a pair is only skipped when a lower bound proves it above (best + span), and best
+// never falls below m.  With span 0 only the closest capsule's value is exact; the others are
+// lower bounds; that is all a configuration's clearance needs.
 inline void eval_config(const Scene& S, const Caps& C, const double* p0, const double* p1,
-                        bool drawing, bool prune, double* val, int64_t* arg, Scratch& w) {
-    const int K = C.K, Mb = S.Mb, Mp = S.Mp, Mc = S.Mc, Mo = Mb + Mc;
-    w.pl.resize(size_t(K) * Mp);
-    w.ub.resize(size_t(K) * Mo + K);
-    double* half = w.ub.data() + size_t(K) * Mo;
+                        bool drawing, const Mode& md, double* val, int64_t* arg, Scratch& w) {
+    const int K = C.K, Mb = S.Mb, Mp = S.Mp, Mc = S.Mc;
+    const double span = md.span;
+    int64_t n_exact = 0;
     double best = INF;
+    w.mid.resize(3 * size_t(K));
+    w.half.resize(K);
     for (int k = 0; k < K; ++k) {
+        val[k] = INF;
+        arg[k] = -1;
         if (C.is_fixed[k]) continue;
         const double *a = p0 + 3 * k, *b = p1 + 3 * k;
         for (int m = 0; m < Mp; ++m) {
             double v = segment_plane_distance(a, b, S.pl_n + 3 * m, S.pl_off[m]) - C.r[k] -
                        (C.is_pen[k] ? S.pl_pen_m[m] : (C.is_tool[k] ? S.pl_tool_m[m] : S.pl_m[m]));
             if (drawing && C.is_pen[k] && S.pl_paper[m]) v = INF;
-            w.pl[size_t(k) * Mp + m] = v;
+            keep(v, Mb + m, val[k], arg[k]);
             best = std::min(best, v);
         }
-        if (!prune) continue;
-        double c[3], u[3];
+        double u[3];
         for (int i = 0; i < 3; ++i) {
-            c[i] = 0.5 * (a[i] + b[i]);
+            w.mid[3 * k + i] = 0.5 * (a[i] + b[i]);
             u[i] = b[i] - a[i];
         }
-        half[k] = 0.5 * std::sqrt(dot(u, u));
-        double* ub = w.ub.data() + size_t(k) * Mo;
-        point_boxes(S, c, C.r[k], ub);
-        point_capsules(S, c, C.r[k], ub + Mb);
-        for (int m = 0; m < Mo; ++m) best = std::min(best, ub[m]);
+        w.half[k] = 0.5 * std::sqrt(dot(u, u));
     }
-    for (int k = 0; k < K; ++k) {
-        double bv = INF;
-        int64_t bi = -1;
-        if (!C.is_fixed[k]) {
-            const double *a = p0 + 3 * k, *b = p1 + 3 * k;
+    auto exact = [&](int k, int64_t o) {
+        const double v = pair_exact(S, p0 + 3 * k, p1 + 3 * k, C.r[k], o);
+        ++n_exact;
+        best = std::min(best, v);
+        keep(v, o, val[k], arg[k]);
+    };
+    if (!md.prune) {
+        for (int k = 0; k < K; ++k)
+            if (!C.is_fixed[k]) {
+                for (int64_t o = 0; o < Mb; ++o) exact(k, o);
+                for (int64_t o = Mb + Mp; o < Mb + Mp + Mc; ++o) exact(k, o);
+            }
+    } else if (!md.groups) {
+        const int Mo = Mb + Mc;
+        w.ub.resize(size_t(K) * Mo);
+        for (int k = 0; k < K; ++k) {
+            if (C.is_fixed[k]) continue;
+            double* ub = w.ub.data() + size_t(k) * Mo;
+            point_boxes(S, w.mid.data() + 3 * k, C.r[k], ub);
+            point_capsules(S, w.mid.data() + 3 * k, C.r[k], ub + Mb);
+            for (int m = 0; m < Mo; ++m) best = std::min(best, ub[m]);
+        }
+        for (int k = 0; k < K; ++k) {
+            if (C.is_fixed[k]) continue;
             const double* ub = w.ub.data() + size_t(k) * Mo;
-            for (int m = 0; m < Mb; ++m) {
-                double v;
-                if (prune && ub[m] - half[k] > best) v = ub[m] - half[k];
-                else v = segment_box_distance(a, b, S.box_R + 9 * m, S.box_c + 3 * m,
-                                              S.box_h + 3 * m) - C.r[k] - S.box_m[m];
-                if (v < bv) { bv = v; bi = m; }
+            for (int m = 0; m < Mo; ++m)
+                if (!(ub[m] - w.half[k] > best + span)) exact(k, m < Mb ? m : m + Mp);
+        }
+    } else {
+        group_spheres(C, p0, p1, true, w);
+        const int first = group_bounds(S, C, w);
+        // the closest group pair first, for a good `best`; then every other that may matter
+        const int n_gh = C.NG * S.G;
+        for (int t = -1; t < n_gh && first >= 0; ++t) {
+            const int gh = t < 0 ? first : t;
+            if ((t >= 0 && gh == first) || w.gl[gh] > best + span) continue;
+            const int g = gh / S.G, h = gh % S.G;
+            const int64_t o0 = S.og_start[h], o1 = S.og_start[h + 1];
+            const int64_t no = o1 - o0;
+            w.ub.resize(size_t(C.bg_start[g + 1] - C.bg_start[g]) * no);
+            double* ub = w.ub.data();
+            for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n, ub += no) {
+                const int64_t k = C.bg_members[n];
+                if (C.is_fixed[k]) continue;
+                for (int64_t j = 0; j < no; ++j) {
+                    ub[j] = pair_mid(S, w.mid.data() + 3 * k, C.r[k], S.og_members[o0 + j]);
+                    best = std::min(best, ub[j]);
+                }
             }
-            for (int m = 0; m < Mp; ++m) {
-                const double v = w.pl[size_t(k) * Mp + m];
-                if (v < bv) { bv = v; bi = Mb + m; }
-            }
-            for (int m = 0; m < Mc; ++m) {
-                double v;
-                if (prune && ub[Mb + m] - half[k] > best) v = ub[Mb + m] - half[k];
-                else v = segment_segment_distance(a, b, S.cap_a + 3 * m, S.cap_b + 3 * m) -
-                         C.r[k] - S.cap_rm[m];
-                if (v < bv) { bv = v; bi = Mb + Mp + m; }
+            ub = w.ub.data();
+            for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n, ub += no) {
+                const int64_t k = C.bg_members[n];
+                if (C.is_fixed[k]) continue;
+                for (int64_t j = 0; j < no; ++j)
+                    if (!(ub[j] - w.half[k] > best + span)) exact(int(k), S.og_members[o0 + j]);
             }
         }
-        val[k] = bv;
-        arg[k] = std::isfinite(bv) ? bi : -1;
     }
+    finish(C, span, val, arg);
+    if (md.count) *md.count += n_exact;
 }
 
 // Frames of one configuration q (J joints) into w.R (F,3,3), w.p (F,3).
@@ -210,6 +358,10 @@ inline void chain_caps(const Chain& H, int K, double* p0, double* p1, const Scra
     }
 }
 
+inline void count_add(int64_t* total, int64_t n) {  // only for the optional statistics
+    __atomic_fetch_add(total, n, __ATOMIC_RELAXED);
+}
+
 // Run fn(i0, i1, scratch) over [0, n) in `threads` contiguous blocks.  Each configuration is
 // computed alone, so the result does not depend on the thread count.
 template <class Fn>
@@ -231,14 +383,18 @@ void parallel_for(int64_t n, int threads, Fn fn) {
 
 // Per-capsule clearance for configurations Q (N,J): val, arg (N,K).
 inline void eval_q(const Chain& H, const Caps& C, const Scene& S, const double* Q, int64_t N,
-                   bool drawing, bool prune, int threads, double* val, int64_t* arg) {
+                   bool drawing, const Mode& md, int threads, double* val, int64_t* arg) {
     parallel_for(N, threads, [&](int64_t i0, int64_t i1, Scratch& w) {
         std::vector<double> p0(size_t(C.K) * 3), p1(size_t(C.K) * 3);
+        Mode mt = md;
+        int64_t cnt = 0;
+        mt.count = md.count ? &cnt : nullptr;
         for (int64_t i = i0; i < i1; ++i) {
             chain_frames(H, Q + i * H.J, w);
             chain_caps(H, C.K, p0.data(), p1.data(), w);
-            eval_config(S, C, p0.data(), p1.data(), drawing, prune, val + i * C.K, arg + i * C.K, w);
+            eval_config(S, C, p0.data(), p1.data(), drawing, mt, val + i * C.K, arg + i * C.K, w);
         }
+        if (md.count) count_add(md.count, cnt);
     });
 }
 

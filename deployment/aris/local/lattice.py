@@ -40,6 +40,7 @@ class Layer:
     q: np.ndarray            # (n, 7)
     free: np.ndarray         # (n,) bool: clears every obstacle
     banned: np.ndarray       # (n,) bool: taken out after an exact path failed near it
+    known: np.ndarray        # (n,) bool: checked against the obstacles (lazy: only on demand)
     index: np.ndarray        # (n_lean, n_spin, n_q7, 8) node number, -1 where there is none
     answers: int = 0         # IK answers found in this layer (inside the joint limits)
 
@@ -93,6 +94,7 @@ class Lattice:
         self._edges: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self.ik_poses = 0
         self.lookups = 0
+        self.checked = 0              # nodes checked against the obstacles
         self._add(np.arange(len(s)), [0])
 
     # ------------------------------------------------------------------ questions
@@ -137,11 +139,48 @@ class Lattice:
     def ban(self, k: int, nodes) -> None:
         self.layers[k].banned[np.asarray(nodes, int)] = True
 
+    def check(self, picks) -> bool:
+        """Check the given nodes against the obstacles, in one batch: picks is a list of
+        (layer, node numbers).  -> True if every one of them is free."""
+        todo = [(k, n[~self.layers[k].known[n]]) for k, n in picks]
+        todo = [(k, n) for k, n in todo if len(n)]
+        if todo:
+            Q = np.concatenate([self.layers[k].q[n] for k, n in todo])
+            free = self.judge.obstacle_clear(Q) >= 0.0
+            self.checked += len(Q)
+            a = 0
+            for k, n in todo:
+                L = self.layers[k]
+                L.free[n], L.known[n] = free[a:a + len(n)], True
+                a += len(n)
+        return all(bool(self.layers[k].free[n].all()) for k, n in picks)
+
+    def check_layers(self, layers) -> None:
+        self.check([(k, np.arange(len(self.layers[k].q))) for k in layers])
+
+    def band(self, k: int, nodes) -> np.ndarray:
+        """These nodes of layer k and their neighbours: same slot, spin and elbow value within
+        one step, a neighbouring lean."""
+        L = self.layers[k]
+        nodes = np.asarray(nodes, int)
+        if not len(nodes) or not len(L.q):
+            return nodes
+        ns, nq = len(self.spins), len(self.q7s)
+        off = np.array([(a, b) for a in (-1, 0, 1) for b in (-1, 0, 1)])
+        sp = (L.spin[nodes, None, None] + off[None, None, :, 0]) % ns
+        q7 = L.q7[nodes, None, None] + off[None, None, :, 1]
+        ln = self.lean_nb[L.lean[nodes]][:, :, None]
+        ok = (q7 >= 0) & (q7 < nq) & (ln >= 0)
+        idx = L.index[np.maximum(ln, 0), sp, np.clip(q7, 0, nq - 1), L.slot[nodes, None, None]]
+        idx = idx[ok & (idx >= 0)]
+        return np.unique(np.concatenate([nodes, idx]))
+
     # ------------------------------------------------------------------ building
 
     def _empty(self) -> Layer:
         z = np.zeros(0, int)
         return Layer(z, z, z, z, np.zeros((0, 7)), np.zeros(0, bool), np.zeros(0, bool),
+                     np.zeros(0, bool),
                      np.full((len(self.leans), len(self.spins), len(self.q7s), N_SLOT), -1,
                              np.int32))
 
@@ -151,7 +190,12 @@ class Lattice:
         found = self._looked_up(layers, leans) if self.table is not None else \
             self._solved(layers, leans)
         K, Si, Li, Qi, b, Q, answers = found
-        free = self.judge.obstacle_clear(Q) >= 0.0 if len(Q) else np.zeros(0, bool)
+        # Lazy: a node counts as free until it is checked (`check`), which the planner does
+        # only on the routes it is about to use.
+        known = np.full(len(Q), not self.cfg.lazy)
+        free = np.ones(len(Q), bool) if self.cfg.lazy else \
+            (self.judge.obstacle_clear(Q) >= 0.0 if len(Q) else np.zeros(0, bool))
+        self.checked += 0 if self.cfg.lazy else len(Q)
         for i, k in enumerate(layers):
             sel = K == k
             L = self.layers[k]
@@ -163,6 +207,7 @@ class Lattice:
             L.q = np.concatenate([L.q, Q[sel]])
             L.free = np.concatenate([L.free, free[sel]])
             L.banned = np.concatenate([L.banned, np.zeros(int(sel.sum()), bool)])
+            L.known = np.concatenate([L.known, known[sel]])
             L.index[L.lean[n0:], L.spin[n0:], L.q7[n0:], L.slot[n0:]] = np.arange(n0, len(L.q))
             L.answers += int(answers[i])
             self.opened[k, leans] = True
