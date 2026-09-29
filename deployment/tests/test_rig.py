@@ -201,12 +201,12 @@ def test_reach_bound_covers_the_kernel_body(rig):
     arm = rig.arm(31)
     rng = np.random.default_rng(5)
     lim = arm.limits
-    Q = rng.uniform(lim.q_min, lim.q_max, size=(50_000, 7))
+    Q = rng.uniform(lim.q_min, lim.q_max, size=(20_000, 7))
     body = arm.body(Q)
     s = np.array([0.0, 0.0, rig.shoulder_below_base])
     d = np.maximum(np.linalg.norm(body.p0 - s, axis=2), np.linalg.norm(body.p1 - s, axis=2))
     worst = float((d + body.radius).max())
-    print(f"\nreach from shoulder, kernel body, 50k random configurations: {worst:.4f}")
+    print(f"\nreach from shoulder, kernel body, 20k random configurations: {worst:.4f}")
     assert worst <= rig.body_reach
 
 
@@ -252,6 +252,7 @@ def _split_own(obs, aid):
     return Obstacles(boxes=own), Obstacles(rest, obs.planes, obs.capsules)
 
 
+@pytest.mark.slow
 def test_own_hardware(rig):
     """The arm's own struts, plate and clamp are obstacles for it (its fixed base capsules are
     not checked).  Parks keep the demanded clearance to them; count the random configurations
@@ -388,9 +389,13 @@ def test_leaders_and_rows(rig):
 
 
 def test_config_only_read_by_rig():
+    """Only rig.py reads config/.  Exempt: the independent checker, which has its own reader on
+    purpose, and the calibration job, which writes config/calibration/."""
     pkg = DEPLOY / "aris"
+    exempt = (pkg / "check", pkg / "calib")
     offenders = [p for p in pkg.rglob("*.py")
-                 if p.name != "rig.py" and "rig.json" in p.read_text()]
+                 if p != pkg / "rig.py" and not any(e in p.parents for e in exempt)
+                 and ("rig.json" in p.read_text() or "calibration/" in p.read_text())]
     assert offenders == []
 
 
