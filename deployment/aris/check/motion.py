@@ -29,7 +29,7 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
           step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
           tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
           draw_speed: float = DrawRules().draw_speed, speed_tol: float = 0.03,
-          stop_fraction: float = 0.05) -> Verdict:
+          stop_speed: float = 2.5e-4) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
 
     step            m, the most any capsule point may move between two clearance samples
@@ -39,8 +39,11 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
     line_tol        m, drawing: tip within this of the planned line
     back_tol        m, drawing: numerical allowance for "never goes backwards"
     draw_speed      m/s, drawing: the tip may not go faster than this (times 1 + speed_tol)
-    stop_fraction   drawing: between getting going and the final stop the speed along the
-                    line stays above this fraction of draw_speed
+    stop_speed      m/s, drawing: between getting going and the final stop the pen's speed
+                    along the line stays above this.  Absolute, not a share of draw_speed: a
+                    sharp corner slows the pen to about 1 mm/s whatever the drawing speed
+                    (measured: 0.83 mm/s at a 130 degree corner drawn at 80 mm/s), while a
+                    real stop reads 1e-7 m/s.
     """
     problem = _malformed(motion, q_before)
     if problem is None:
@@ -66,7 +69,7 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
     ms += _clearances(scene, sw, r4, drawing, rig.notes, titles)                      # items 3-6, 8
     if drawing:                                                      # item 7
         ms += _pen(scene, traj, motion.tip_base, r1, tip_height_tol, line_tol, back_tol,
-                   draw_speed, speed_tol, stop_fraction)
+                   draw_speed, speed_tol, stop_speed)
     ms.append(_hold(scene, traj, titles))                                    # item 9
     worst = min(CLASSES, key=lambda c: sw.per_class[c].value)
     return verdict(ms, sw.per_class[worst].value,
@@ -135,14 +138,14 @@ def _limits(model, r1, r4, rate_tol):
 
 
 def _pen(scene, traj, tip_base, r1, tip_height_tol, line_tol, back_tol, draw_speed,
-         speed_tol, stop_fraction):
+         speed_tol, stop_speed):
     p = pen_report(scene.model, scene.T_table_base, scene.paper_z, traj, tip_base, r1.t, r1.q)
     return [
         measure("tip on paper", p.height, tip_height_tol, "max", "m", "largest |tip - paper|"),
         measure("tip on line", p.off_line, line_tol, "max", "m", "largest distance from the line"),
         measure("never backwards", p.backwards, back_tol, "max", "m",
                 f"{p.length * 1e3:.1f} mm drawn"),
-        measure("never stops", p.slowest, stop_fraction * draw_speed, "min", "m/s",
+        measure("never stops", p.slowest, stop_speed, "min", "m/s",
                 "slowest speed along the line mid-way"),
         measure("tip speed", p.fastest, draw_speed * (1 + speed_tol), "max", "m/s"),
     ]

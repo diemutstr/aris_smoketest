@@ -39,7 +39,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 7 | drawing: `tip on paper` (before the controller presses) | 0.5 mm |
 | 7 | drawing: `tip on line`: distance from the planned tips (`motion.tip_base`) and the line through them, at 1 kHz | 0.2 mm |
 | 7 | drawing: `never backwards`: progress along the line (below) never falls back (a numerical allowance) | 0.01 mm |
-| 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 5 % of the drawing speed (1 mm/s) |
+| 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 0.25 mm/s, whatever the drawing speed (a sharp corner slows the pen to about 1 mm/s at any drawing speed; a real stop reads 1e-7 m/s) |
 | 7 | drawing: `tip speed` | drawing speed + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
 | 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip | 0.003 m (`pen_lifted_to_paper_m`) |
 | 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may touch the paper at one end, where its round end reads up to 1.3 mm into the paper plane; it may never go deeper. Everything else as for a free motion | -0.002 m |
@@ -137,6 +137,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | faults caught, one test each | strut, pen 1 mm into the paper (reads -1.5 mm), wall, parked neighbour, self, corner (jerk 2.2 at 1 kHz, 9.0 at 4 kHz, of the limit), velocity 1 % over (reads 1.010; 0.99 passes), tip off the line by 0.5 mm (reads 0.51), stop halfway, empty motion, motion that does not move, start not at q_before, end not at rest, arm not moving in the phase |
 | same motion at 100 Hz, 1 kHz, 4 kHz and as retimed | same verdict; tightest clearance within 0.5 mm |
 | a drawn V turning 150 degrees | passes; slowest along the line 1.6 mm/s at the corner |
+| the sequencer's word at 80 mm/s, corner turning 130 + 18 degrees (`tests/data/arm_stop_31_word_0.npz`) | the pen really slows there: 1.03 mm/s along the line at 1 kHz, 0.83 mm/s tip speed at 10 kHz; not a stop. It failed the old limit (5 % of 80 mm/s = 4 mm/s) and passes the absolute 0.25 mm/s; a real stop halfway reads 7e-8 m/s |
 | drawing 1.5 % over its timing / 4 % over | tip speed 20.33 mm/s passes / 20.83 fails (limit 20.6) |
 | lower (10 mm above to the tip on the paper) and the same reversed as lift | pass; pen depth -0.65 mm. As a free motion it fails the pen's 3 mm; lowered to 3 mm into the paper it fails pen depth (-3.6 mm) |
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |

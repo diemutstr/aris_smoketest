@@ -501,6 +501,26 @@ def test_drawing_round_a_sharp_corner():
         assert v_.get(name).passed, name
 
 
+def test_sharp_corner_at_80_mm_per_s_slows_but_does_not_stop():
+    """The sequencer's word at 80 mm/s (tests/data/arm_stop_31_word_0.npz): at a corner that
+    turns 130 + 18 degrees the pen's real speed (not a reading of the line) drops to about
+    1 mm/s and picks up again; it never stops.  A real stop reads ~1e-7 m/s."""
+    d = np.load(DEPLOY / "tests" / "data" / "arm_stop_31_word_0.npz")
+    m = Motion(str(d["kind"]), Trajectory(d["t"], d["q"], d["qd"]),
+               Piece(str(d["line_id"]), float(d["s0"]), float(d["s1"])), d["tip_base"])
+    v = check(CONFIG, int(d["arm_id"]), m, phase_of(int(d["arm_id"])), d["q_before"],
+              draw_speed=0.08)
+    print(f"\n{v}")
+    stop = v.get("never stops")
+    assert 5e-4 < stop.value < 2e-3 and stop.passed
+    t = np.arange(d["t"][0], d["t"][-1], 1e-4)
+    tips = RIG.arm(31).tip(sample(m.traj, t)[0])
+    speed = np.linalg.norm(np.diff(tips, axis=0), axis=1) / 1e-4
+    k = int(np.argmin(np.abs(t[:-1] - 2.1516)))
+    print(f"real tip speed at the corner (10 kHz): {speed[k - 10:k + 10].min() * 1e3:.2f} mm/s")
+    assert speed[k - 10:k + 10].min() < 1.5e-3
+
+
 def test_drawing_speed_allowance(good_draw):
     """The pen may run up to 3 % over the drawing speed."""
     tr = good_draw.traj
