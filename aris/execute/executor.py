@@ -18,9 +18,6 @@ from aris.execute.drivers import Driver
 from aris.execute.log import EventLog
 from aris.execute.queue import End, Queue
 
-# rad, largest joint difference between where the arm stands and where the next motion
-# starts.  The rig does not state one yet (see docs/modules/execute.md); the server passes it.
-START_TOL = 5e-3
 REST_QD = 1e-3          # rad/s, "standing still" for the parked test
 
 
@@ -38,9 +35,19 @@ class ArmRun:
     parked: bool = False    # finished, standing still where the last motion ended, able to move
 
 
+def start_tolerance(rig_or_value) -> float:
+    """The start tolerance from a Rig, or the value itself (rad, per joint)."""
+    if hasattr(rig_or_value, "execution"):
+        return float(rig_or_value.execution().start_tolerance)
+    return float(rig_or_value)
+
+
 class Executor:
-    def __init__(self, arm_id: int, driver: Driver, log: EventLog, start_tol: float = START_TOL):
-        self.arm_id, self.driver, self.log, self.start_tol = arm_id, driver, log, start_tol
+    def __init__(self, arm_id: int, driver: Driver, log: EventLog, start_tol):
+        """`start_tol`: the Rig (its `execution().start_tolerance`) or that value in rad: the
+        largest joint difference allowed between where the arm stands and a motion's start."""
+        self.arm_id, self.driver, self.log = arm_id, driver, log
+        self.start_tol = start_tolerance(start_tol)
 
     def run(self, queue: Queue, stop: threading.Event | None = None,
             poll: float = 0.01) -> ArmRun:

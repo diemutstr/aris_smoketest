@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from aris.check import check_phase_end
-from aris.execute.executor import START_TOL, ArmRun, Executor
+from aris.execute.executor import ArmRun, Executor, start_tolerance
 from aris.execute.log import EventLog
 from aris.execute.queue import Job
 from aris.types import Phase
@@ -39,11 +39,11 @@ class JobRun:
 
 
 class Coordinator:
-    def __init__(self, job: Job, drivers: dict, config_dir, start_tol: float = START_TOL,
-                 poll: float = 0.01):
-        """`drivers`: arm id -> Driver, every arm of the rig that is switched on."""
+    def __init__(self, job: Job, drivers: dict, config_dir, start_tol, poll: float = 0.01):
+        """`drivers`: arm id -> Driver, every arm of the rig that is switched on.
+        `start_tol`: the Rig, or its `execution().start_tolerance` (rad) from the server."""
         self.job, self.drivers, self.config_dir = job, dict(drivers), config_dir
-        self.start_tol, self.poll = start_tol, poll
+        self.start_tol, self.poll = start_tolerance(start_tol), poll
         self.log = EventLog(job.log_path)
         self._stop = threading.Event()
 

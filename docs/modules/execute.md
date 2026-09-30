@@ -25,7 +25,7 @@ Files: `aris/execute/`
    as they appear and then the end marker, `close()` writes the end marker. A refusal
    (checker failed, not continuous, queue already closed) is returned, not raised.
 3. **An executor per arm.** It takes the next motion, confirms the arm is able to move and
-   stands at the motion's start (to `start_tol`, 5 mrad per joint for now), sends it (`draw`
+   stands at the motion's start (to the rig's start tolerance, `rig.json` `execution.start_tolerance_rad`, 5 mrad per joint), sends it (`draw`
    for a drawing motion, `move` for the rest), waits, logs it done, and goes on. Empty queue:
    the arm holds. The first failure ends the run with the motion's number and the reason;
    the arm stops and holds, the rest of its queue is not run. It never plans and knows nothing
@@ -134,8 +134,8 @@ coordinator says so (L140).
 ## What it cannot do (yet)
 
 - No re-planning after a failure, no resume after a stop (see above).
-- The start tolerance (5 mrad) is a constant here; it should come from the rig (`rig.json`)
-  once measured on the real arms.
+- The start tolerance (5 mrad, from `rig.json`) is what a joint trajectory controller accepts;
+  it has not been measured on the real arms yet.
 - `feed` checks the motions one after another in one process (0.1 to 0.6 s each); for large
   drawings the drawing server should check in parallel and queue in order.
 - No real driver yet: `drivers/ros.py` is built on the operator PC.

@@ -176,7 +176,7 @@ def test_simulated_arm_runs_three_motions_at_50x(tmp_path, rig, checked):
     assert isinstance(arm, Driver)
     log = EventLog(tmp_path / "events.jsonl")
     w0 = time.perf_counter()
-    run = Executor(13, arm, log).run(q)
+    run = Executor(13, arm, log, rig).run(q)
     wall = time.perf_counter() - w0
     flown = sum(float(m.traj.t[-1]) for m, _ in checked[13])
     print(f"three motions, {flown:.2f} s of motion, {wall:.3f} s wall at 50x")
@@ -196,7 +196,7 @@ def test_injected_failure_stops_at_the_right_motion_and_holds(tmp_path, rig, che
     fail_at = d[0] + 0.5 * d[1]
     arm = SimArm(13, rig.park_q(13), speed=50.0, fail_at=fail_at, fail_why="joint 4 reflex")
     log = EventLog(tmp_path / "events.jsonl")
-    run = Executor(13, arm, log).run(q)
+    run = Executor(13, arm, log, rig).run(q)
     assert run.status == "failed" and run.failed_index == 1 and run.done == 1
     assert run.why == "joint 4 reflex"
     m1 = checked[13][1][0]
@@ -214,7 +214,7 @@ def test_start_configuration_mismatch_is_refused(tmp_path, rig, checked):
     q = _queue_of(tmp_path, checked, 2)
     off = rig.park_q(2) + np.array([0, 0, 0, 0, 0.02, 0, 0])
     arm = SimArm(2, off, speed=50.0)
-    run = Executor(2, arm, EventLog(tmp_path / "e.jsonl")).run(q)
+    run = Executor(2, arm, EventLog(tmp_path / "e.jsonl"), rig).run(q)
     assert run.status == "failed" and run.failed_index == 0 and run.done == 0
     assert "not at the start: joint 5" in run.why
     assert np.array_equal(arm.state().q, off) and arm.clock == 0.0
@@ -238,7 +238,7 @@ def _write_job(job, rig, checked, phases=("one", "two"), delay=0.0):
 def test_coordinator_runs_two_phases_on_two_arms(tmp_path, rig, checked):
     job = Job.create(tmp_path / "job", header_for(rig, [], rig.rules()))
     arms = {a: SimArm(a, rig.park_q(a), speed=50.0) for a in ARMS}
-    coord = Coordinator(job, arms, CONFIG)
+    coord = Coordinator(job, arms, CONFIG, rig)
     out = {}
     th = threading.Thread(target=lambda: out.setdefault("run", coord.run()))
     th.start()                                  # it waits for the phases as they are written
@@ -259,7 +259,7 @@ def test_coordinator_stop_holds_every_arm(tmp_path, rig, checked):
     job = Job.create(tmp_path / "job", {})
     _write_job(job, rig, checked)
     arms = {a: SimArm(a, rig.park_q(a), speed=2.0) for a in ARMS}
-    coord = Coordinator(job, arms, CONFIG)
+    coord = Coordinator(job, arms, CONFIG, rig)
     threading.Timer(0.25, coord.stop).start()
     run = coord.run()
     assert run.status == "stopped" and run.phases_done == []
@@ -282,7 +282,7 @@ def test_a_queue_cut_short_ends_the_job_after_its_phase(tmp_path, rig, checked):
             q.close(complete=not (a == 2 and name == "one"), note="motion 2 refused")
     job.end_phases()
     arms = {a: SimArm(a, rig.park_q(a), speed=100.0) for a in ARMS}
-    run = Coordinator(job, arms, CONFIG).run()
+    run = Coordinator(job, arms, CONFIG, rig).run()
     assert run.status == "failed" and run.phases_done == []
     assert "arm 2" in run.why and "motion 2 refused" in run.why
     assert np.max(np.abs(run.where[13] - rig.park_q(13))) < 1e-9     # the other arm finished
@@ -303,7 +303,7 @@ def test_word_on_six_simulated_arms(tmp_path_factory, rig):
     lines, rules = sc.word(), rig.rules()
     job = Job.create(job_dir, header_for(rig, lines, rules))
     arms = {a: SimArm(a, rig.park_q(a), speed=20.0) for a in rig.arm_ids}
-    coord = Coordinator(job, arms, CONFIG)
+    coord = Coordinator(job, arms, CONFIG, rig)
     out = {}
     w0, c0 = time.perf_counter(), time.process_time()
     th = threading.Thread(target=lambda: out.setdefault("run", coord.run()))
