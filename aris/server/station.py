@@ -21,7 +21,9 @@ from aris.system import phases as all_phases
 from aris.system.settings import Settings
 from aris.types import Refusal
 
-DRIVERS = ("sim",)
+# "sim": simulated arms in this process.  "robot": the arms are on the operator PC, whose
+# runner copies the queues and posts the events back; the server runs no executors.
+DRIVERS = ("sim", "robot")
 
 
 @dataclass
@@ -37,8 +39,13 @@ class Station:
     workers: int                       # processes for the system planner
     check_workers: int                 # processes for the checker
     settings: Settings = field(default_factory=Settings)
-    drawing_area: tuple = ()           # (x, y) full widths, m, centred on the table
-    file_area: tuple | None = None     # the same as written in rig.json, None if not read
+    drawing_area: tuple = ()           # (x, y) full widths, m, centred on the table: rig.json's
+    maps_area: tuple = ()              # the same worked out from the drawable maps
+
+    @property
+    def remote(self) -> bool:
+        """The arms are on the operator PC: this server only plans, checks and queues."""
+        return self.driver_kind == "robot"
 
     @property
     def rules(self):
@@ -88,36 +95,41 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         return Refusal("driver", f"driver {driver!r} is not built; built: {DRIVERS}")
     if not speed > 0:
         return Refusal("speed", "the speed must be positive")
-    if drivers is None and with_arms:
+    if drivers is None and with_arms and driver == "sim":
         from aris.execute.drivers.sim import SimArm
         drivers = {a: SimArm(a, rig.park_q(a), speed=speed) for a in rig.arm_ids}
     cfg = settings or Settings()
     w = workers or default_workers()
     kind = driver if drivers or with_arms else "none (plan and check only)"
+    if driver == "robot":
+        drivers = {}
     st = Station(rig, config_dir, dict(drivers or {}), kind, float(speed), bool(missing),
                  None if cache_dir is None else Path(cache_dir), Path(jobs_dir), w,
                  check_workers or w, cfg)
     if st.cache_dir is not None:
         st.cache_dir.mkdir(parents=True, exist_ok=True)
     if with_area:
-        st.drawing_area = drawing_area(st)
-        st.file_area = file_area(rig)
-        stale = area_mismatch(st.drawing_area, st.file_area, cfg.grid_step)
+        st.maps_area = drawing_area(st)
+        fa = file_area(rig)
+        if fa is None:
+            return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
+        stale = area_mismatch(st.maps_area, fa, cfg.grid_step)
         if stale:
             return Refusal("stale_rig_file", stale)
+        st.drawing_area = fa
     return st
 
 
 def file_area(rig) -> tuple | None:
-    """rig.json's `canvas.drawing_area_m`, as the rig read it (`Rig.drawing_area_m`); None
-    while rig.py does not read it."""
+    """rig.json's `canvas.drawing_area_m`, as the rig read it (`Rig.drawing_area_m`): the area
+    the system planner refuses a drawing against, and so the one the server fits to."""
     a = getattr(rig, "drawing_area_m", None)
     return None if a is None else tuple(float(x) for x in np.asarray(a).reshape(2))
 
 
 def area_mismatch(maps_area, rig_area, cell: float) -> str:
-    """Why the rig file's drawing area is stale, or "".  The maps' area is the law (the
-    planner refuses against it); the file must agree to one grid cell."""
+    """Why the rig file's drawing area is stale, or "": it must agree with the area the
+    drawable maps give to one grid cell (the system planner checks the same)."""
     if rig_area is None:
         return ""
     gap = max(abs(a - b) for a, b in zip(maps_area, rig_area))
@@ -130,8 +142,7 @@ def area_mismatch(maps_area, rig_area, cell: float) -> str:
 
 
 def drawing_area(st: Station) -> tuple:
-    """The area the system planner accepts, from its own drawable maps (read from the cache,
-    or built): the same number it refuses a drawing against."""
+    """The area the drawable maps give (read from the cache, or built)."""
     ph = all_phases(st.rig)
     maps = maps_mod.load_or_build(st.rig, ph, st.rules.gates, st.settings, st.cache_dir,
                                   st.workers)

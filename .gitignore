@@ -8,3 +8,5 @@ __pycache__/
 robot/generated/
 *.so
 .venv/
+tests/data/server_big.json
+tests/data/server_long.json

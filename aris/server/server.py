@@ -8,6 +8,7 @@
     POST /park              park all arms (a job like any other)
     GET  /rig               arms, parks, drawing area, calibration, digests, driver, speed
     GET  /arms              each arm's configuration and its driver's state
+    and the operator PC's four (remote.py): header, phases, queues, events
 
 One job at a time: a second job while one runs is refused (409).
 """
@@ -19,7 +20,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from aris.server import drawing, runner
+from aris.server import drawing, remote, runner
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
 
@@ -49,7 +50,7 @@ def rig_view(st) -> dict:
         arms={str(a): dict(T_table_base=rig.T_table_base(a), park_q=rig.park_q(a),
                            calibration=rig.calibration_status(a)) for a in rig.arm_ids},
         drawing_area_m=list(st.drawing_area), canvas_m=rig.canvas_size,
-        drawing_area_rig_file_m=None if st.file_area is None else list(st.file_area),
+        drawing_area_from_maps_m=list(st.maps_area),
         **st.assumptions()))
 
 
@@ -125,6 +126,7 @@ def create_app(st) -> FastAPI:
     def arms():
         return arms_view(st)
 
+    remote.add_routes(app, store)
     return app
 
 

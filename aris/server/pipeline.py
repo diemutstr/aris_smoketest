@@ -61,9 +61,9 @@ class Outcome:
 # --------------------------------------------------------------------------- phases
 
 
-def execution_phase(rig, name: str) -> Phase:
+def execution_phase(rig, name: str, named: Phase | None = None) -> Phase:
     """The phase as the arms run it: in a leader phase the followers may move too."""
-    ph = phase_named(rig, name)
+    ph = named or phase_named(rig, name)
     if is_fill(ph):
         return ph
     partners = tuple(rig.row_partner(a) for a in ph.active if rig.row_partner(a) in ph.parked)
@@ -71,9 +71,12 @@ def execution_phase(rig, name: str) -> Phase:
                  tuple(a for a in ph.parked if a not in partners), ph.walls)
 
 
-def check_context(rig, name: str, arm: int, system_report) -> tuple[Phase, tuple]:
-    """The Phase and footprints one arm's motion is checked in."""
-    ph = phase_named(rig, name)
+def check_context(rig, name: str, arm: int, system_report,
+                  named: Phase | None = None) -> tuple[Phase, tuple]:
+    """The Phase and footprints one arm's motion is checked in.  `named`: the phase called
+    `name`, if already known (`phase_named` takes about 50 ms: it works out the fill groups
+    from the arm models, which is too slow to repeat for every motion)."""
+    ph = named or phase_named(rig, name)
     if arm in ph.active:
         return ph, ()
     fld = (system_report.fields if system_report is not None else {}).get((name, arm))
@@ -237,7 +240,7 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
     pool = check_pool(st.check_workers)
     qr = _Queuer(job, rec, out, on_first)
     where = {a: np.asarray(q, float) for a, q in (arm_configs or {}).items()}
-    phase, saved = None, set()
+    phase, named, saved = None, None, set()
     try:
         while True:
             if rec.stop.is_set():
@@ -262,11 +265,12 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
             if phase is None or name != phase.name:
                 qr.drain(wait=True)
                 qr.close_phase(phase)
-                phase = execution_phase(st.rig, name)
+                named = phase_named(st.rig, name)
+                phase = execution_phase(st.rig, name, named)
                 job.add_phase(phase)
             q_before = where.get(arm, st.rig.park_q(arm))
-            ph, fields = check_context(st.rig, name, arm, rep)
-            if (name, arm) not in saved and arm not in phase_named(st.rig, name).active:
+            ph, fields = check_context(st.rig, name, arm, rep, named)
+            if (name, arm) not in saved and arm not in named.active:
                 save_context(context_path(job.queue(name, arm)), ph, fields)
                 saved.add((name, arm))
             qr.add(name, arm, motion, submit(pool, (st.config_dir, arm, motion, ph, q_before,

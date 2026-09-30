@@ -108,6 +108,8 @@ def _arm_configs(st, where) -> dict | Refusal:
 
 
 def _run_draw(st, rec: JobRecord, job: Job) -> None:
+    if st.remote:
+        return _run_draw_remote(st, rec, job)
     coord, result, out = None, [], pipeline.Outcome()
     try:
         where = prepare_arms(st)
@@ -143,6 +145,51 @@ def _run_draw(st, rec: JobRecord, job: Job) -> None:
                 f"internal error: {e!r}")
 
 
+ROBOT_STOP_WAIT = 30.0      # s the server waits for the operator PC to confirm a stop
+
+
+def _run_draw_remote(st, rec: JobRecord, job: Job) -> None:
+    """--driver robot: plan, check and queue here; the operator PC's runner copies the queues,
+    runs them and posts its events.  The job ends with the runner's own "job ..." row, or,
+    after a stop, when the runner confirms it (at most ROBOT_STOP_WAIT; at once if no runner
+    ever reported)."""
+    try:
+        rec.set_state("planning")
+        out = pipeline.plan_into(st, job, rec.lines, None, rec,
+                                 on_first=lambda: rec.set_state("drawing"))
+        while not rec.robot_end.wait(0.1):
+            if rec.stop.is_set() and (rec.robot_rows == 0 or time.time() - (
+                    rec.stop_time or time.time()) > ROBOT_STOP_WAIT):
+                break
+        run = _robot_run(rec)
+        state, why = _end_state(rec, out, run)
+        rows, first = arm_progress(rec.log.read())
+        done = {k: r["done"] for k, r in rows.items()}
+        rep = report.draw_report(st, rec, job, out, run, done,
+                                 None if first is None else first - rec.t_received, state, why)
+        _finish(rec, job.dir, rep, state, why)
+    except Exception as e:
+        rec.log.write("error", why=traceback.format_exc())
+        _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
+                                   assumptions=st.assumptions()), "failed",
+                f"internal error: {e!r}")
+
+
+def _robot_run(rec: JobRecord):
+    """The operator PC's run, from the rows it posted: like the coordinator's JobRun."""
+    from aris.execute import JobRun
+    run = JobRun(status="stopped", why="the operator PC did not report the end of the job")
+    rows = [r for r in rec.log.read() if r.get("source") == "robot"]
+    run.phase_ends = [(r["phase"], r["passed"], r.get("tightest"), r.get("min_clearance"))
+                      for r in rows if r.get("event") == "phase end check"]
+    run.phases_done = [r["phase"] for r in rows if r.get("event") == "phase done"]
+    end = rec.robot_final
+    if end is not None:
+        run.status, run.why = end["event"].split(" ", 1)[1], end.get("why", "")
+        run.where = {int(a): np.asarray(q, float) for a, q in end.get("where", {}).items()}
+    return run
+
+
 def _end_state(rec, out, run) -> tuple[str, str]:
     if rec.stop.is_set():
         return "stopped", "stop requested"
@@ -159,6 +206,9 @@ def _end_state(rec, out, run) -> tuple[str, str]:
 
 
 def submit_park(st, store: JobStore) -> JobRecord | Refusal:
+    if st.remote:
+        return Refusal("not_built", "park all arms needs where the arms stand; with --driver "
+                       "robot that is on the operator PC, and park is not built there yet")
     rec = store.admit("park", "park all arms")
     if isinstance(rec, Refusal):
         return rec
@@ -250,6 +300,7 @@ def stop(st, rec: JobRecord) -> Refusal | None:
     """Every arm stops now and holds; the job ends as stopped."""
     if rec.finished:
         return Refusal("finished", f"job {rec.id} is already {rec.state}")
+    rec.stop_time = time.time()
     rec.stop.set()
     if rec.coordinator is not None:
         rec.coordinator.stop()

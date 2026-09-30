@@ -133,6 +133,7 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
                planner_error=out.error or None, planning_s=out.planning_s,
                first_motion_s=first_s,
                assumptions=st.assumptions())
+    rep["planner"] = planner_numbers(rec.system)
     if run is not None:
         rep["phases"] = [dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
                          for n, p, t, c in run.phase_ends]
@@ -140,3 +141,18 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
         rep["at_park"] = {str(a): bool(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))
                                        <= AT_PARK) for a, q in run.where.items()}
     return rep
+
+
+def planner_numbers(sr) -> dict | None:
+    """The system planner's own times: in all, and per phase and arm (wall seconds from the
+    phase's start to that arm's first motion, as received)."""
+    if sr is None:
+        return None
+    return dict(cpu_s=sr.cpu, wall_s=sr.wall, first_motion_s=sr.first_wall,
+                maps_wall_s=sr.map_wall, cuts=sr.cuts, skipped=[list(x) for x in sr.skipped],
+                phases=[dict(name=p.name, wall_s=p.wall, rig_s=p.duration,
+                             arms={str(a): dict(first_motion_s=r.first_phase_wall,
+                                                cpu_s=r.cpu, wall_s=r.wall, motions=r.motions,
+                                                drawn_m=r.drawn, offered_m=r.offered)
+                                   for a, r in list(p.arms.items())})
+                        for p in list(sr.phases)])

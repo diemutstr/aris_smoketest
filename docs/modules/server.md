@@ -20,6 +20,15 @@ start unless it is started with `--uncalibrated`; then every job report says
 built (`--driver sim`, the default); `--speed` sets how many times faster than real time the
 simulated arms play.
 
+**`--driver robot`**: the arms are on the operator PC (`robot/`). The server then runs no
+executors: it plans, checks and writes the queues, and the operator PC's runner copies them
+(the last four endpoints below), runs them and posts its event log back. The job's state
+follows those events: it ends with the runner's own "job done / failed / stopped". A stop
+here is passed on in the answer to the runner's next post; the server waits up to 30 s for
+the runner to confirm it (not at all if no runner ever reported). Park is refused in this
+mode (where the arms stand is only known on the operator PC). Times in the report then come
+from the operator PC's clock.
+
 ## A job
 
 One job at a time; a second one while one runs is refused.
@@ -56,7 +65,11 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `POST /jobs/{id}/stop` | stop (409 if already finished) |
 | `POST /park` | park all arms |
 | `GET /rig` | arms (pose, park configuration, calibration state), the drawing area, the rig and calibration digests, driver and speed |
-| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park |
+| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park (empty with `--driver robot`) |
+| `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
+| `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
+| `GET /jobs/{id}/queues/{phase}/{arm}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
+| `POST /jobs/{id}/events` | the operator PC: `{source, rows: [{seq, ...}]}`; each row appended to the job's log once, in seq order; answers `{accepted, next_seq, stop}` (stop: the job was stopped here) |
 
 ## The command
 
@@ -117,6 +130,19 @@ ones at their parks; ones not yet parked as their bodies where they stand, and f
 as their footprints), checked, queued, run. An arm already at its park is left alone. An arm
 the planner or checker refuses stays; the job then fails and says which.
 
+## Where things end up
+
+One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
+
+| file | what is in it |
+|---|---|
+| `job.json` | the header: rig, calibration and drawing digests, rules, scale, driver, speed |
+| `phases.jsonl` | the phases in the order they run, then an end line |
+| `<phase>__arm<id>.queue` | the checked motions of one arm in one phase (format: execute.md) |
+| `<phase>__arm<id>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
+| `events.jsonl` | every state change: the job's, the coordinator's, each arm's (with `--driver robot`, the operator PC's rows, marked `source: robot`) |
+| `report.json` | the report below |
+
 ## The report
 
 | field | meaning |
@@ -146,14 +172,23 @@ A park job's report says per arm "parked", "already at its park" or why not.
 - Park all arms from random configurations up to 0.05 rad from their parks (five arms to move):
   planned and checked in 7.9 s, done at 8.2 s; the standing arms' footprints take most of it
   (1.1 s each).
-- Quick tests: 9 in 40 s.
+- **Very big drawings** (`tests/big_cases.py`; `aris plan`, 30 planner and 30 checker
+  processes, warm cache, machine load about 4): 2 000 lines of 1.2 to 1.5 m (2 680 m): 17 min
+  wall, 19 384 motions, all pass, 8 mm left over (unreachable), 648 MB of queues, first motion
+  at 86 s; through the server at speed inf: 16 min, first motion 84 s. 10 000 lines of 2 cm to
+  1 m (1 912 m): 17 min wall, 42 296 motions, one refused by the checker, which dropped the rest
+  of that arm's phase (243 m). The checker takes more CPU (8 000 to 10 000 s) than the planner
+  (3 500 to 4 500 s). `aris check` on the 2 000 lines: 12 min. Peak memory of all processes
+  together: 10 to 13.5 GB (the 30 checker processes all along, plus 30 local-planner processes
+  at the start of each leader phase).
+- Quick tests: 13 in 52 s (with the operator-PC endpoints).
 
 ## What is not built
 
 - Resume after a stop or a failure; re-planning after a failure.
 - SVG drawings.
 - Calibration jobs (only "park all arms" is built of the other kinds of job).
-- The real arm driver: every arm is the simulated arm, in the server's own process.
+- The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them, and park is not built for that mode.
 - Pause.
 - Clearing an arm's fault from the server.
 - Only the arms of phase 1 may start a drawing away from their parks.

@@ -130,7 +130,6 @@ def test_refuses_to_start_without_calibration_or_with_an_unbuilt_driver():
 def test_a_stale_drawing_area_in_the_rig_file_is_refused():
     from aris.server.station import area_mismatch
     assert area_mismatch((1.56, 3.56), (1.56, 3.56), 0.02) == ""
-    assert area_mismatch((1.56, 3.56), None, 0.02) == ""          # rig.py does not read it
     assert area_mismatch((1.58, 3.56), (1.56, 3.56), 0.02) == ""  # within one grid cell
     why = area_mismatch((1.60, 3.56), (1.56, 3.56), 0.02)
     assert "stale" in why and "4.0 cm" in why
@@ -156,7 +155,8 @@ def test_rig_and_arms_endpoints(station):
     assert np.allclose(r["arms"]["71"]["park_q"], station.rig.park_q(71))
     assert len(r["rig_digest"]) == 24 and len(r["calibration_digest"]) == 24
     assert 1.0 < r["drawing_area_m"][0] < 1.8 and 3.0 < r["drawing_area_m"][1] < 3.7
-    assert "drawing_area_rig_file_m" in r
+    assert r["drawing_area_m"] == [1.56, 3.56]
+    assert np.max(np.abs(np.subtract(r["drawing_area_from_maps_m"], [1.56, 3.56]))) <= 0.05
     assert r["driver"] == "sim" and r["speed"] == "inf"
     arms = c.get("/arms").json()
     assert all(v["at_park"] and v["ok"] for v in arms.values())
@@ -309,3 +309,4 @@ def _up(url) -> bool:
         return cli.Http(url).get("/rig")[0] == 200
     except OSError:
         return False
+

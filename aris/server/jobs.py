@@ -40,6 +40,11 @@ class JobRecord:
     stop: threading.Event = field(default_factory=threading.Event)
     coordinator: object = None
     thread: threading.Thread | None = None
+    # --driver robot: the rows the operator PC posted, and its last "job ..." row
+    robot_rows: int = 0
+    robot_final: dict | None = None
+    robot_end: threading.Event = field(default_factory=threading.Event)
+    stop_time: float | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -60,6 +65,29 @@ class JobRecord:
             n = self.queued.get((phase, arm), 0) + 1
             self.queued[(phase, arm)] = n
             return n
+
+
+ROBOT_END = ("job done", "job failed", "job stopped")
+
+
+def accept_rows(rec: JobRecord, rows: list) -> dict:
+    """Event rows from the operator PC: each appended to the job's log once, in `seq` order
+    (a row the server already has, or one after a gap, is not taken).  The answer tells the
+    runner how far the server is and whether the job was stopped here."""
+    taken = 0
+    with rec.lock:
+        for r in rows:
+            if not isinstance(r, dict) or r.get("seq") != rec.robot_rows:
+                continue
+            fields = {k: v for k, v in r.items() if k != "event"}
+            rec.log.write(str(r.get("event", "")), **fields, source="robot")
+            rec.robot_rows += 1
+            taken += 1
+            if r.get("event") in ROBOT_END:
+                rec.robot_final = dict(r)
+                rec.robot_end.set()
+        n = rec.robot_rows
+    return dict(accepted=taken, next_seq=n, stop=rec.stop.is_set())
 
 
 class JobStore:
