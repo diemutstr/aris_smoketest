@@ -131,7 +131,10 @@ def test_q_calls_agree_and_threads_change_nothing():
     dp = collide.clearance_detail(arm.body(Q), obs, backend="numpy")
     assert np.abs(dq.value - dp.value).max() <= TOL
     swap = np.flatnonzero((dq.capsule != dp.capsule) | (dq.obstacle != dp.obstacle))
-    assert len(swap) < 0.01 * len(Q)
+    # No cap on how many: the scene's parked chain is capsules joined end to end, so whenever
+    # the closest point is a joint of that chain two pairs tie exactly, and 1e-16 of rounding
+    # picks either.  What must hold is below: the other pair is just as close.
+    print(f"\n_q against Arm.body: {len(swap)} of {len(Q)} closest pairs swapped between tying pairs")
     for i in swap:                                      # the native pair is as close, to TOL
         assert abs(_pair_value(arm.body(Q[i:i + 1]), obs, dq.capsule[i], dq.obstacle[i])
                    - dp.value[i]) <= TOL
