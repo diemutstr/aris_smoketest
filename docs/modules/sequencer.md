@@ -176,37 +176,43 @@ arm 31.
 
 | arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | leftovers (m) | checker | slowest mm/s |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 31 word | 13 | 13 | 7.6 / 2.2 | 1.3 | 123.6 | 47.2 | 0.276 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
-| 31 scatter | 27 | 23 | 12.8 / 3.5 | 1.6 | 144.2 | 73.3 | 0.337 | 9.0 | blocked 0.374, too short 0.002, unreachable 0.097 | 93 / 93 | 5.01 |
-| 31 starburst | 24 | 28 | 24.6 / 5.7 | 3.1 | 722.2 | 83.6 | 0.104 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
-| 31 spiral | 3 | 7 | 14.9 / 8.3 | 7.4 | 450.9 | 28.2 | 0.059 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
-| 31 duotone | 5 | 4 | 7.5 / 2.2 | 1.8 | 198.6 | 22.5 | 0.102 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
-| 31 lines | 100 | 105 | 58.6 / 14.6 | 6.6 | 2202.5 | 225.8 | 0.093 | 8.2 | blocked 2.325, no path 0.086, unreachable 0.015 | 421 / 421 | 4.99 |
-| 13 word | 13 | 13 | 6.7 / 2.0 | 1.1 | 122.5 | 43.0 | 0.260 | 6.7 | no path 0.012, unreachable 0.185 | 53 / 53 | 1.70 |
-| 13 hatch | 43 | 43 | 26.7 / 6.9 | 3.2 | 1517.0 | 65.8 | 0.042 | 6.8 | none | 173 / 173 | 5.09 |
-| 13 scatter | 24 | 23 | 7.9 / 2.0 | 1.1 | 142.9 | 60.5 | 0.297 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
-| 13 starburst | 5 | 5 | 5.3 / 1.4 | 1.2 | 54.0 | 13.7 | 0.202 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
-| 13 spiral | 3 | 3 | 3.7 / 1.8 | 1.7 | 72.6 | 10.2 | 0.123 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
-| 13 duotone | 5 | 7 | 7.6 / 2.8 | 2.1 | 189.0 | 38.6 | 0.169 | 8.1 | blocked 0.452, unreachable 0.015 | 29 / 29 | 4.99 |
-| 13 lines | 100 | 105 | 46.0 / 12.2 | 5.1 | 2197.7 | 218.5 | 0.090 | 6.1 | blocked 1.643, no path 0.034, unreachable 0.014 | 421 / 421 | 4.99 |
+| 31 word | 13 | 13 | 6.8 / 2.1 | 1.1 | 123.6 | 47.2 | 0.276 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
+| 31 scatter | 27 | 24 | 10.9 / 3.7 | 1.4 | 147.9 | 67.1 | 0.312 | 9.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 | 5.01 |
+| 31 starburst | 24 | 28 | 21.0 / 5.7 | 2.6 | 722.2 | 83.6 | 0.104 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
+| 31 spiral | 3 | 7 | 14.2 / 8.0 | 6.7 | 450.9 | 28.2 | 0.059 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
+| 31 duotone | 5 | 4 | 6.4 / 2.3 | 1.6 | 198.6 | 22.5 | 0.102 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
+| 31 lines | 100 | 105 | 70.5 / 41.8 | 8.0 | 2202.4 | 212.8 | 0.088 | 7.5 | blocked 2.325, no path 0.087, unreachable 0.015 | 421 / 421 | 4.99 |
+| 13 word | 13 | 13 | 7.8 / 2.2 | 1.2 | 122.5 | 37.5 | 0.234 | 5.5 | no path 0.010, unreachable 0.185 | 53 / 53 | 1.35 |
+| 13 hatch | 43 | 43 | 33.7 / 9.4 | 3.9 | 1517.0 | 65.8 | 0.042 | 6.8 | none | 173 / 173 | 5.09 |
+| 13 scatter | 24 | 23 | 9.1 / 2.5 | 1.3 | 142.9 | 60.5 | 0.297 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
+| 13 starburst | 5 | 5 | 6.5 / 1.8 | 1.6 | 54.0 | 13.7 | 0.202 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
+| 13 spiral | 3 | 3 | 4.3 / 2.2 | 1.9 | 72.6 | 10.2 | 0.123 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
+| 13 duotone | 5 | 7 | 9.1 / 3.5 | 2.5 | 189.0 | 38.6 | 0.169 | 8.1 | blocked 0.452, unreachable 0.015 | 29 / 29 | 4.99 |
+| 13 lines | 100 | 105 | 56.1 / 16.3 | 6.2 | 2198.3 | 219.1 | 0.091 | 6.1 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 | 4.99 |
 
-- **Every one of the 1 529 motions passes the independent checker.**
+- **Every one of the 1 533 motions passes the independent checker.**
 - **Slowest mid-line pen speed:** 5.0 mm/s or more on every drawing (the median drawing's
   slowest point is 5.1 mm/s), except word:10, the "w" of the word, which has a real 148-degree
-  corner: 1.30 mm/s on arm 31, 1.70 mm/s on arm 13.
+  corner: 1.30 mm/s on arm 31, 1.35 mm/s on arm 13.
 - **Against corner timing** (the table before, same lift rules, one process): time on the rig
   0.2 to 2.5 % shorter (arm 31 word 170.8 against 171.2 s; 31 random lines 2 428 against
   2 470 s; 13 random lines 2 416 against 2 451 s; 31 starburst 806 against 827 s); pen-up time
   about the same (the word, arm 31: 47.2 against 47.4 s).
-- **One piece lost to smooth timing:** arm 31 scatter, corpus:scatter:38:0 (72 mm), "drawing:
-  the timed drawing comes 0.01 mm too close" (the smooth curve strays a little further from the
-  checked path than the corner timing did); it was drawn before. 23 pieces instead of 24.
-- **"No path": 0.144 m in all**, every bit of it cut off at a piece end by rule 2 (spiral arm 31
-  12 mm, word arm 13 12 mm, random lines 86 and 34 mm); no whole piece is lost. With the arm's
+- **The flown check, 4 times finer** (`Guard.flown`, 2026-09-30): the timed curve is checked
+  at its samples plus 3 points of the same cubic between each two, and the cubic's sag is charged
+  on that finer gap. Before, arm 31's scatter lost a 72 mm piece (corpus:scatter:38:0): the
+  finger was 0.76 mm beyond the planning margin at the samples, and the bounds over the 50 ms
+  gaps took 0.77 mm; it is drawn now (24 pieces). The check stays a lower bound against the
+  planning margins. Candidates it no longer refuses change a few tours: pen-up time on the word,
+  arm 13, 37.5 s instead of 43.0; arm 31's 100 lines 212.8 s instead of 225.8; arm 13's 100
+  lines 219.1 instead of 218.5; the other cases are the same motions. It costs 8 to 20 ms of
+  CPU per checked lift or drawing instead of 6 to 12 ms (0.1 to 2.9 s more per case).
+- **"No path": 0.131 m in all**, every bit of it cut off at a piece end by rule 2 (spiral arm 31
+  12 mm, word arm 13 10 mm, random lines 87 and 22 mm); no whole piece is lost. With the arm's
   shape held (the first version of rule 1, same day) it was 3.53 m, 1.85 m of it one piece of
   the spiral; with the five-rung ladder (earlier the same day, 5 mm lift) nothing.
 - **Pen-up time on the word:** arm 31, 47.2 s (shape held 43.5 s, ladder 40.0 s); arm 13,
-  43.0 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
+  37.5 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
   the shape held. The 22 mm lift and its turns cost a few seconds over the ladder's 5 to 25 mm.
 - The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 1.0 s for
   the word, 7.2 to 8.2 s for 100 lines; the rest is the local planner.

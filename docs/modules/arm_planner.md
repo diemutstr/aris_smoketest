@@ -111,17 +111,17 @@ park, kinematic table on (full table of cases in sequencer.md):
 | arm, case | lines | planning CPU / wall s | first motion, wall s | motion on the rig s | pen-up share |
 |---|---|---|---|---|---|
 | 31 word | 13 | 7.6 / 2.2 | 1.3 | 170.8 | 0.276 |
-| 31 scatter | 27 | 12.8 / 3.5 | 1.6 | 217.5 | 0.337 |
-| 31 lines | 100 | 58.6 / 14.6 | 6.6 | 2428.3 | 0.093 |
-| 13 word | 13 | 6.7 / 2.0 | 1.1 | 165.5 | 0.260 |
+| 31 scatter | 27 | 12.8 / 3.5 | 1.6 | 215.0 | 0.312 |
+| 31 lines | 100 | 58.6 / 14.6 | 6.6 | 2415.2 | 0.088 |
+| 13 word | 13 | 6.7 / 2.0 | 1.1 | 160.0 | 0.234 |
 | 13 hatch | 43 | 26.7 / 6.9 | 3.2 | 1582.8 | 0.042 |
-| 13 lines | 100 | 46.0 / 12.2 | 5.1 | 2416.2 | 0.090 |
+| 13 lines | 100 | 46.0 / 12.2 | 5.1 | 2417.4 | 0.091 |
 
 - Planning wall time is under 1 % of the motion's duration; the arm never waits for the planner
   after the first motion.
 - Smooth timing (commit d8895c8) against corner timing: time on the rig 0.2 to 2.5 % shorter,
-  pen-up time about the same, every motion passes the checker; one 72 mm scatter piece of arm 31
-  is lost (see sequencer.md).
+  pen-up time about the same, every motion passes the checker. (Motion times in this table include
+  the finer flown check of 2026-09-30, see sequencer.md; planning times are from the run before it.)
 - **Word, arm 31, against the old planner:** planned in 2.2 s wall (7.6 s of CPU over 8
   workers; 2.6 s in one process) against 66.8 s; first motion after 1.3 s. At 20 mm/s the motion
   takes 170.8 s; the old planner drew at 80 mm/s and took 67.8 s. 13 pen lifts; 0.173 m of the

@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from aris.kernel import collide
+from aris.kernel.retime import sample
 from aris.types import Gates, Obstacles, Trajectory
 
 
@@ -21,6 +22,9 @@ def piece_accel(traj: Trajectory) -> np.ndarray:
     a0 = (6.0 * dq - h * (4.0 * v0 + 2.0 * v1)) / h ** 2
     a1 = (-6.0 * dq + h * (2.0 * v0 + 4.0 * v1)) / h ** 2
     return np.maximum(np.abs(a0), np.abs(a1))
+
+
+SUB = 4               # the flown curve is checked this many times finer than it is sampled
 
 
 class Guard:
@@ -49,19 +53,28 @@ class Guard:
             return f"{-own * 1e3:.2f} mm inside its own self margin"
         return None
 
-    def flown(self, traj: Trajectory, touching: bool) -> float:
+    def flown(self, traj: Trajectory, touching: bool, sub: int = SUB) -> float:
         """A lower bound on the clearance of the timed trajectory as flown, obstacles and the arm
         against itself, metres beyond the margins.
 
-        The kernel bounds the clearance along the straight joint moves between the samples; a
-        cubic piece strays from that chord by at most max|q''| dt^2 / 8 per joint, and that is
-        charged, turned into metres by how far each joint can move each capsule."""
+        The flown curve is the cubic between the trajectory's samples; it is sampled `sub`
+        times finer (the samples plus sub - 1 points of the same cubic between each two).  The
+        kernel bounds the clearance along the straight joint moves between those points; the
+        cubic strays from each such chord by at most max|q''| dt^2 / 8 per joint (q'' of the
+        piece it lies on, dt the finer gap), and that is charged, turned into metres by how far
+        each joint can move each capsule.  Both the kernel's between-point bound and the charge
+        shrink with the gap, so a finer sampling reads closer to the truth, never above it."""
         if len(traj.t) < 2:
             return float("inf")
-        sag = piece_accel(traj) * np.diff(traj.t)[:, None] ** 2 / 8.0       # (N-1, 7) rad
+        u = np.arange(sub) / sub                                             # (sub,)
+        h = np.diff(traj.t)
+        t = np.concatenate([(traj.t[:-1, None] + h[:, None] * u[None]).ravel(), traj.t[-1:]])
+        q = sample(traj, t)[0]
+        q[::sub] = traj.q                                   # the samples themselves, exactly
+        sag = piece_accel(traj) * (h / sub)[:, None] ** 2 / 8.0             # (N-1, 7) rad
         move = sag @ self.reach                                              # (N-1, K) m
-        obst = collide.path_clearance_q(self.tables, self.reach, traj.q, self.packed,
+        obst = collide.path_clearance_q(self.tables, self.reach, q, self.packed,
                                         drawing=touching)
-        own = collide.path_self_clearance_q(self.tables, self.reach, traj.q, self.pairs,
+        own = collide.path_self_clearance_q(self.tables, self.reach, q, self.pairs,
                                             self.gates.self_margin)
         return float(min(obst - move.max(), own - 2.0 * move.max()))
