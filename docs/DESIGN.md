@@ -254,8 +254,11 @@ drawing and zero otherwise. Free moves go through the same controller with zero 
 position controller. Why: what is flown stays within millimetres of what was checked (all seven
 joints track the plan; no arm shape chosen by the controller); the press is a force wherever the
 paper actually is (Diemut's tuning showed the depth was the fragile part: one millimetre changed
-the pressure by a factor of two); a paper height error of a few millimetres becomes a fraction of
-a newton, not a torn sheet; the landing is the planned "lower" motion with the force ramping from
+the pressure by a factor of two); a paper height error becomes a small force, not a torn sheet, PROVIDED the
+controller is made soft along the paper normal (plain joint impedance at the gains that give
+200 N/m in the softest direction is 360 to 1 970 N/m along the normal, measured on 672 drawing
+poses: 1 mm would be the whole force band; so the controller replaces the stiffness along the
+normal by a soft spring, and the force servo closes the loop); the landing is the planned "lower" motion with the force ramping from
 zero as the pen arrives. The force servo, the tare and the touch logic of the current executor
 stay, reduced to a force setpoint. A plane that moved is a re-plan, not a controller problem.
 
