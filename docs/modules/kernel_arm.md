@@ -149,6 +149,35 @@ base and at the rim); (tip, spin) pairs 28 082 against 29 973 (+6.7 %); usable a
 against 204 605 (+63 %). Reach barely grows; what grows is the choice at each point, which is
 what the local planner searches.
 
+## Reach at the paper and what limits it
+
+Measured by `tests/reach_cases.py` (4 s): paper 0.97 m below the base, square to the base axis;
+tip positions along a ray from the axis at 5 mm steps; 16 hand spins; leans 0 to 35 degrees in
+5 degree rings, 8 directions each; q7 on 64 values; all 8 IK slots. A radius counts if at least
+one configuration passes the gates of that row. Obstacles and self-collision are ignored for
+the rim; the last column checks the arm's self-collision gate (23 mm) at the rim.
+
+| gates | rim (m) | self-collision at the rim |
+|---|---|---|
+| 1 today: margin 0.15 rad, sigma_min 0.08, lean 15 deg | 0.785 | passes, all 14 passing configurations |
+| 2 margin 0.10 | 0.785 | passes (19 of 19) |
+| 3 margin 0.05 | 0.785 | passes (28 of 28) |
+| 4 margin 0 (the hard limits) | 0.785 | passes (33 of 33) |
+| 5 sigma_min 0.04, margin 0.15 | 0.800 | passes (22 of 22) |
+| 6 sigma_min 0, margin 0.15 | 0.805 | passes (12 of 12) |
+| 7 lean 25 deg, margin 0.15, sigma 0.08 | 0.785 | passes (26 of 26) |
+| 8 lean 35 deg | 0.785 | passes (43 of 43) |
+| 9 loosest: margin 0, sigma 0, lean 35 | 0.805 | passes (98 of 98) |
+
+What ends it. The arm itself ends at 0.805 m: at 0.810 there is no configuration at all, even
+with the joint limits removed, so that is the stretched arm, not a limit. Inside that, the only
+gate that bites is sigma_min: the last 2 cm before full stretch are near the elbow
+singularity. Joint-limit margin and lean change nothing at the rim. One centimetre beyond
+today's rim (0.795 m, lean up to 15 deg) there are 173 configurations; 90 of them pass the
+margin and none passes sigma_min 0.08. The best has sigma_min 0.065 and a margin of 0.140 rad
+(joint 3 at -2.761), so it fails first on sigma_min. Relaxing sigma_min to 0.04 buys 15 mm
+of radius; nothing else buys any.
+
 ## Measured (tests/test_kernel_arm.py)
 
 | test | result |
