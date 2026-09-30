@@ -35,7 +35,6 @@ class Mount:
     arm_id: int
     axis_xy_table: np.ndarray          # (2,) nominal, from rig.json; walls use this
     T_table_base: np.ndarray           # (4, 4)
-    strut_wide_side: str               # "-x" or "+x"
     park_q: np.ndarray                 # (7,)
     tip_hand: np.ndarray | None        # (3,) calibrated pen tip in the hand frame, or None
     calibration: str                   # "none", "applied: <file>" or "not applied: <why>"
@@ -62,27 +61,21 @@ def _read_calibration(path: Path, arm_id: int, T_nominal: np.ndarray):
     return T, tip, f"applied: {path.name} ({cal.get('date', 'undated')})"
 
 
-def _hanger_boxes(arm_id: int, axis_xy: np.ndarray, side: str, h: dict) -> list[SteelBox]:
+def _hanger_boxes(arm_id: int, axis_xy: np.ndarray, h: dict) -> list[SteelBox]:
     """The two struts, the plate and the clamp of one arm, placed from its axis."""
-    if side not in ("-x", "+x"):
-        raise ValueError(f"arm {arm_id}: strut_wide_side must be '-x' or '+x', not {side!r}")
-    s = -1.0 if side == "-x" else 1.0
     ax, ay = float(axis_xy[0]), float(axis_xy[1])
-    wide, narrow, sx, sy = (h["wide_side_outer_face_to_axis_m"],
-                            h["narrow_side_outer_face_to_axis_m"],
-                            h["strut_size_x_m"], h["strut_size_y_m"])
+    lo, hi, sx, sy = (h["axis_to_minus_x_outer_face_m"], h["axis_to_plus_x_outer_face_m"],
+                      h["strut_size_x_m"], h["strut_size_y_m"])
     z0, z1 = h["strut_bottom_z_m"], h["strut_top_z_m"]
 
     def box(name, x_a, x_b, half_y, za, zb, src):
         return SteelBox(name, np.array([min(x_a, x_b), ay - half_y, za]),
                         np.array([max(x_a, x_b), ay + half_y, zb]), src, arm_id)
 
-    pc = ax + s * h["plate_centre_toward_wide_side_m"]
+    pc = ax + h["plate_centre_offset_x_m"]
     return [
-        box(f"strut{arm_id}_wide", ax + s * wide, ax + s * (wide - sx), sy / 2, z0, z1,
-            h["strut_source"] + f" Wide (0.240) side assumed toward table {side}."),
-        box(f"strut{arm_id}_narrow", ax - s * narrow, ax - s * (narrow - sx), sy / 2, z0, z1,
-            h["strut_source"]),
+        box(f"strut{arm_id}_minus_x", ax - lo, ax - lo + sx, sy / 2, z0, z1, h["strut_source"]),
+        box(f"strut{arm_id}_plus_x", ax + hi - sx, ax + hi, sy / 2, z0, z1, h["strut_source"]),
         box(f"plate{arm_id}", pc - h["plate_size_x_m"] / 2, pc + h["plate_size_x_m"] / 2,
             h["plate_size_y_m"] / 2, h["plate_bottom_z_m"], h["plate_top_z_m"],
             h["plate_source"]),
@@ -130,9 +123,9 @@ class Rig:
                 raise ValueError(f"arm {aid}: R_table_base is not a rotation")
             T, tip, status = _read_calibration(config_dir / "calibration" / f"{aid}.json", aid, T)
             axis = np.asarray(a["axis_xy_m"], float)
-            mounts[aid] = Mount(aid, axis, T, a["strut_wide_side"],
+            mounts[aid] = Mount(aid, axis, T,
                                 np.asarray(a["park_q_rad"], float), tip, status)
-            hangers += _hanger_boxes(aid, axis, a["strut_wide_side"], cfg["hanger"])
+            hangers += _hanger_boxes(aid, axis, cfg["hanger"])
         cage = [SteelBox(b["name"], np.asarray(b["lo_m"], float), np.asarray(b["hi_m"], float),
                          b["source"]) for b in cfg["steel"]["boxes"]]
         rp = cfg["rows_and_phases"]

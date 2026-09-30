@@ -70,8 +70,8 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 
 | part | boxes | numbers from |
 |---|---|---|
-| hanging struts | 2 per arm, 0.0762 x 0.1524 section (long side along y) | Pete's tape, 2026-09-16: outside face to axis 0.240 on one side and 0.156 on the other. Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
-| mounting plate | 1 per arm, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centred between Pete's struts, so 0.042 toward the wide side. |
+| hanging struts | 2 per arm, 0.0762 x 0.1524 section (long side along y) | the technical drawing (Pete, 2026-09-30): `legacy_docs/drawings/plan_centre_datum.pdf`, sheet 3, panel D. For every arm, axis to outside face 0.17175 on −x and 0.22205 on +x (393.8 mm outside to outside, 241.4 mm clear between). Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
+| mounting plate | 1 per arm, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centre 25.15 mm toward table +x of the axis, for every arm (sheet 3, panel D). |
 | clamp stack | 1 per arm, on the plate | old model (drawing) |
 | runways | 3, one double beam per row at 1.624 to 1.700 | old model (drawing) |
 | seam bars | 2, beside the table at y = 0, from the table top to the runway | old model, "representative, not measured" (Pete, 2026-09-14) |
@@ -89,9 +89,8 @@ the old body model and 1.028 m with the new one. Each arm keeps 16 to 23 boxes.
 
 **Compared with the old `spec.static_obstacles()`.** The seam bars are identical. The old set had
 each neighbour's plate as a 0.226 x 0.190 x 0.050 block centred on the axis. It is now the
-drawing's 12.7 mm plate, moved 42 mm to sit between the struts. It could not sit centred: Pete's
-narrow strut is 80 mm from the axis. The old set had each neighbour's "boom" as one 0.2 m square
-column up to 2.34 m. Those are replaced by the two measured struts, and the runway is at the
+drawing's 12.7 mm plate, 25.15 mm toward +x of the axis, as on the drawing. The old set had each neighbour's "boom" as one 0.2 m square
+column up to 2.34 m. Those are replaced by the two struts of the drawing, and the runway is at the
 drawing's 1.62 m. The old set also had 4 "body column" boxes per neighbour (20 per arm). Those
 are arms, not steel. They now arrive as a parked arm's capsules or stay behind a wall. The old set
 had no runways, rails or legs, and no clamps.
@@ -106,14 +105,14 @@ Each park against its steel, the paper and itself. The first four columns come f
 body model and are plain distances (demanded: paper 0.020, pen 0.003, self 0.020, steel 0.050). The
 last column comes from the new kernel and is measured beyond each obstacle's demanded margin:
 
-| arm | paper (body) | pen tip height | self | new steel, old body model (35 mm struts) | everything, new kernel, beyond the margin |
+| arm | paper (body) | pen tip height | self | steel, old body model (tape struts, 35 mm) | everything, new kernel, beyond the margin |
 |---|---|---|---|---|---|
-| 13 | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.130 (link 2, own strut) |
-| 17 | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.131 (link 2, own strut) |
+| 13 | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.119 (link 2, own −x strut) |
+| 17 | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.123 (link 2, own −x strut) |
 | 31 | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.079 (link 6, seam bar W) |
-| 71 | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.135 (link 2, own strut) |
-| 2 | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.112 (link 2, own strut) |
-| 97 | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.150 (link 2, own strut) |
+| 71 | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.151 (link 2, own +x strut) |
+| 2 | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.131 (link 2, own +x strut) |
+| 97 | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.130 (link 2, own −x strut) |
 
 Every park keeps the demanded clearances, links 0 and 1 not counted (see "Link 1").
 
@@ -134,10 +133,31 @@ The worst clearance beyond the required margin, for every arm:
 
 | own hanger (0.020) | other steel | walls, both phases | other arms parked | paper |
 |---|---|---|---|---|
-| +0.019 | +0.257 or more | +0.204 | +0.216 or more | +0.488 |
+| +0.031 | +0.274 or more | +0.204 | +0.216 or more | +0.488 |
 
-With the struts 30 mm longer, link 1 passes under their ends with 39 to 50 mm of room, so
-19 to 30 mm beyond the 0.020.
+With the struts where the drawing puts them and 30 mm longer, link 1 passes the end of the −x strut
+with 50.8 to 62.4 mm of room. That is even 0.8 mm beyond the 0.050 steel clearance. But it is not
+beyond 0.050 plus the 0.003 planning allowance: that fails on a third of the joint 1 range
+(−2.73 to −0.92 rad). So the exemption stays: without it, every planner would refuse those joint 1
+angles.
+
+**Link 0**, the fixed base, is never checked against obstacles. As modelled, it is seven round
+bands about the axis, radius 0.171 to 0.177 near the mounting face. It overlaps its own steel
+(distances; negative is overlap):
+
+| link 0 band (base z, m) | −x strut | +x strut | plate |
+|---|---|---|---|
+| link0.0, −0.238 to −0.075: the cable connector stub, above the mounting face | −0.081 | −0.031 | −0.115 |
+| link0.1, −0.075 to 0 | −0.080 | −0.030 | −0.176 |
+| link0.2, 0 to 0.035 | −0.076 | −0.025 | −0.171 |
+| link0.3, 0.035 to 0.070 | −0.065 | −0.014 | −0.125 |
+| link0.4, 0.070 to 0.100 | −0.016 | +0.034 | −0.042 |
+| link0.5, 0.100 to 0.120 | +0.026 | +0.074 | +0.024 |
+| link0.6, 0.120 to 0.144 | +0.032 | +0.078 | +0.042 |
+
+The overlap is the round envelope, not the casting: the real base is bolted into the 241.4 mm gap,
+and the bands are circles 0.34 to 0.35 m across. It says nothing about a collision, and the model
+does not use it.
 
 ## Clearances
 
@@ -195,14 +215,15 @@ changes arm 31's pose and its paper plane, and nothing else (walls, steel, other
 - The tool's clearance to the paper is 0, which means it must not touch. Pete chose this on
   2026-09-30. There will be no measured holder height, so the CAD and pen models are used as they
   are. It is also the limit on how far a pen may wear.
-- **The 0.240 side of every arm's struts is toward −x.** This is not confirmed; it is one setting
-  per arm, `strut_wide_side`. The old model inferred the opposite, with its wider side toward +x.
+- **The struts are placed from the drawing, and Pete's tape disagrees with it.** On 2026-09-16 the
+  tape read 156 and 240 mm from the axis to the two outside faces. The drawing says 171.75 (−x)
+  and 222.05 (+x), a 42 mm offset against the drawing's 25.15. Pete decided on 2026-09-30 to use
+  the drawing (sheet 3, panel C lists the disagreement).
 - The strut heights, the plate, the clamp, the runways, rails and legs are the old drawing-based
   model. The seam bars are "representative", and the corner legs were assumed in the old model.
-- The plate sits centred between the struts. That is inferred from its size, not seen.
 - **How far the hanging struts reach below the mounting plate is not measured, and will not be.**
   The old model says 35 mm. On Pete's instruction the struts are 30 mm longer, 65 mm below the
-  plate, to be conservative. Link 1 then passes under them with 39 to 50 mm of room, against the
-  0.020 it must keep to its own mount (see "Link 1").
+  plate, to be conservative. Link 1 then passes the −x strut's end with 50.8 to 62.4 mm of room,
+  against the 0.020 it must keep to its own mount (see "Link 1").
 - The park configurations are the old home parks. They were not searched for the new phase
   scheme.

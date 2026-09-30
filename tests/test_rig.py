@@ -148,27 +148,24 @@ def test_steel_list(rig):
     assert len(rig.steel) == 13 + 6 * 4
 
 
-def test_struts_follow_petes_tape(rig):
+# the strut face schedule of legacy_docs/drawings/plan_centre_datum.pdf, sheet 3, panel D (mm)
+SCHEDULE = {"left": (-305.00, (-476.75, -400.55), (-159.15, -82.95), (-392.76, -166.94)),
+            "right": (305.00, (133.25, 209.45), (450.85, 527.05), (217.24, 443.06))}
+
+
+def test_hanger_follows_the_drawing(rig):
     for aid in rig.arm_ids:
         ax = rig.T_table_base(aid)[0, 3]
-        wide = next(b for b in rig.steel if b.name == f"strut{aid}_wide")
-        narrow = next(b for b in rig.steel if b.name == f"strut{aid}_narrow")
-        assert abs(wide.lo_table[0] - (ax - 0.240)) < 1e-12       # wide side toward -x
-        assert abs(narrow.hi_table[0] - (ax + 0.156)) < 1e-12
-        assert abs(narrow.hi_table[0] - wide.lo_table[0] - 0.396) < 1e-12
-        plate = next(b for b in rig.steel if b.name == f"plate{aid}")
-        assert plate.lo_table[0] > wide.hi_table[0] and plate.hi_table[0] < narrow.lo_table[0]
-
-
-def test_strut_side_setting_mirrors(tmp_path):
-    cfg = json.loads((CONFIG / "rig.json").read_text())
-    for a in cfg["arms"]["list"]:
-        a["strut_wide_side"] = "+x"
-    (tmp_path / "rig.json").write_text(json.dumps(cfg))
-    r = Rig.load(tmp_path)
-    ax = r.T_table_base(31)[0, 3]
-    wide = next(b for b in r.steel if b.name == "strut31_wide")
-    assert abs(wide.hi_table[0] - (ax + 0.240)) < 1e-12
+        axis_mm, s1, s2, plate = SCHEDULE["left" if ax < 0 else "right"]
+        assert abs(ax * 1000 - axis_mm) < 1e-9
+        for name, (a, b) in ((f"strut{aid}_minus_x", s1), (f"strut{aid}_plus_x", s2),
+                             (f"plate{aid}", plate)):
+            box = next(x for x in rig.steel if x.name == name)
+            # plate edges are printed to 0.01 mm: the 225.82 plate is centred on axis + 25.15
+            np.testing.assert_allclose([box.lo_table[0] * 1000, box.hi_table[0] * 1000], [a, b],
+                                       atol=0.006)
+            if name.startswith("strut"):
+                assert abs(box.hi_table[1] - box.lo_table[1] - 0.1524) < 1e-12
 
 
 def test_steel_per_arm_and_against_old(rig):
@@ -198,7 +195,7 @@ def test_steel_per_arm_and_against_old(rig):
                 kinds["plate"] = kinds.get("plate", 0) + 1
             elif name.startswith("mount:") and name.endswith("_boom"):
                 other = int(name[6:].split("_")[0])
-                assert f"strut{other}_wide" in new_by_name
+                assert f"strut{other}_minus_x" in new_by_name
                 kinds["boom"] = kinds.get("boom", 0) + 1
             elif name.startswith("body:"):
                 kinds["column"] = kinds.get("column", 0) + 1
@@ -261,7 +258,7 @@ def test_park_clearances_kernel(rig):
 def _split_own(obs, aid):
     """-> (the arm's own struts, plate and clamp; everything else), as two Obstacles."""
     from aris.types import Obstacles
-    own_names = {f"strut{aid}_wide", f"strut{aid}_narrow", f"plate{aid}", f"clamp{aid}"}
+    own_names = {f"strut{aid}_minus_x", f"strut{aid}_plus_x", f"plate{aid}", f"clamp{aid}"}
     own = tuple(b for b in obs.boxes if b.name in own_names)
     rest = tuple(b for b in obs.boxes if b.name not in own_names)
     assert len(own) == 4
@@ -359,7 +356,7 @@ def test_rules_follow_the_config(tmp_path):
 def test_own_hanger_exempts_link1_for_its_own_arm_only(rig):
     for aid in rig.arm_ids:
         obs = rig.obstacles(aid, for_planning=False)
-        own = {f"strut{aid}_wide", f"strut{aid}_narrow", f"plate{aid}", f"clamp{aid}"}
+        own = {f"strut{aid}_minus_x", f"strut{aid}_plus_x", f"plate{aid}", f"clamp{aid}"}
         for b in obs.boxes:
             assert b.exempt == (("link1",) if b.name in own else ())
 
