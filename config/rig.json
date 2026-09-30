@@ -150,5 +150,23 @@
   "tool_to_paper_m": 0.0,
   "paper_note": "zero: a pen that hovers a few millimetres over the paper before touching down cannot pay more",
   "self_m": 0.003
- }
+ },
+
+  "gates": {
+    "source": "what a configuration must satisfy to count as usable. Pete, 2026-09-30, after the reach measurement (docs/modules/kernel_arm.md, 'Reach at the paper and what limits it'): sigma_min lowered from 0.08 to 0.04, because it was the only gate limiting reach at the paper, costing 2 cm at full stretch, and self-collision passes at the rim. The self margin is not here: it is clearances.self_m plus planning_allowance.self_m.",
+    "limit_margin_rad": 0.15,
+    "sigma_min": 0.04,
+    "sigma_min_note": "smallest singular value of the tip Jacobian (metres of tip motion per radian); no unit suffix because it is a ratio",
+    "pen_lean_max_deg": 15.0
+  },
+
+  "drawing": {
+    "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now).",
+    "draw_speed_m_per_s": 0.02,
+    "lift_height_m": 0.025,
+    "lift_height_note": "to be replaced by the pen's clearance to the paper + 0.002 when the sequencer is simplified",
+    "min_piece_m": 0.010,
+    "speed_fraction": 0.30,
+    "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
+  }
 }

@@ -16,7 +16,7 @@ import numpy as np
 
 from aris.kernel.arm import Arm
 from aris.kernel.tool import default_tool, with_tip
-from aris.types import Box, Capsule, Gates, Line, Obstacles, Phase, Plane, Wall
+from aris.types import Box, Capsule, DrawRules, Gates, Line, Obstacles, Phase, Plane, Wall
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,8 @@ class Rig:
     steel: tuple[SteelBox, ...]        # every box, table frame, cage first then hangers
     clearance: dict                    # demanded, metres (rig.json "clearances")
     allowance: dict                    # planning allowance, metres (rig.json "planning_allowance")
+    gate_cfg: dict                     # rig.json "gates", as read
+    drawing_cfg: dict                  # rig.json "drawing", as read
     shoulder_below_base: float
     body_reach: float                  # from the shoulder, see rig.json "reach"
     own_hanger_exempt: tuple[str, ...] # body groups not checked against the arm's own hanger
@@ -138,6 +140,9 @@ class Rig:
         return Rig(
             mounts=mounts, steel=tuple(cage + hangers),
             clearance=num(cfg["clearances"]), allowance=num(cfg["planning_allowance"]),
+            gate_cfg={k: float(v) for k, v in cfg["gates"].items() if not isinstance(v, str)},
+            drawing_cfg={k: float(v) for k, v in cfg["drawing"].items()
+                         if not isinstance(v, str)},
             shoulder_below_base=float(cfg["reach"]["shoulder_below_base_m"]),
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
             own_hanger_exempt=tuple(cfg["hanger"]["exempt_links"]),
@@ -218,9 +223,20 @@ class Rig:
         return self.clearance["self_m"] + (self.allowance["self_m"] if for_planning else 0.0)
 
     def gates(self) -> Gates:
-        """The planners' gates, with the self clearance taken from rig.json (demanded plus the
-        planning allowance).  Joint-limit margin and sigma_min are not rig facts: defaults."""
-        return Gates(self_margin=self.self_margin(for_planning=True))
+        """The gates a configuration must pass, all from rig.json.  The self margin is the
+        demanded self clearance plus its planning allowance."""
+        g = self.gate_cfg
+        return Gates(limit_margin=g["limit_margin_rad"], sigma_min=g["sigma_min"],
+                     self_margin=self.self_margin(for_planning=True))
+
+    def rules(self) -> DrawRules:
+        """The drawing rules, all from rig.json, with `gates()` inside.  The one source every
+        planner uses; the type defaults are not."""
+        d = self.drawing_cfg
+        return DrawRules(draw_speed=d["draw_speed_m_per_s"], lift_height=d["lift_height_m"],
+                         lean_max=float(np.deg2rad(self.gate_cfg["pen_lean_max_deg"])),
+                         min_piece=d["min_piece_m"], speed_fraction=d["speed_fraction"],
+                         gates=self.gates())
 
     # ------------------------------------------------------------------ walls
 

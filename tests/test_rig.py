@@ -334,6 +334,26 @@ def test_link1_against_everything(rig):
 def test_gates(rig):
     g = rig.gates()
     assert abs(g.self_margin - 0.023) < 1e-15
+    assert g.limit_margin == 0.15 and g.sigma_min == 0.04
+
+
+def test_rules(rig):
+    r = rig.rules()
+    assert r.draw_speed == 0.02 and r.lift_height == 0.025 and r.min_piece == 0.010
+    assert r.speed_fraction == 0.30 and abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
+    assert r.gates == rig.gates()
+
+
+def test_rules_follow_the_config(tmp_path):
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    cfg["gates"]["sigma_min"] = 0.05
+    cfg["gates"]["pen_lean_max_deg"] = 10.0
+    cfg["drawing"]["draw_speed_m_per_s"] = 0.03
+    cfg["clearances"]["self_m"] = 0.030
+    (tmp_path / "rig.json").write_text(json.dumps(cfg))
+    r = Rig.load(tmp_path).rules()
+    assert r.gates.sigma_min == 0.05 and r.draw_speed == 0.03
+    assert abs(r.lean_max - np.deg2rad(10.0)) < 1e-15 and abs(r.gates.self_margin - 0.033) < 1e-15
 
 
 def test_own_hanger_exempts_link1_for_its_own_arm_only(rig):

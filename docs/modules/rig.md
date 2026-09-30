@@ -20,7 +20,8 @@ comes from here.
 | `phase(n)` | phase 1 or 2: the leaders move, the other three stand parked, walls 13-71 and 71-2 (phase 1) or 17-31 and 31-97 (phase 2) |
 | `obstacles_for(a, phase)` | `obstacles` for a moving arm, with the parked arms it can reach (always its row partner) and the walls it stands next to |
 | `obstacles(a, parked=(), walls=(), for_planning=True)` | everything `a` must stay clear of |
-| `gates()` | the planners' `Gates`, with the self margin from `rig.json` (0.020 + 0.003) |
+| `gates()` | the planners' `Gates`, all from `rig.json`: joint-limit margin 0.15 rad, smallest singular value 0.04, self margin 0.020 + 0.003 |
+| `rules()` | the drawing rules (`DrawRules`), all from `rig.json`, with `gates()` inside. Every planner takes them from here, not from the type defaults |
 | `leaders(phase)`, `row_partner(a)` | (13, 71, 2) in phase 1, (17, 31, 97) in phase 2; 13-17, 31-71, 2-97 |
 
 ## Frames
@@ -156,6 +157,21 @@ samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
 | paper, rest of the tool (gripper, blades, holder) | 0.0: must not touch (Pete, 2026-09-30) | 0 |
 | itself | 0.020 | 0.003 (`rig.self_margin()`, `rig.gates()`) |
 | link 1 to its own hanger steel | 0.020 (same plate; see "Link 1") | checked once, not planned |
+
+## Gates and drawing rules
+
+These are facts about the installation, like the clearances. They sit in `rig.json` under `gates`
+and `drawing`, and `rig.gates()` and `rig.rules()` are the one source for them.
+
+| | value | note |
+|---|---|---|
+| joint-limit margin | 0.15 rad | |
+| smallest singular value of the tip Jacobian | 0.04 | Pete, 2026-09-30, lowered from 0.08. It was the only gate that limited reach at the paper, costing 2 cm at full stretch, and self-collision passes at the rim |
+| pen lean | 15° | |
+| draw speed | 0.02 m/s | |
+| lift height | 0.025 m | to be replaced by the pen's clearance to the paper + 2 mm |
+| shortest piece | 0.010 m | |
+| speed fraction | 0.30 | of the joint speed limits |
 
 ## Calibration file
 
