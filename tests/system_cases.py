@@ -184,7 +184,8 @@ def numbers(res) -> dict:
     out = dict(length=acc.length, drawn=acc.drawn, left=acc.left, twice=acc.twice,
                drawing_time=rep.drawing_time, cpu=rep.cpu, wall=rep.wall,
                first_wall=rep.first_wall, map_cpu=rep.map_cpu,
-               motions=len(res["tagged"]), load=res["load"])
+               motions=len(res["tagged"]), load=res["load"], cuts=rep.cuts,
+               phases_run=len(rep.phases), phases_skipped=len(rep.skipped))
     lead = sum(r.drawn for p in rep.phases if not is_fill(p) for r in p.arms.values())
     out["drawn_phases_12"] = lead
     out["drawn_fill"] = sum(r.drawn for p in rep.phases if is_fill(p) for r in p.arms.values())
@@ -206,7 +207,8 @@ def summary(res) -> list[str]:
            f"  drawn {acc.drawn:.2f} m ({acc.drawn / L:.3f}); phases 1+2 "
            f"{n['drawn_phases_12']:.2f} m ({n['drawn_phases_12'] / L:.3f}), fill "
            f"{n['drawn_fill']:.2f} m ({n['drawn_fill'] / L:.3f}); joins drawn twice "
-           f"{acc.twice:.3f} m",
+           f"{acc.twice:.3f} m; {rep.cuts} cuts",
+           "  skipped: " + ("; ".join(f"{p} ({why})" for p, why in rep.skipped) or "none"),
            "  left over: " + (", ".join(f"{k} {m:.3f} m" for k, m in
                                         sorted(acc.left_by_reason.items())) or "nothing"),
            f"  planning: CPU {rep.cpu:.1f} s, wall {rep.wall:.1f} s (maps CPU {rep.map_cpu:.1f} s);"

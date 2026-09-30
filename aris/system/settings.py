@@ -16,3 +16,8 @@ class Settings:
 
     # ---- the allocation
     sample_step: float = 0.004     # m between the points of a line judged against the maps
+    # Leader phases first: a fill phase takes part of a line only if the leader phases hold
+    # less than this share of it between them, ...
+    leader_share: float = 0.8
+    # ... or a fill map holds a run at least this many times the longest a leader map holds.
+    fill_factor: float = 1.5

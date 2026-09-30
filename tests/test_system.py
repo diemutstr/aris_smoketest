@@ -17,6 +17,7 @@ from aris.rig import Rig  # noqa: E402
 from aris.system import NoDropViolation, account, phases, plan_all, plan_detailed  # noqa: E402
 from aris.system import maps as mp  # noqa: E402
 from aris.system.allocate import allocate, cover  # noqa: E402
+from aris.system.phases import cannot_touch, fill_groups, horizontal_reach, is_fill  # noqa: E402
 from aris.system.settings import Settings  # noqa: E402
 from aris.system.stretch import of_line  # noqa: E402
 from aris.types import DrawRules, Leftover, Line, Piece  # noqa: E402
@@ -78,7 +79,8 @@ def test_maps_cover_the_canvas(rig, all_maps):
 
 def _cands(rig, all_maps, k0=0):
     ph = phases(rig)
-    return [(j, a, all_maps[(ph[j].name, a)]) for j in range(k0, len(ph)) for a in ph[j].active]
+    return [(j, a, all_maps[(ph[j].name, a)], not is_fill(ph[j]))
+            for j in range(k0, len(ph)) for a in ph[j].active]
 
 
 def test_allocation_of_hand_made_lines(rig, rules, all_maps):
@@ -87,7 +89,8 @@ def test_allocation_of_hand_made_lines(rig, rules, all_maps):
     out = _line("out", (-0.88, -0.62), (-0.88, -0.58))              # beyond every arm's reach
     across = _line("across", (-0.75, -1.2), (0.75, -1.2))           # longer than any one reach
     pool = [of_line(x) for x in (inside, wall, out, across)]
-    got, left = allocate(pool, _cands(rig, all_maps), rules, COARSE)
+    got, left, cuts = allocate(pool, _cands(rig, all_maps), rules, COARSE)
+    assert cuts == 1
     by = {}
     for s in got:
         by.setdefault(s.line_id, []).append(s)
@@ -111,6 +114,46 @@ def test_cover_cuts_longest_first_with_overlap_and_gaps():
     assert got[1] == (pytest.approx(0.025), pytest.approx(0.06), 1)
     assert got[2] == (pytest.approx(0.06), pytest.approx(0.09), None)
     assert got[3] == (pytest.approx(0.09), pytest.approx(0.10), 2)
+
+
+def test_leader_phases_come_first(rig, rules, all_maps):
+    # arm 31 alone could draw it whole, but the leaders hold all of it in two long runs
+    both = _line("both", (-0.58, 0.40), (-0.24, 0.69))
+    # the leaders hold under 80 % of it between them: arm 31 alone takes it whole
+    fill = _line("fill", (-0.10, -0.60), (-0.87, -0.29))
+    got, left, _ = allocate([of_line(both), of_line(fill)], _cands(rig, all_maps), rules, COARSE)
+    by = {}
+    for s in got:
+        by.setdefault(s.line_id, []).append(s.target)
+    assert sorted(by["both"]) == [(0, 2), (1, 31)] and not left
+    assert by["fill"] == [(4, 31)]
+
+
+def test_cover_prefers_leaders_unless_a_fill_run_is_much_longer():
+    u = np.arange(11) * 0.01
+    inside = np.array([[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],       # a leader: 4 cm
+                       [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0],       # a fill phase: 7 cm, 1.75 times
+                       [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1]], bool)
+    leader = [True, False, True]
+    assert cover(inside, u, 0.0, leader, fill_ok=True, factor=1.5)[0][2] == 1
+    assert cover(inside, u, 0.0, leader, fill_ok=True, factor=2.0)[0][2] == 0
+    got = cover(inside, u, 0.0, leader, fill_ok=False, factor=1.5)
+    assert [c for _, _, c in got] == [0, 1, 2]         # the fill only where no leader holds it
+
+
+def test_fill_groups_cannot_touch(rig):
+    # the two ends of a column are 2.42 m apart; each arm's body stays within 1.15 m of its axis
+    assert fill_groups(rig) == [(13, 2), (17, 97), (31,), (71,)]
+    gap = 2.4204267 - 2 * horizontal_reach(rig, 13)
+    assert gap >= rig.clearance["arm_to_arm_m"] + rig.allowance["arm_to_arm_m"]
+    assert cannot_touch(rig, 13, 2) and cannot_touch(rig, 17, 97)
+    assert not cannot_touch(rig, 13, 71) and not cannot_touch(rig, 31, 71)
+    # the bound holds on sampled configurations (it is a bound, so the sample stays inside)
+    arm = rig.arm(13)
+    Q = np.random.default_rng(0).uniform(arm.limits.q_min, arm.limits.q_max, (5000, 7))
+    b = arm.body(Q)
+    far = np.maximum(np.hypot(b.p0[..., 0], b.p0[..., 1]), np.hypot(b.p1[..., 0], b.p1[..., 1]))
+    assert np.max(far + b.radius) <= horizontal_reach(rig, 13)
 
 
 # --------------------------------------------------------------------------- the account

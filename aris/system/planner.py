@@ -28,6 +28,7 @@ import numpy as np
 
 from aris.system import maps as maps_mod
 from aris.system.allocate import allocate
+from aris.system.phases import is_fill
 from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
 from aris.system.settings import Settings
@@ -60,6 +61,7 @@ class PhaseReport:
     active: tuple
     arms: dict = field(default_factory=dict)   # arm id -> ArmReport
     wall: float = 0.0           # s, planning the whole phase
+    idle: dict = field(default_factory=dict)   # arm id -> ArmReport of an arm that drew nothing
 
     @property
     def duration(self) -> float:
@@ -76,6 +78,10 @@ class Report:
     cpu: float = 0.0            # s, everything (this process, arm planners, map builders)
     wall: float = 0.0
     first_wall: float = -1.0    # s from the call to the first motion
+    cuts: int = 0               # joins made by cutting stretches (allocate)
+    # Phases not run, and why: nothing was allocated to them, or their arms planned and drew
+    # nothing (everything handed back).  [(phase name, why)]
+    skipped: list = field(default_factory=list)
 
     @property
     def drawing_time(self) -> float:
@@ -123,14 +129,16 @@ def plan(rig, lines, rules: DrawRules, arm_configs=None, cache_dir=None, workers
     rep.coverage = maps_mod.coverage(maps, phases)
     pool, left = [of_line(x) for x in lines], []
     for k, ph in enumerate(phases):
-        cands = [(j, a, maps[(phases[j].name, a)]) for j in range(k, len(phases))
-                 for a in phases[j].active]
-        pool, new_left = allocate(pool, cands, rules, cfg)
+        cands = [(j, a, maps[(phases[j].name, a)], not is_fill(phases[j]))
+                 for j in range(k, len(phases)) for a in phases[j].active]
+        pool, new_left, cuts = allocate(pool, cands, rules, cfg)
         left += new_left
+        rep.cuts += cuts
         mine = {a: [s for s in pool if s.target == (k, a)] for a in ph.active}
         pool = [s for s in pool if s.target[0] != k]
         todo = [a for a in ph.active if mine[a] or not at_park(rig, a, q_now[a])]
         if not todo:
+            rep.skipped.append((ph.name, "nothing allocated to it"))
             continue
         back, final = yield from _phase(rig, ph, todo, mine, q_now, rules, cache_dir, workers,
                                         rep, w0)
@@ -138,7 +146,7 @@ def plan(rig, lines, rules: DrawRules, arm_configs=None, cache_dir=None, workers
         left += final
         for a in todo:
             q_now[a] = rig.park_q(a)
-    _, new_left = allocate(pool, [], rules, cfg)
+    _, new_left, _ = allocate(pool, [], rules, cfg)
     rep.cpu, rep.wall = _cpu() - c0, time.perf_counter() - w0
     return left + new_left
 
@@ -185,6 +193,13 @@ def _phase(rig, ph, todo, mine, q_now, rules, cache_dir, workers, rep: Report, w
             else:
                 back.append(replace(part, reason=x.reason, detail=detail))
     pr.wall = time.perf_counter() - t0
+    for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
+        pr.idle[a] = pr.arms.pop(a)
+    if not pr.arms:
+        rep.phases.remove(pr)
+        rep.skipped.append((ph.name, "its arms drew nothing; handed back: " + ", ".join(
+            f"arm {a} {k} {m:.2f} m" for a, r in pr.idle.items()
+            for k, m in sorted(r.handed_back.items()))))
     return back, final
 
 
