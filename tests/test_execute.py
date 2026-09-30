@@ -6,6 +6,7 @@ planned by the system planner, queued through the checker while six simulated ar
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from pathlib import Path
@@ -218,6 +219,48 @@ def test_start_configuration_mismatch_is_refused(tmp_path, rig, checked):
     assert run.status == "failed" and run.failed_index == 0 and run.done == 0
     assert "not at the start: joint 5" in run.why
     assert np.array_equal(arm.state().q, off) and arm.clock == 0.0
+
+
+class _Recorder:
+    """A simulated arm that notes which verb ran each motion."""
+
+    def __init__(self, arm):
+        self.arm, self.arm_id, self.calls = arm, arm.arm_id, []
+
+    def state(self):
+        return self.arm.state()
+
+    def move(self, traj):
+        self.calls.append(("move", None))
+        return self.arm.move(traj)
+
+    def draw(self, motion):
+        self.calls.append(("draw", motion.kind))
+        return self.arm.draw(motion)
+
+    def hold(self):
+        self.arm.hold()
+
+    def stop(self):
+        self.arm.stop()
+
+    def recover(self):
+        return self.arm.recover()
+
+
+def test_draw_lower_and_lift_go_to_draw_free_goes_to_move(tmp_path, rig, checked):
+    from dataclasses import replace
+    ms = [replace(m, kind=k) for (m, _), k in zip(checked[13], ("lower", "lift", "free"))]
+    ms.append(_draw_like(np.random.default_rng(1), ms[-1].q_end))
+    q = Queue(tmp_path / "k.queue", "one", 13)
+    for m in ms:
+        q.append(m, _Pass())
+    q.close()
+    arm = _Recorder(SimArm(13, rig.park_q(13), speed=math.inf))
+    assert isinstance(arm, Driver)
+    run = Executor(13, arm, EventLog(tmp_path / "k.jsonl"), rig).run(q)
+    assert run.status == "finished" and run.done == 4
+    assert arm.calls == [("draw", "lower"), ("draw", "lift"), ("move", None), ("draw", "draw")]
 
 
 # --------------------------------------------------------------------------- the coordinator

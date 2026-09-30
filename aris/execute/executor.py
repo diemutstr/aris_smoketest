@@ -1,8 +1,9 @@
 """The executor: one arm, one queue.  Runs the motions in order and says what happened.
 
 For each motion: confirm the arm is able to move and stands at the motion's start (to
-`start_tol`), send it to the driver (`draw` for a drawing motion, `move` for the rest), wait
-for it, report it done, go on.  While the queue has nothing new, the arm holds.  The first
+`start_tol`), send it to the driver (`draw(motion)` for "draw", "lower" and "lift", since the
+driver needs the kind to know the pen state and ramp the force; `move(trajectory)` for "free"),
+wait for it, report it done, go on.  While the queue has nothing new, the arm holds.  The first
 failure ends the run: the arm stops and holds, and the rest of the queue is not run.  The
 executor never plans and knows nothing about other arms.  Every state change goes to the log.
 """
@@ -83,8 +84,8 @@ class Executor:
                 return self._halt(phase, done, "failed", refused, item.index)
             self._log("motion started", phase, index=item.index, kind=item.motion.kind,
                       duration=float(item.motion.traj.t[-1] - item.motion.traj.t[0]))
-            r = (self.driver.draw(item.motion) if item.motion.kind == "draw"
-                 else self.driver.move(item.motion.traj))
+            r = (self.driver.move(item.motion.traj) if item.motion.kind == "free"
+                 else self.driver.draw(item.motion))
             if not r.done:
                 status = "stopped" if stop.is_set() else "failed"
                 return self._halt(phase, done, status, r.why, item.index)

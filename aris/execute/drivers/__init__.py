@@ -51,11 +51,14 @@ class Driver(Protocol):
         """Joint positions, velocities and whether the arm is able to move."""
 
     def move(self, traj: Trajectory) -> Result:
-        """Position control: fly the timed joint trajectory exactly as it is, at its own
-        timing (never faster or slower: the checker's verdict holds at that timing only)."""
+        """A free motion (pen up).  Position control: fly the timed joint trajectory exactly
+        as it is, at its own timing (never faster or slower: the checker's verdict holds at
+        that timing only)."""
 
     def draw(self, motion: Motion) -> Result:
-        """A drawing motion.  The real arm adds the pen force; otherwise as `move`."""
+        """A motion with the pen at the paper at some point: kind "draw", "lower" or "lift".
+        The real arm reads the kind to know the pen state and ramps the pen force (up on a
+        lower, held on a draw, down on a lift); otherwise as `move`."""
 
     def hold(self) -> None:
         """Stand still where the arm is, for as long as it takes."""

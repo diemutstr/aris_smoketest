@@ -25,14 +25,23 @@ Files: `aris/execute/`
    as they appear and then the end marker, `close()` writes the end marker. A refusal
    (checker failed, not continuous, queue already closed) is returned, not raised.
 3. **An executor per arm.** It takes the next motion, confirms the arm is able to move and
-   stands at the motion's start (to the rig's start tolerance, `rig.json` `execution.start_tolerance_rad`, 5 mrad per joint), sends it (`draw`
-   for a drawing motion, `move` for the rest), waits, logs it done, and goes on. Empty queue:
+   stands at the motion's start (to the rig's start tolerance, `rig.json` `execution.start_tolerance_rad`, 5 mrad per joint), sends it (`draw` for
+   kinds "draw", "lower" and "lift", `move` for "free"; table below), waits, logs it done, and goes on. Empty queue:
    the arm holds. The first failure ends the run with the motion's number and the reason;
    the arm stops and holds, the rest of its queue is not run. It never plans and knows nothing
    about other arms.
 4. **A driver is a handful of verbs** for one arm: `state()` (joints, speeds, able to move,
    flags), `move(trajectory)`, `draw(motion)`, `hold()`, `stop()` (at once, then held),
    `recover()`. `move` and `draw` block and answer done, or failed with why.
+
+   | verb | used for | what the real arm does | simulated arm |
+   |---|---|---|---|
+   | `state()` | before every motion, at phase ends | joints, speeds, able to move, flags | the same, exact |
+   | `move(trajectory)` | motions of kind "free" (pen up) | position control, the trajectory at its own timing | plays it |
+   | `draw(motion)` | kinds "draw", "lower", "lift" | the same joint path; reads the kind to know the pen state and ramps the pen force (up on lower, held on draw, down on lift) | same as `move` |
+   | `hold()` | queue empty, after a failure | stand still | stands still |
+   | `stop()` | the coordinator's stop | stop at once, then hold | stops dead |
+   | `recover()` | after a person has looked | clear a fault or stop | clears it |
 5. **A coordinator per job.** For each phase it starts one executor per moving arm, waits
    until every one has reached its end marker and stands parked (standing still where its last
    motion ended), asks the checker's `check_phase_end` about every arm where it actually is,
