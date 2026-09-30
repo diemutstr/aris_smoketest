@@ -214,11 +214,10 @@ def base_cases(rig, arm_id: int) -> dict[str, list[Line]]:
 
 
 def problem(rig, arm_id: int):
-    """(arm, obstacles, rules, gates) for an arm leading in its phase."""
-    from aris.types import DrawRules
-    gates = rig.gates()
-    return (rig.arm(arm_id), rig.obstacles_for(arm_id, rig.phase(ARMS[arm_id])),
-            DrawRules(gates=gates), gates)
+    """(arm, obstacles, rules, gates) for an arm leading in its phase, all from the rig."""
+    rules = rig.rules()
+    return (rig.arm(arm_id), rig.obstacles_for(arm_id, rig.phase(ARMS[arm_id])), rules,
+            rules.gates)
 
 
 # --------------------------------------------------------------------------- measuring
@@ -351,7 +350,7 @@ def figure(rig, arm_id: int, line_table: Line, path) -> None:
     line = rig.to_base(arm_id, line_table)
     pts, s_pts = polyline.clean(line.points)
     s = polyline.layer_positions(float(s_pts[-1]), cfg.step)
-    lat = Lattice(arm, Judge(arm, obs, gates, cfg.hand_paper_margin),
+    lat = Lattice(arm, Judge(arm, obs, gates),
                   polyline.at(pts, s_pts, s), s, rules.lean_max, cfg)
     route = best_route(lat, cfg.lift_cost, cfg.gap_cost)
     fig, (top, graph) = plt.subplots(1, 2, figsize=(13, 5.2), width_ratios=(1, 1.6))

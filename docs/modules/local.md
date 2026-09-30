@@ -104,10 +104,10 @@ For each piece, one more sweep over its layers with no lifts gives, for every no
 layer, the best route there and where it started. Routes are grouped into families by IK slot
 and the quarter-turn of the spin at each end; the best of each family, cheapest first, is
 solved exactly and checked; a family whose start and end are both within 0.5 rad (every joint)
-of a plan already taken is skipped. At most four. Each plan is timed with `kernel.retime`
-(corner to corner: the pen stops at a sharp corner anyway); a plan that cannot be timed, or
-whose flown path could come closer than allowed (the timing step keeps it within 0.15 mrad of
-the path, which is charged against the clearance), is not returned.
+of a plan already taken is skipped. At most four. Each plan is timed with `kernel.retime` in
+one call, the pen tip held within 0.1 mm of the line; a plan that cannot be timed, or whose
+flown path could come closer than allowed (the timing step keeps it within 0.15 mrad of the
+path, which is charged against the clearance), is not returned.
 
 ## Figure
 
@@ -115,8 +115,6 @@ the path, which is charged against the clearance), is not returned.
 
 ## What it cannot do
 
-- Timing is corner to corner (the pen stops at every corner sharper than 30 degrees); to be
-  replaced by one call now that the timing step is fast.
 - The graph is rebuilt for every line; nothing is shared between lines. Checking every
   surviving node against the obstacles is most of the time (see below).
 - The kinematic table assumes the paper square to the base axis; on a tilted (calibrated)

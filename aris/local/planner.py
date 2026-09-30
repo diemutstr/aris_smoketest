@@ -86,7 +86,7 @@ def plan_detailed(arm, lines, obstacles, rules, gates=None, workers=1, settings=
         if line.frame != "base":
             raise ValueError(f"line {line.id} is in the {line.frame} frame; the local planner "
                              "takes base-frame lines")
-    judge = Judge(arm, obstacles, gates, cfg.hand_paper_margin)
+    judge = Judge(arm, obstacles, gates)
     table = None if cache_dir is None else \
         load_or_build(arm, judge.paper, gates, rules.lean_max, cfg, cache_dir)
     jobs = [(arm, line, obstacles, rules, gates, cfg, cache_dir) for line in lines]
@@ -102,7 +102,7 @@ def plan_detailed(arm, lines, obstacles, rules, gates=None, workers=1, settings=
 
 def _plan_job(job):
     arm, line, obstacles, rules, gates, cfg, cache_dir = job
-    judge = Judge(arm, obstacles, gates, cfg.hand_paper_margin)
+    judge = Judge(arm, obstacles, gates)
     table = None if cache_dir is None else \
         load_or_build(arm, judge.paper, gates, rules.lean_max, cfg, cache_dir)
     return plan_line(arm, line, judge, rules, cfg, table)
@@ -349,41 +349,28 @@ def _distinct(q: np.ndarray, plans, gap: float) -> bool:
                for p in plans)
 
 
-def _corners(tip: np.ndarray, angle: float) -> np.ndarray:
-    """Sample indices where the line turns by more than `angle`."""
-    seg = np.diff(tip, axis=0)
-    seg /= np.maximum(np.linalg.norm(seg, axis=1, keepdims=True), 1e-12)
-    turn = np.arccos(np.clip(np.sum(seg[1:] * seg[:-1], axis=1), -1.0, 1.0))
-    return np.flatnonzero(turn > angle) + 1
-
-
 def _timed_plan(arm, judge: Judge, piece: Piece, d: Dense, v: Verdict, rules: DrawRules,
                 cfg: Settings):
-    """A DrawPlan, timed; or the reason it cannot be flown (a string).
+    """A DrawPlan, timed in one call to the timing step; or the reason it cannot be flown.
 
-    At a sharp corner of the line the pen stops anyway, so the path is timed corner to corner,
-    each stretch starting and ending at rest (the timing step's smoothing grid is set by the
-    sharpest turn of what it is given; one corner would make it fine, and slow, everywhere).
-    The timing step keeps the flown path within `timing_deviation` of this one (0.15 mrad, the
-    tip within 0.2 mm); `verify` already demanded the clearance that covers this.
+    The pen tip of the flown path stays within `tip_budget` of the line, and the flown joint
+    path within `timing_deviation` of this one; `verify` already demanded the clearance that
+    covers this.
     """
-    cut = np.concatenate([[0], _corners(d.tip, cfg.corner_angle), [len(d.q) - 1]])
-    duration, deviation = 0.0, 0.0
-    for a, b in zip(cut[:-1], cut[1:]):
-        res = retime_detailed(JointPath(d.q[a:b + 1]), arm.limits, rules, s=d.s[a:b + 1],
-                              deviation=cfg.timing_deviation)
-        if isinstance(res, Refusal):
-            return f"{res.reason}: {res.detail}"
-        duration += float(res.traj.t[-1])
-        deviation = max(deviation, res.deviation)
+    res = retime_detailed(JointPath(d.q), arm.limits, rules, s=d.s,
+                          deviation=cfg.timing_deviation, tip_budget_m=cfg.tip_budget,
+                          tip_of=arm.tip)
+    if isinstance(res, Refusal):
+        return f"{res.reason}: {res.detail}"
     # The flown path stays within `deviation` (joint space) of this one, so its clearance is
     # at most `lipschitz * deviation` below the clearance measured along this path.
-    flown = v.clearance - judge.lipschitz * deviation
+    flown = v.clearance - judge.lipschitz * res.deviation
     if flown < 0.0:
         return f"the timed path comes {-flown * 1e3:.2f} mm too close"
     travel = float(np.abs(np.diff(d.q, axis=0)).sum())
     return DrawPlan(piece=piece, q=d.q, s=d.s, tip_base=arm.tip(d.q), score=float(flown),
-                    joint_travel=travel, draw_time=duration, spin=d.spin, lean=d.lean)
+                    joint_travel=travel, draw_time=float(res.traj.t[-1]), spin=d.spin,
+                    lean=d.lean)
 
 
 # --------------------------------------------------------------------------- from outside
@@ -393,7 +380,7 @@ def verify_plan(arm, plan: DrawPlan, line: Line, obstacles: Obstacles, gates: Ga
                 settings: Settings | None = None) -> Verdict:
     """Check a returned plan (either direction) against its line from its joint samples alone."""
     cfg = Settings() if settings is None else settings
-    judge = Judge(arm, obstacles, gates, cfg.hand_paper_margin)
+    judge = Judge(arm, obstacles, gates)
     points, s_points = polyline.clean(line.points)
     return verify(judge, plan.q, polyline.at(points, s_points, plan.s), cfg)
 

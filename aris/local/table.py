@@ -18,7 +18,7 @@ live.  (Towards the edge of what the arm can do one of the two entries may be mi
 other then stands for the node if it is the nearer.)  The table only guides the search: every piece is still solved exactly and verified on
 the arm's true paper plane.
 
-The table is built once per (tool, limits, paper height, margins, gates of the paper, grids),
+The table is built once per (tool, limits, paper height, paper margins, gates, grids),
 saved as two .npy files in a cache directory the caller names, with a digest of every input
 in the file name, and read back memory-mapped.
 """
@@ -82,7 +82,7 @@ def _digest(arm, paper: Plane, gates: Gates, g: Grids, cfg: Settings) -> str:
     parts = [np.array([VERSION, paper_height(paper), paper.margin,
                        -1.0 if paper.pen_margin is None else paper.pen_margin,
                        -1.0 if paper.tool_margin is None else paper.tool_margin,
-                       cfg.hand_paper_margin], float),
+                       gates.limit_margin, gates.sigma_min, gates.self_margin], float),
              tool.tip_hand, tool.pen_axis_hand, arm.limits.q_min, arm.limits.q_max,
              g.r, g.spin, g.lean, g.q7]
     parts += [np.concatenate([c.p0, c.p1, [c.radius]]) for c in tool.capsules_hand]
@@ -100,7 +100,7 @@ def load_or_build(arm, paper: Plane, gates: Gates, lean_max: float, cfg: Setting
     stem = Path(cache_dir) / f"local_table_{_digest(arm, paper, gates, g, cfg)}"
     jf, gf = stem.with_suffix(".joints.npy"), stem.with_suffix(".gates.npy")
     if not (jf.exists() and gf.exists()):
-        joints, gate = _build(arm, paper, g, cfg)
+        joints, gate = _build(arm, paper, gates, g)
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
         for f, a in ((jf, joints), (gf, gate)):       # written whole, then renamed: never half a file
             tmp = f.with_suffix(f".{os.getpid()}.tmp.npy")
@@ -110,11 +110,11 @@ def load_or_build(arm, paper: Plane, gates: Gates, lean_max: float, cfg: Setting
                     np.load(gf, mmap_mode="r"), stem)
 
 
-def _build(arm, paper: Plane, g: Grids, cfg: Settings):
+def _build(arm, paper: Plane, gates: Gates, g: Grids):
     """Solve every entry with the tip on the +x side of the axis (the tip's angle is zero)."""
     h = paper_height(paper)
     flat = Plane("paper", NORMAL, -h, paper.margin, "paper", paper.pen_margin, paper.tool_margin)
-    judge = Judge(arm, Obstacles(planes=(flat,)), Gates(), cfg.hand_paper_margin)
+    judge = Judge(arm, Obstacles(planes=(flat,)), gates)
     shape = (len(g.r), len(g.spin), len(g.lean), len(g.q7), N_SLOT)
     joints = np.full(shape + (7,), np.nan, np.float32)
     gate = np.full(shape + (4,), np.nan, np.float16)

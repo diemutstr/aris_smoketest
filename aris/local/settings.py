@@ -23,10 +23,6 @@ class Settings:
     lean_rings: int = 2            # lean magnitudes lean_max * r / lean_rings, r = 1 .. rings
     lean_dirs: int = 6             # lean directions per magnitude
     jump: float = 0.35             # rad, the most any joint may move along one edge
-    # Everything bolted to the hand (hand, finger blades, holder, pencil tail) sits a few
-    # millimetres above the paper while the pen draws, so while drawing it must only not touch
-    # the paper; the arm's links keep the paper's own margin.  See docs/modules/local.md.
-    hand_paper_margin: float = 0.0  # m
 
     # ---- the kinematic table (used when the caller gives a cache directory)
     table_dr: float = 0.01         # m between tabulated distances of the tip from the base axis
@@ -51,8 +47,8 @@ class Settings:
     dense_jump: float = 0.10       # rad, the most any joint may move between two exact samples
     tip_tol: float = 1e-6          # m, pen tip off the line
     max_repairs: int = 40          # searches again after an exact path failed, per line
-    corner_angle: float = np.deg2rad(30.0)  # the pen stops where the line turns more than this
     timing_deviation: float = 1.5e-4  # rad the timed path may leave the exact one (kernel.retime)
+    tip_budget: float = 1e-4       # m the timed pen tip may leave the line (kernel.retime)
 
     # ---- the alternatives
     n_alternatives: int = 4        # plans per piece, at most

@@ -27,13 +27,13 @@ WORKERS = max(1, min(32, (os.cpu_count() or 2) - 2))
 
 # Floors: the shares measured on the fixed set (docs/modules/local.md), rounded down.  A
 # change that draws less than this is a regression.
-# Measured 2026-09-29 (real obstacles, no table; docs/modules/local.md): drawn 0.929 / 0.889 /
-# 0.951 / 0.822 for arm 31 and 0.926 / 0.951 / 0.955 / 0.877 for arm 13; length drawn whole in
-# one piece 0.918 / 0.261 / 0.710 / 0.595 and 0.918 / 0.797 / 0.745 / 0.700.
-FLOOR_DRAWN = {(31, "word"): 0.92, (31, "corpus"): 0.88, (31, "lines"): 0.94, (31, "curves"): 0.81,
-               (13, "word"): 0.92, (13, "corpus"): 0.94, (13, "lines"): 0.95, (13, "curves"): 0.87}
-FLOOR_SINGLE = {(31, "word"): 0.91, (31, "corpus"): 0.25, (31, "lines"): 0.70, (31, "curves"): 0.58,
-                (13, "word"): 0.91, (13, "corpus"): 0.79, (13, "lines"): 0.74, (13, "curves"): 0.69}
+# Measured 2026-09-30 at the rig's gates (sigma_min 0.04), real obstacles, no table: drawn
+# 0.935 / 0.894 / 0.951 / 0.822 for arm 31 and 0.935 / 0.954 / 0.955 / 0.877 for arm 13; length
+# drawn whole in one piece 0.918 / 0.267 / 0.715 / 0.595 and 0.918 / 0.797 / 0.754 / 0.700.
+FLOOR_DRAWN = {(31, "word"): 0.93, (31, "corpus"): 0.89, (31, "lines"): 0.95, (31, "curves"): 0.82,
+               (13, "word"): 0.93, (13, "corpus"): 0.95, (13, "lines"): 0.95, (13, "curves"): 0.87}
+FLOOR_SINGLE = {(31, "word"): 0.91, (31, "corpus"): 0.26, (31, "lines"): 0.71, (31, "curves"): 0.59,
+                (13, "word"): 0.91, (13, "corpus"): 0.79, (13, "lines"): 0.75, (13, "curves"): 0.69}
 
 
 def _problem(arm_id=31):
@@ -241,6 +241,8 @@ def test_fixed_set(fixed_set):
         drawn = sum(b.piece.s1 - b.piece.s0 for b in bunches)
         rows = lc.per_line(lines, bunches, leftovers, stats)
         single = np.array(rows["single"])
+        one = np.array(rows["length"])[single].sum() / length
+        print(f"arm {arm_id} {name}: drawn {drawn / length:.4f}, whole in one piece {one:.4f}")
         assert drawn / length >= FLOOR_DRAWN[arm_id, name], (name, drawn / length)
         assert np.array(rows["length"])[single].sum() / length >= FLOOR_SINGLE[arm_id, name]
 
