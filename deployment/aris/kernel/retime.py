@@ -42,8 +42,8 @@ from aris.types import DrawRules, JointPath, Limits, Refusal, Trajectory
 # bad_rules, cannot_smooth (over the deviation budget), leaves_limits, too_slow
 
 KNOT_TURN = 0.05      # rad of direction change between two output samples, at most
-KNOT_DV = 0.1         # of the velocity target: joint speed change between two samples, at most
-KNOT_DA = 0.05         # of the acceleration target: its change between two samples, at most
+KNOT_DV = 0.1         # of the top joint speed: its change between two samples, at most
+KNOT_DA = 0.05        # of the top joint acceleration: its change between two samples, at most
 KNOT_MIN_DT = 0.006   # s, but never closer than this (a turn lasts at least TURN_TIME)
 END_DENSE = 0.03      # s at each end sampled every KNOT_MIN_DT
 FINE_DT = 2e-3        # s, time grid of step 3
@@ -270,9 +270,14 @@ def _to_trajectory(r: Rounded, t_fine, u_fine, nodes, rates, knot_dt, v_max, a_m
     n1, n2, turn = (np.interp(u_mid, nodes, rate) for rate in rates)
     joint_speed = n1 * speed
     joint_accel = n1 * accel + n2 * speed * speed
+    # Measured against the motion's own top speed and acceleration where these are below the
+    # targets: a slow drawing brakes by a small amount in absolute terms, but its cubic must
+    # still follow the braking without overshooting the draw speed.
+    v_scale = max(min(v_max.max(), joint_speed.max()), 1e-12)
+    a_scale = max(min(a_max.max(), np.abs(joint_accel).max()), 1e-12)
     cost = np.maximum.reduce([np.full(len(du), FINE_DT / knot_dt), du * turn / KNOT_TURN,
-                              np.abs(np.diff(joint_speed, prepend=0.0)) / (KNOT_DV * v_max.max()),
-                              np.abs(np.diff(joint_accel, prepend=0.0)) / (KNOT_DA * a_max.max())])
+                              np.abs(np.diff(joint_speed, prepend=0.0)) / (KNOT_DV * v_scale),
+                              np.abs(np.diff(joint_accel, prepend=0.0)) / (KNOT_DA * a_scale)])
     # Every derivative starts and ends at zero; dense samples there keep the spline's end
     # acceleration near zero too (it cannot be pinned: a cubic spline has one condition per end).
     ends = int(round(END_DENSE / FINE_DT))

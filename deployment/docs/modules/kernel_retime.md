@@ -126,7 +126,8 @@ measurement at any rate, 1 kHz included, averages these and can only read less. 
 - a drawing motion never reverses; it stops only at a 180° cusp of the line; it runs at
   `draw_speed` wherever no joint limit is in the way
 - with `tip_of`, the pen itself never runs more than 1% over `draw_speed`, read through the
-  arm's tip at 1 kHz. Measured worst: +0.53% on letter shapes, +0.48% on the 23 test shapes.
+  arm's tip at 1 kHz. Measured worst: +0.10% on the 23 test shapes, +0.00% on 9 letter shapes,
+  -0.01% on two lines along the rim of arm 31's reach from the end-to-end run.
 
 **Why the pen, not the path parameter.** Between the planner's IK samples, a straight move in
 joint space need not keep the pen in step with `s`. Near a corner of a letter, the pen moved up to
@@ -135,6 +136,12 @@ So, when `tip_of` is given, the speed choice reads how far the pen moves per uni
 rounded path. Wherever that is over 1, it lowers the path speed by the same factor. Where it is
 under 1, the path speed is left alone: the pen is never sent faster than `s` asks. Without
 `tip_of`, only ds/dt is held to `draw_speed`.
+
+The output samples also follow the braking at the end of a drawing. Samples are added where a
+joint's speed or acceleration changes by a tenth (a twentieth for acceleration) of the motion's
+own top value, not of the joint limits. A drawing's joints move slowly, so measured against the
+limits a whole braking ramp got almost no samples. The cubic then overshot there: +3.7% at the
+pen on the two rim lines.
 
 ## What it cannot do
 

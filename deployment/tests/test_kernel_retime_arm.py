@@ -164,3 +164,23 @@ def test_pen_never_faster_than_the_draw_speed():
     print(f"\n{drawn} letter shapes: fastest pen {worst * 100:+.2f} % of the draw speed")
     assert drawn >= 4
     assert worst <= 0.01
+
+
+@pytest.mark.parametrize("k", [0, 1])
+def test_pen_speed_along_the_rim(k):
+    """Two drawings of arm 31 along the rim of its reach from the end-to-end run, where the pen
+    read 3.7 % over the draw speed: slow joints brake by a small absolute amount, and the output
+    samples were too sparse for the cubic to follow the braking.  The saved samples and planned
+    pen positions are timed again as a joint path with its arc length."""
+    from pathlib import Path
+    from aris.rig import Rig
+    d = np.load(Path(__file__).parent / "data" / f"arm_speed_31_lines_{k}.npz")
+    arm = Rig.load(Path(__file__).parents[1] / "config").arm(31)
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(d["tip_base"], axis=0), axis=1))])
+    r = retime_detailed(JointPath(d["q"]), arm.limits, RULES, s=s, tip_of=arm.tip)
+    assert not isinstance(r, Refusal), r
+    t = np.arange(0.0, r.traj.t[-1], 1e-3)
+    speed = np.linalg.norm(np.diff(arm.tip(sample(r.traj, t)[0]), axis=0), axis=1) / 1e-3
+    print(f"\nrim line {k}: fastest pen {speed.max() / RULES.draw_speed * 100 - 100:+.2f} % of the "
+          f"draw speed (the end-to-end run read +{float(str(d['note']).split()[2]) / 0.02 * 100 - 100:.1f} %)")
+    assert speed.max() <= 1.01 * RULES.draw_speed
