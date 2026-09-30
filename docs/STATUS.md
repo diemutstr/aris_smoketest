@@ -13,7 +13,7 @@ Everything is committed on branch `aris2` of `/home/franka/aris_project/aris_six
 `deployment/` has been pushed. 145 quick tests pass (`.venv/bin/python -m
 pytest tests -q -m "not slow"`, under a minute).
 
-## Where each module stands (updated 2026-09-30 evening, HEAD on aris3)
+## Where each module stands (updated 2026-10-01 early, HEAD on aris3)
 
 | module | state | measured |
 |---|---|---|
@@ -21,19 +21,19 @@ pytest tests -q -m "not slow"`, under a minute).
 | `rig` | done; struts from the technical drawing; gates and rules in rig.json | drawing area 1.56 x 3.56 m |
 | `kernel/arm` + `native/fr3_ik` | done | new IK round trip 100 %; body 62 capsules; reach at the paper 0.805 m geometric, sigma gate 0.04 |
 | `kernel/collide` + `native/collide` | done, incl. two-level check, exemptions, distance fields (footprints) | real arm 31 scene 244 000 configurations/s on one thread |
-| `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; pen within 0.5 % of the draw speed |
+| `kernel/retime` + `native/retime` | done; two models: corners (free paths) and smooth (draw, lower, lift: a C2 spline through the IK samples, cut only at real pen corners) | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; the arc that crawled at 1.7 mm/s now 14.8 mm/s and 5.5 s instead of 7.6 s |
 | `check` | done; reads rig.json itself; footprints with its own lookup | agrees with the kernel to 1e-15; 0.2 s for a 7 s motion |
 | `free` | done | 2 000 of 2 000 pairs; 48 / 75 ms median when a search is needed (quiet machine) |
 | `local` | done | paper only: 100 % of random lines and curves within reach; 0.14 to 0.40 s per line with the table |
-| `sequencer` + `arm_planner` | done; the lift is two rules (rise by pen clearance + 2 mm with spin and joint 7 changing evenly as needed; else trim 1 cm at a time up to 5 cm) | 1 533 of 1 533 motions pass; 0.13 m 'no path' over all cases at the 22 mm lift |
-| `system` | done: five laws, leaders first, fill in pairs, drawing area, followers built but OFF | seven whole-table drawings 100 % drawn, 2 890 of 2 890 motions pass the checker |
+| `sequencer` + `arm_planner` | done; two-rule lift; the checker runs inside the tour (`verify`: a piece is drawn only if its whole group passes); lines planned in batches of 32 nearest first, refill 128; flown check 4x finer | 1 533 of 1 533 motions pass, 0 refusals; slowest mid-line speed 5 mm/s except real corners; first motion 1-2 s on the word, 4-5 s on 1 000 lines (was 20 s); verify costs 0.1-0.26 s per motion |
+| `system` | done: five laws, leaders first, fill in pairs, drawing area, followers built but OFF; binds `verify` per arm and phase (picklable), failed_check flows to later phases | seven whole-table drawings 100 % drawn, 2 906 of 2 906 motions pass the checker |
 | `execute` | done: queue per arm, executor, coordinator, event log, simulated arm | word on six simulated arms: queues on disk bit-identical to the plan |
-| `server` + `cli` | done: aris serve / draw / status / stop / park / rig / plan / check | word via `aris draw`: first motion 6.6 s, done 13.4 s at 20x; stop holds and reports |
+| `server` + `cli` | done: aris serve / draw / status / stop / park / rig / plan / check; the operator PC's four endpoints (`--driver robot`); no check pool (the planners check; `refused/` keeps what was refused); PASS = ran to the end with every motion checked; park from the runner's reported positions, pens lifted first | 10 000 lines (1 912 m): first motion 4-11 s, 30 min wall, 6 700 CPU-s, 10 GB, 36 processes, 42 304 motions all checked, 65 mm unreachable; 2 000 long lines (2 680 m) all drawn |
 | `calib` | not started; Pete builds the hardware | |
 | `gui` | not started | |
-| `robot/` (operator PC) | written here, not yet run under ROS: joint impedance controller with the pen force, driver, force logic, bringup, runner | 41 tests here; the controller must be soft along the paper normal (in progress) |
+| `robot/` (operator PC) | written here, not yet run under ROS: joint impedance controller soft along the paper normal (100 N/m exact, plane unchanged, force servo on), driver, force logic, bringup, runner reporting every arm's joints | 44 tests here |
 
-Quick test set: 208 tests, all pass (`.venv/bin/python -m pytest tests -q -m "not slow"`).
+Quick test set: about 240 tests, all pass (`.venv/bin/python -m pytest tests -q -m "not slow"`); it takes several minutes on the loaded lab machine, over the one-minute rule (trim it).
 
 ## Decided with Pete, 2026-09-30 evening
 
@@ -45,13 +45,27 @@ Quick test set: 208 tests, all pass (`.venv/bin/python -m pytest tests -q -m "no
 - Followers stay off to start. The lift is two rules (done).
 - One repository, two roles: `robot/` runs on the operator PC.
 
+## Done 2026-09-30 night / 2026-10-01 early
+
+- README.md is the usage guide (two computers, install, a day as commands, the file, where things
+  end up, what is not built).
+- Scale: 10 000 lines planned end to end. Findings and fixes: the retimer crawled at smooth
+  turning points (smooth mode); one checker refusal dropped 13 % of the ink (the checker now runs
+  inside the arm planner's loop, DESIGN.md 4); first motion after 87 s (batches nearest first);
+  the server re-parsed a 140 MB queue every 20 ms while streaming (in-band end detection).
+- Operator side: endpoints, runner reports positions, park from them with pens lifted first.
+
 ## Next
 
-- README as the usage guide: how to use the code base and which computer runs what.
-- The scale test's findings (expected: plan an arm's lines in batches nearest-first).
-- The server's four endpoints for the operator runner.
+- Trim the quick test set back under a minute (mark the long ones slow).
+- The serial check doubles an arm's planning wall time at scale (30 min for 10 000 lines,
+  still five times ahead of the arms); levers if it matters: check a group's four motions in
+  parallel, a cheaper checker (0.45 CPU-s per motion), and the 30 idle local-planner
+  processes per phase (10 GB).
+- The local planner's spin / joint-7 curves have knees at layer nodes (the retimer's remaining
+  dips, e.g. 14.8 mm/s on the arc): smooth them there.
 - On the operator PC: build `robot/ros2_ws`, fake-hardware run, then one real arm.
-- Calibration software (round 6), GUI (round 7).
+- Calibration software (round 6), GUI (round 7), followers' balance law (later).
 
 ## Decisions waiting for Pete (older; 1 to 3 are answered above)
 
