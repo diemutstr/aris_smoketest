@@ -192,8 +192,8 @@ arm planner -> checker -> queue (one per arm) -> executor (one per arm) -> arm
                                                   coordinator: starts phases, waits for "all parked"
 ```
 
-**Motion.** The only thing that crosses from planning to execution. One drawing motion or one
-free-space motion: a timed joint trajectory, its start configuration, its end configuration, its
+**Motion.** The only thing that crosses from planning to execution. One drawing motion, one
+free-space motion, or the short lower or lift at the ends of a piece: a timed joint trajectory, its start configuration, its end configuration, its
 kind. Every motion starts where the previous one ended and ends in a configuration the arm can
 hold for as long as it likes, inside its own region.
 

@@ -210,7 +210,10 @@ class Motion:
     Starts where the previous motion of the same arm ended.  Ends in a configuration the arm
     can hold for as long as it likes.
     """
-    kind: Literal["draw", "free"]
+    # draw: pen on the paper.  free: pen up, anywhere.  lower: the short move that puts the
+    # pen down at the start of a piece; lift: the short move that takes it up at the end.
+    # For lower and lift, the pen may be at the paper at one end.
+    kind: Literal["draw", "free", "lower", "lift"]
     traj: Trajectory
     piece: Piece | None = None         # draw motions: what is being drawn
     tip_base: np.ndarray | None = None # draw motions: (N, 3) tip positions, same samples as traj
