@@ -13,7 +13,7 @@ dependencies = ["numpy", "scipy", "aris_fr3_ik"]
 [project.optional-dependencies]
 check = ["drake"]
 gui = ["fastapi", "uvicorn"]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [project.scripts]
 aris = "aris.cli:main"

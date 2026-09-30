@@ -1,0 +1,142 @@
+"""Reading a drawing, and fitting it to the drawing area.
+
+The drawing file (JSON):
+
+    {"units": "mm", "frame": "table",
+     "lines": [{"id": "a", "points": [[x, y], ...], "intensity": 1.0}, ...]}
+
+`units` is "mm" or "m"; `frame` must be "table" (origin at the table centre, on the paper);
+`intensity` (0 to 1, how hard to press) is optional, default 1.  One pen.  The same content
+is accepted as a `.npz` file (`lines` an object array of such dicts, or of (N, 2) arrays with
+the ids in `ids`); a `.npz` is read only from a local file, never from the network, because
+object arrays are pickles.
+
+`fit` scales a drawing that does not lie inside the drawing area uniformly about the table
+centre until it does.  A drawing that fits is not touched; one that would have to shrink below
+half its size is refused.
+"""
+from __future__ import annotations
+
+import io
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from aris.types import Line, Refusal
+
+UNITS = {"mm": 1e-3, "m": 1.0}
+MIN_SCALE = 0.5
+
+
+@dataclass(frozen=True)
+class Fit:
+    """What `fit` did.  Boxes are (x_lo, y_lo, x_hi, y_hi) in metres, table frame."""
+    scale: float
+    bbox_in: tuple
+    bbox_out: tuple
+    area: tuple                      # (width along x, width along y), centred on the table
+
+
+def load(path) -> list[Line] | Refusal:
+    """A drawing file (.json or .npz) -> table-frame Lines in metres, z = 0."""
+    p = Path(path)
+    try:
+        data = p.read_bytes()
+    except OSError as e:
+        return Refusal("unreadable", f"{p}: {e}")
+    return from_npz(data) if p.suffix.lower() == ".npz" else parse(data)
+
+
+def parse(data: bytes) -> list[Line] | Refusal:
+    """The JSON drawing format, as bytes."""
+    try:
+        d = json.loads(data)
+    except (ValueError, UnicodeDecodeError) as e:
+        return Refusal("not_json", str(e))
+    return from_dict(d)
+
+
+def from_npz(data: bytes) -> list[Line] | Refusal:
+    try:
+        with np.load(io.BytesIO(data), allow_pickle=True) as z:
+            d = {k: z[k] for k in z.files}
+    except (OSError, ValueError) as e:
+        return Refusal("not_npz", str(e))
+    if "lines" not in d:
+        return Refusal("no_lines", "the .npz file has no 'lines'")
+    ids = [str(x) for x in d["ids"]] if "ids" in d else None
+    lines = []
+    for k, x in enumerate(d["lines"]):
+        if isinstance(x, dict):
+            lines.append(dict(x, points=np.asarray(x.get("points")).tolist()))
+        else:
+            lines.append(dict(id=ids[k] if ids else str(k), points=np.asarray(x).tolist()))
+    return from_dict(dict(units=str(d.get("units", "mm")), frame=str(d.get("frame", "table")),
+                          lines=lines))
+
+
+def from_dict(d) -> list[Line] | Refusal:
+    if not isinstance(d, dict) or not isinstance(d.get("lines"), list):
+        return Refusal("no_lines", "a drawing is an object with a list 'lines'")
+    if d.get("units") not in UNITS:
+        return Refusal("units", f"units must be one of {sorted(UNITS)}, not {d.get('units')!r}")
+    if d.get("frame", "table") != "table":
+        return Refusal("frame", f"only the table frame is accepted, not {d.get('frame')!r}")
+    if not d["lines"]:
+        return Refusal("no_lines", "the drawing has no lines")
+    k_m, out, seen = UNITS[d["units"]], [], set()
+    for k, ln in enumerate(d["lines"]):
+        if not isinstance(ln, dict):
+            return Refusal("bad_line", f"line {k} is not an object")
+        lid = str(ln.get("id", k))
+        try:
+            pts = np.asarray(ln.get("points"), float)
+            intensity = float(ln.get("intensity", 1.0))
+        except (TypeError, ValueError) as e:
+            return Refusal("bad_line", f"line {lid}: {e}")
+        if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2 or not np.all(np.isfinite(pts)):
+            return Refusal("bad_line", f"line {lid}: points must be at least two finite [x, y]")
+        if not 0.0 <= intensity <= 1.0:
+            return Refusal("bad_line", f"line {lid}: intensity {intensity} is not in 0..1")
+        if lid in seen:
+            return Refusal("bad_line", f"two lines have the id {lid!r}")
+        seen.add(lid)
+        out.append(Line(lid, np.column_stack([pts * k_m, np.zeros(len(pts))]), "table",
+                        intensity))
+    return out
+
+
+def to_dict(lines) -> dict:
+    """Lines -> the JSON drawing format (millimetres)."""
+    return dict(units="mm", frame="table",
+                lines=[dict(id=x.id, points=(np.asarray(x.points)[:, :2] * 1e3).tolist(),
+                            intensity=float(x.intensity)) for x in lines])
+
+
+def bbox(lines) -> tuple:
+    p = np.concatenate([np.asarray(x.points, float)[:, :2] for x in lines])
+    lo, hi = p.min(axis=0), p.max(axis=0)
+    return (float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1]))
+
+
+def fit(lines, area) -> tuple[list[Line], Fit] | Refusal:
+    """Scale about the table centre so every point lies inside the area (full widths along x
+    and y, centred on the table).  A drawing inside is returned as it is (scale 1)."""
+    half = 0.5 * np.asarray(area, float)
+    p = np.concatenate([np.asarray(x.points, float)[:, :2] for x in lines])
+    ext = np.abs(p).max(axis=0)
+    ratio = [h / e for h, e in zip(half, ext) if e > 0.0]
+    scale = min([1.0] + ratio)
+    box = bbox(lines)
+    if scale >= 1.0:
+        return list(lines), Fit(1.0, box, box, tuple(float(a) for a in area))
+    if scale < MIN_SCALE:
+        return Refusal("too_large", f"the drawing reaches {ext[0]:.3f} x {ext[1]:.3f} m from "
+                       f"the table centre; to fit the drawing area {area[0]:.2f} x "
+                       f"{area[1]:.2f} m it would shrink to {scale:.2f} of its size "
+                       f"(the least allowed is {MIN_SCALE})")
+    k = np.array([scale, scale, 1.0])
+    out = [Line(x.id, np.asarray(x.points, float) * k, "table", x.intensity) for x in lines]
+    return out, Fit(float(scale), box, bbox(out), tuple(float(a) for a in area))
