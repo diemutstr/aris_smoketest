@@ -9,7 +9,7 @@ from aris.check.drawing import pen_report
 from aris.check.scene import CLASSES, build_scene, clearance
 from aris.check.sweep import sweep
 from aris.check.verdict import Verdict, measure, verdict
-from aris.types import DrawRules, Motion, Phase
+from aris.types import Motion, Phase
 
 REST = 1e-6           # rad/s, "at rest"; rad, "starts where the arm is"
 MOVES = 1e-5          # rad, a motion that turns no joint further than this does nothing
@@ -28,7 +28,7 @@ PEN_DEPTH = "pen depth (lower, lift)"      # the pen row of a "lower" or "lift" 
 def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, *,
           step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
           tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
-          draw_speed: float = DrawRules().draw_speed, speed_tol: float = 0.03,
+          speed_tol: float = 0.03,
           stop_speed: float = 2.5e-4) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
 
@@ -38,7 +38,8 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
     tip_height_tol  m, drawing: tip within this of the paper plane
     line_tol        m, drawing: tip within this of the planned line
     back_tol        m, drawing: numerical allowance for "never goes backwards"
-    draw_speed      m/s, drawing: the tip may not go faster than this (times 1 + speed_tol)
+    speed_tol       drawing: the tip may go this much faster than the drawing speed, which is
+                    rig.json's drawing.draw_speed_m_per_s (the planners read the same number)
     stop_speed      m/s, drawing: between getting going and the final stop the pen's speed
                     along the line stays above this.  Absolute, not a share of draw_speed: a
                     sharp corner slows the pen to about 1 mm/s whatever the drawing speed
@@ -69,7 +70,7 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
     ms += _clearances(scene, sw, r4, drawing, rig.notes, titles)                      # items 3-6, 8
     if drawing:                                                      # item 7
         ms += _pen(scene, traj, motion.tip_base, r1, tip_height_tol, line_tol, back_tol,
-                   draw_speed, speed_tol, stop_speed)
+                   rig.draw_speed, speed_tol, stop_speed)
     ms.append(_hold(scene, traj, titles))                                    # item 9
     worst = min(CLASSES, key=lambda c: sw.per_class[c].value)
     return verdict(ms, sw.per_class[worst].value,

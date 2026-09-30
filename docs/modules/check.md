@@ -40,7 +40,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 7 | drawing: `tip on line`: distance from the planned tips (`motion.tip_base`) and the line through them, at 1 kHz | 0.2 mm |
 | 7 | drawing: `never backwards`: progress along the line (below) never falls back (a numerical allowance) | 0.01 mm |
 | 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 0.25 mm/s, whatever the drawing speed (a sharp corner slows the pen to about 1 mm/s at any drawing speed; a real stop reads 1e-7 m/s) |
-| 7 | drawing: `tip speed` | drawing speed + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
+| 7 | drawing: `tip speed` | drawing speed (rig.json `drawing.draw_speed_m_per_s`, the number the planners read) + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
 | 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip | 0.003 m (`pen_lifted_to_paper_m`) |
 | 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may touch the paper at one end, where its round end reads up to 1.3 mm into the paper plane; it may never go deeper. Everything else as for a free motion | -0.002 m |
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
@@ -106,7 +106,9 @@ consecutive samples, then a ball per capsule, then the exact distance.
   box and the segment against the box's twelve edges, zero if the segment enters the box (the
   planners walk the piecewise-quadratic distance along the segment). The obstacles stay in the
   table frame, where the steel is axis-aligned (the planners work in each arm's base frame).
-- The rig (`config.py`): its own reader of rig.json and of passing calibration files. The
+- The rig (`config.py`): its own reader of rig.json and of passing calibration files. Every
+  number the checker takes from the rig, the drawing speed included, comes from there, never
+  from a default in `aris.types`, so the checker and the planners read the same numbers. The
   struts, plate and clamp of each arm are placed from the words in rig.json, not from `rig.py`.
 - Data is shared, code is not: the capsules, limits, tool and self-collision rule are a copy in
   `aris/check/fr3.json`.

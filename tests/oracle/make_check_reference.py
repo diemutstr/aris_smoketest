@@ -7,7 +7,7 @@ it was far over the driver's limit.
 
 Run as its own process (the old package reads its rig and tool at import):
 
-    cd deployment && ARIS_RIG=proposed ARIS_TOOL=lateral ../.venv/bin/python \
+    ARIS_RIG=proposed ARIS_TOOL=lateral .venv/bin/python \
         tests/oracle/make_check_reference.py
 
 Writes tests/data/check_old_plan.npz:

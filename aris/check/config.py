@@ -32,6 +32,7 @@ class RigData:
     box_hi: np.ndarray             # (B,3)
     clearance: dict                # the demanded clearances, metres
     paper_z: float
+    draw_speed: float              # m/s, rig.json drawing.draw_speed_m_per_s
     notes: tuple = ()              # anything the verdict should say about how rig.json was read
 
 
@@ -64,7 +65,8 @@ def read_rig(config_dir) -> RigData:
                      "body_to_paper_m")
     return RigData(mounts, tuple(names), tuple(owner),
                    tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
-                   float(cfg["table"]["paper_surface_z_m"]), tuple(notes))
+                   float(cfg["table"]["paper_surface_z_m"]),
+                   float(cfg["drawing"]["draw_speed_m_per_s"]), tuple(notes))
 
 
 def _need_rigid(T, what):

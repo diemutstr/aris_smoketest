@@ -501,15 +501,41 @@ def test_drawing_round_a_sharp_corner():
         assert v_.get(name).passed, name
 
 
-def test_sharp_corner_at_80_mm_per_s_slows_but_does_not_stop():
+def _config_with_draw_speed(tmp_path, speed):
+    """A copy of config/ whose rig.json draws at `speed`."""
+    import json
+    import shutil
+    dst = tmp_path / "config"
+    shutil.copytree(CONFIG, dst)
+    cfg = json.loads((dst / "rig.json").read_text())
+    cfg["drawing"]["draw_speed_m_per_s"] = speed
+    (dst / "rig.json").write_text(json.dumps(cfg))
+    return dst
+
+
+def test_draw_speed_comes_from_rig_json(good_draw, tmp_path):
+    """The checker takes the drawing speed from rig.json, like the planners: the same motion
+    (drawn at 20 mm/s) passes at 20 mm/s and fails 'tip speed' when rig.json says 10 mm/s."""
+    assert read_rig(CONFIG).draw_speed == RIG.rules().draw_speed      # same number as planners
+    ok = check(CONFIG, 31, good_draw, phase_of(31), good_draw.q_start)
+    slow = check(_config_with_draw_speed(tmp_path, 0.010), 31, good_draw, phase_of(31),
+                 good_draw.q_start)
+    print(f"\ntip speed limit {ok.get('tip speed').limit * 1e3:.1f} mm/s, then "
+          f"{slow.get('tip speed').limit * 1e3:.1f} mm/s")
+    assert ok.get("tip speed").passed and abs(ok.get("tip speed").limit - 0.0206) < 1e-12
+    _fails(slow, "tip speed")
+    assert abs(slow.get("tip speed").limit - 0.0103) < 1e-12
+
+
+def test_sharp_corner_at_80_mm_per_s_slows_but_does_not_stop(tmp_path):
     """The sequencer's word at 80 mm/s (tests/data/arm_stop_31_word_0.npz): at a corner that
     turns 130 + 18 degrees the pen's real speed (not a reading of the line) drops to about
     1 mm/s and picks up again; it never stops.  A real stop reads ~1e-7 m/s."""
     d = np.load(DEPLOY / "tests" / "data" / "arm_stop_31_word_0.npz")
     m = Motion(str(d["kind"]), Trajectory(d["t"], d["q"], d["qd"]),
                Piece(str(d["line_id"]), float(d["s0"]), float(d["s1"])), d["tip_base"])
-    v = check(CONFIG, int(d["arm_id"]), m, phase_of(int(d["arm_id"])), d["q_before"],
-              draw_speed=0.08)
+    v = check(_config_with_draw_speed(tmp_path, 0.08), int(d["arm_id"]), m,
+              phase_of(int(d["arm_id"])), d["q_before"])
     print(f"\n{v}")
     stop = v.get("never stops")
     assert 5e-4 < stop.value < 2e-3 and stop.passed
