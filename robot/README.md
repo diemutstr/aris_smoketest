@@ -142,8 +142,19 @@ aris-robot jog 31 --joint 7 --delta 0.05
 aris-robot park 31                  # only from within 0.05 rad of the park, straight
 ```
 
-A park from further away is a planned job: `aris park` on the planning PC, then
-`aris-robot run --job <that id>`.
+A park from further away is a planned job, planned from where the arms really stand. The
+server knows that only from the runner: every run reports every mounted arm's joints at its
+start, on every row about an arm, and at its end. So:
+
+1. Run anything with `aris-robot run` first (the last run's report is what the server plans
+   from). If the arms were moved by hand since, the server's positions are stale.
+2. `aris park` on the planning PC: it plans a park job from those positions.
+3. `aris-robot run --job <that id>` here. It runs like any job, one arm per phase.
+
+A stale position cannot move an arm: a motion that does not start within 0.005 rad of the
+arm's actual joints (on every joint) is refused before it moves. The job then fails with a
+"failed" row saying which joint is how far off, and the arm holds. That refused run reports
+the true positions, so run `aris park` again and then the new job.
 
 The first contact with paper is the touch, with the pen a few centimetres above the paper:
 

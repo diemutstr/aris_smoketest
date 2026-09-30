@@ -12,6 +12,17 @@
 4. Posts every line of the local event log to the server as it is written, and stops the arms
    when the server says the job was stopped.
 
+Where the arms stand is reported, because the server plans (parks, the next drawing) from it:
+the first row, "runner started", carries `where` (arm id -> 7 joints) for every mounted arm,
+read before anything moves; every row about an arm carries `q`, read from that arm when the
+row is written; the last row, "runner finished", carries `where` again.  A stale position
+cannot move an arm: the executor refuses a motion that does not start within the rig's start
+tolerance (0.005 rad per joint) of the arm's joints, writes a "failed" row saying by how much,
+and the arm holds.
+
+Nothing here depends on what a job draws: a park job (one arm per phase, free motions) runs
+the same way.
+
 The executor sends lower and lift motions to `move` with the trajectory only.  The pen force
 needs to know them, so `KindRouter` finds each trajectory in the arm's local queues and sends
 lower and lift to the driver's `draw` (until the executor does that itself).
@@ -23,7 +34,7 @@ import json
 import threading
 from pathlib import Path
 
-from aris.execute import Coordinator, Job
+from aris.execute import Coordinator, EventLog, Job
 from aris.execute.queue import Cursor, End, Queue, digest
 from aris.types import Refusal
 
@@ -74,6 +85,23 @@ class KindRouter:
 
     def recover(self):
         return self.driver.recover()
+
+
+class ArmLog(EventLog):
+    """The job's event log, with where the arm stands on every row about an arm."""
+
+    def __init__(self, path, drivers: dict):
+        super().__init__(path)
+        self.drivers = drivers
+
+    def write(self, event: str, **fields) -> dict:
+        a = fields.get("arm")
+        if a in self.drivers and fields.get("q") is None:
+            fields["q"] = self.drivers[a].state().q
+        return super().write(event, **fields)
+
+    def where(self) -> dict:
+        return {str(a): d.state().q for a, d in self.drivers.items()}
 
 
 def check_header(header: dict, rig) -> str:
@@ -146,6 +174,8 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
 
     routed = {a: KindRouter(drv, d, a) for a, drv in drivers.items()}
     coord = Coordinator(job, routed, config_dir, rig, poll=poll)
+    coord.log = log = ArmLog(job.log_path, drivers)   # the executors write through it too
+    log.write("runner started", job=job_id, where=log.where())
     refused: list[str] = []
     halt = threading.Event()
 
@@ -170,9 +200,11 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     events = EventForwarder(remote, job_id, job.log_path, stop).start()
     try:
         result = coord.run(phases())
+        if refused:
+            result.status, result.why = "failed", refused[0]
+        log.write("runner finished", job=job_id, status=result.status, why=result.why,
+                  where=log.where())
     finally:
         mirror.close()
         events.close()
-    if refused:
-        result.status, result.why = "failed", refused[0]
     return result

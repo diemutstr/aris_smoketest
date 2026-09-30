@@ -13,6 +13,17 @@ This is the only place that knows about ROS. Folder: `robot/`. Set-up steps:
 | drawing server, planners, checker | one ROS launch per arm (namespace `arm_<id>`, DDS domain = arm id) |
 | writes the job: header, phases, one queue per phase and arm | `aris-robot run --job <id>`: copies the phases and the queues byte for byte, runs them, posts the events back |
 
+**Where the arms stand.** The server plans from what the runner reports; it cannot see the
+arms. The first row of a run, "runner started", carries `where`, the 7 joints of every
+mounted arm, read before anything moves, and the job id. Every row about one arm (motion
+started, motion done, holding, failed, stopped, finished) carries `q`, read from that arm
+when the row is written. The last row, "runner finished", carries the result and `where`
+again. A stale position cannot move an arm: the executor refuses any motion whose start is
+more than the rig's start tolerance (0.005 rad per joint) from the arm's joints. It writes a
+"failed" row that names the joint and the distance, and the arm holds. A park job (`aris park`)
+is a job like any other, one arm per phase, and runs the same way: nothing in the runner
+depends on what is drawn.
+
 The copy follows the server's files as they grow and resumes from its own length after a
 lost link, so a dropped network stops nothing already copied. The runner refuses a job planned
 for a different rig or calibration (digests in the job header), a job it has already run, and
@@ -141,7 +152,7 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 42 tests, 38 in the quick set (11 s); the 4 slow ones compile the controller
+`robot/tests`: 44 tests, 40 in the quick set (about 12 s); the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -168,7 +179,12 @@ core (6 to 15 s under load).
 - **Runner.** Real HTTP against the stand-in server with simulated arms. The job is written
   while it runs (free, lower, draw, lift): done, the arm back at its park to 1e-9, the copied
   queue byte-identical, every event on the server in order (4 motions at 50x: 0.3 s). Also
-  checked: a link that hangs up every 2000 bytes still gives a byte-identical copy; a phase
+  checked: the first and last rows carry `where` and every row about the arm carries `q`,
+  equal to the simulated arm's joints (the start and end of each motion to 1e-9); an arm
+  20 mrad off on joint 5 is refused before anything moves, with a row naming joint 5 and the
+  tolerance, and it holds where it stands; a park job (two arms, one per phase, from 0.03 rad
+  off, a header without drawing or digests) ends with both arms at their parks and reports
+  it; a link that hangs up every 2000 bytes still gives a byte-identical copy; a phase
   needing an unmounted arm fails the job, with the reason posted; a stop on the server stops
   the arms, also while the runner is still waiting for the plan; a wrong rig, an unknown job
   and an unreachable server are refused.

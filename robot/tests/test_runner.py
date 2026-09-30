@@ -116,10 +116,75 @@ def test_a_job_runs_as_it_is_written_and_every_event_reaches_the_server(rig, tmp
     lines = (local / "events.jsonl").read_text().splitlines()
     assert len(rows) == len(lines)
     names = [r["event"] for r in rows]
-    assert names[0] == "job started" and names[-1] == "job done"
+    assert names[0] == "runner started" and names[1] == "job started"
+    assert names[-2] == "job done" and names[-1] == "runner finished"
+    # where the arm stands: at the start (before anything moved), on every row about the
+    # arm, and at the end
+    assert rows[0]["job"] == "j1" and set(rows[0]["where"]) == {"31"}
+    assert np.array_equal(rows[0]["where"]["31"], rig.park_q(31))
+    about_arm = [r for r in rows if "arm" in r]
+    assert about_arm and all(len(r["q"]) == 7 for r in about_arm)
+    motions = _motions(rig, 31)
+    starts = [r["q"] for r in rows if r["event"] == "motion started"]
+    ends = [r["q"] for r in rows if r["event"] == "motion done"]
+    for m, q0, q1 in zip(motions, starts, ends):
+        assert np.abs(np.array(q0) - m.q_start).max() <= 1e-9
+        assert np.abs(np.array(q1) - m.q_end).max() <= 1e-9
+    assert rows[-1]["status"] == "done"
+    assert np.abs(np.array(rows[-1]["where"]["31"]) - rig.park_q(31)).max() <= 1e-9
     assert names.count("motion started") == 4 and names.count("motion done") == 4
     assert names.index("phase end check") < names.index("phase done")
     assert [r["kind"] for r in rows if r["event"] == "motion started"] == list(KINDS)
+
+
+def test_an_arm_not_where_the_plan_starts_is_refused_and_holds(rig, tmp_path):
+    """The server planned from a position that is no longer true: joint 5 moved 20 mrad."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    job = Job.create(server_dir / "j7", _header(rig))
+    app = create_app(server_dir)
+    off = rig.park_q(31) + np.array([0, 0, 0, 0, 0.02, 0, 0])
+    arm = SimArm(31, off, speed=50.0)
+    with Served(app) as srv:
+        _writer(rig, job, (31,), _motions(rig, 31), pause=0.0).join()
+        res = run_job(Remote(srv.url), "j7", rig, CONFIG, tmp_path / "robot", {31: arm})
+    assert res.status == "failed" and "not at the start" in res.why
+    rows = app.state.received["j7"]
+    bad = next(r for r in rows if r["event"] == "failed")
+    assert bad["arm"] == 31 and bad["index"] == 0 and "joint 5" in bad["why"]
+    assert "tolerance 0.005" in bad["why"]
+    assert np.array_equal(bad["q"], off)                       # where it really stands
+    assert "motion started" not in [r["event"] for r in rows]  # nothing moved
+    assert np.array_equal(arm.state().q, off) and "holding" in arm.state().flags
+    assert np.array_equal(rows[-1]["where"]["31"], off)
+
+
+def test_a_park_job_runs_like_any_other(rig, tmp_path):
+    """The server's park job: one arm per phase, one free motion each, no drawing in it (no
+    piece, no tips, no rig digests in its header); both arms end at their parks."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    job = Job.create(server_dir / "p1", dict(kind="park"))
+    app = create_app(server_dir)
+    start = {a: rig.park_q(a) + 0.03 * np.array([1, -1, 1, 1, -1, 1, 1.0]) for a in (31, 71)}
+    arms = {a: SimArm(a, q, speed=50.0) for a, q in start.items()}
+    for a in (31, 71):
+        phase = Phase(f"park arm {a}", (a,), tuple(b for b in rig.arm_ids if b != a), ())
+        job.add_phase(phase)
+        q = job.queue(phase.name, a)
+        traj = retime(JointPath(np.array([start[a], rig.park_q(a)])), rig.arm(a).limits,
+                      rig.rules())
+        assert q.append(Motion("free", traj), Passed()) == 0
+        q.close()
+    job.end_phases()
+    with Served(app) as srv:
+        res = run_job(Remote(srv.url), "p1", rig, CONFIG, tmp_path / "robot", arms)
+    assert res.status == "done", res.why
+    rows = app.state.received["p1"]
+    for a in (31, 71):
+        assert np.array_equal(rows[0]["where"][str(a)], start[a])
+        assert np.abs(np.array(rows[-1]["where"][str(a)]) - rig.park_q(a)).max() <= 1e-9
+    assert [r["event"] for r in rows][-2:] == ["job done", "runner finished"]
 
 
 def test_a_phase_that_needs_an_unmounted_arm_stops_the_job(rig, tmp_path):
@@ -151,7 +216,10 @@ def test_a_stop_on_the_server_stops_the_arms(rig, tmp_path):
         writer.join()
     assert res.status == "stopped"
     assert "stopped" in arm.state().flags
-    assert app.state.received["j3"][-1]["event"] == "job stopped"
+    rows = app.state.received["j3"]
+    assert [r["event"] for r in rows][-2:] == ["job stopped", "runner finished"]
+    assert rows[-1]["status"] == "stopped"
+    assert np.array_equal(rows[-1]["where"]["31"], arm.state().q)   # stopped mid-motion
 
 
 def test_a_stop_while_waiting_for_the_plan_ends_the_job(rig, tmp_path):
