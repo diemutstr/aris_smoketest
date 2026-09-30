@@ -65,7 +65,7 @@ struct SceneIn {  // keeps the converted arrays alive while the pointers are in 
 
 struct CapsIn {
     Arr r;
-    BArr pen, fixed, tool;
+    BArr pen, fixed, tool, ex;
     IArr bs, bm;
     acol::Caps c;
     explicit CapsIn(const py::tuple& t)
@@ -85,8 +85,18 @@ struct CapsIn {
         }
         c.r = r.data(); c.is_pen = pen.data(); c.is_fixed = fixed.data(); c.is_tool = tool.data();
         c.bg_start = bs.data(); c.bg_members = bm.data();
+        if (t.size() > 6) {  // the boxes' exemptions, (K, Mb); checked against the scene later
+            ex = t[6].cast<BArr>();
+            c.exempt = ex.data();
+        }
     }
 };
+
+// The exemption mask must be (K, Mb) for this scene.
+void check_exempt(const CapsIn& C, const SceneIn& S) {
+    if (C.c.exempt && C.ex.size() != py::ssize_t(C.c.K) * S.s.Mb)
+        throw std::invalid_argument("the exemption mask must be (K, number of boxes)");
+}
 
 struct ChainIn {
     Arr dh, eR, et, a, b;
@@ -154,6 +164,7 @@ py::tuple capsule_values(Arr p0, Arr p1, py::tuple caps, py::tuple scene, bool d
                          int threads) {
     CapsIn C(caps);
     SceneIn S(scene);
+    check_exempt(C, S);
     check_body(p0, p1, C.c.K);
     const py::ssize_t N = p0.shape(0), K = C.c.K;
     py::array_t<double> val({N, K});
@@ -183,6 +194,7 @@ py::tuple capsule_values_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
+    check_exempt(C, S);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     const py::ssize_t N = check_q(Q, H.h.J), K = C.c.K;
     py::array_t<double> val({N, K});
@@ -203,6 +215,7 @@ py::array_t<double> clearance_q(py::tuple chain, py::tuple caps, py::tuple scene
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
+    check_exempt(C, S);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     const py::ssize_t N = check_q(Q, H.h.J);
     const int K = C.c.K;
@@ -306,6 +319,7 @@ double path_clearance_q(py::tuple chain, py::tuple caps, py::tuple scene, Arr re
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
+    check_exempt(C, S);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
     const py::ssize_t N = check_q(q, H.h.J);
@@ -336,6 +350,7 @@ py::array_t<double> edges_clearance_q(py::tuple chain, py::tuple caps, py::tuple
     ChainIn H(chain);
     CapsIn C(caps);
     SceneIn S(scene);
+    check_exempt(C, S);
     if (H.K() != C.c.K) throw std::invalid_argument("chain and caps disagree on K");
     if (reach.size() != H.h.J * C.c.K) throw std::invalid_argument("reach must be (joints, K)");
     check_pairs(pairs, C.c.K);

@@ -114,6 +114,11 @@ struct Caps {  // the arm's capsules, per capsule
     int K = 0;
     const double* r;
     const uint8_t *is_pen, *is_fixed, *is_tool;
+    // (K, Mb) 1 where capsule k is never checked against box b (Box.exempt); null: none
+    const uint8_t* exempt = nullptr;
+    bool exempt_from(int k, int64_t o, int Mb) const {
+        return exempt && o < Mb && exempt[size_t(k) * Mb + o];
+    }
     // body groups: group g holds capsules bg_members[bg_start[g] .. bg_start[g+1])
     int NG = 0;
     const int64_t *bg_start, *bg_members;
@@ -278,7 +283,8 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
     if (!md.prune) {
         for (int k = 0; k < K; ++k)
             if (!C.is_fixed[k]) {
-                for (int64_t o = 0; o < Mb; ++o) exact(k, o);
+                for (int64_t o = 0; o < Mb; ++o)
+                    if (!C.exempt_from(k, o, Mb)) exact(k, o);
                 for (int64_t o = Mb + Mp; o < Mb + Mp + Mc; ++o) exact(k, o);
             }
     } else if (!md.groups) {
@@ -288,6 +294,8 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
             if (C.is_fixed[k]) continue;
             double* ub = w.ub.data() + size_t(k) * Mo;
             point_boxes(S, w.mid.data() + 3 * k, C.r[k], ub);
+            for (int m = 0; m < Mb; ++m)  // an exempt pair is neither checked nor a bound
+                if (C.exempt_from(k, m, Mb)) ub[m] = INF;
             point_capsules(S, w.mid.data() + 3 * k, C.r[k], ub + Mb);
             for (int m = 0; m < Mo; ++m) best = std::min(best, ub[m]);
         }
@@ -314,7 +322,8 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
                 const int64_t k = C.bg_members[n];
                 if (C.is_fixed[k]) continue;
                 for (int64_t j = 0; j < no; ++j) {
-                    ub[j] = pair_mid(S, w.mid.data() + 3 * k, C.r[k], S.og_members[o0 + j]);
+                    const int64_t o = S.og_members[o0 + j];
+                    ub[j] = C.exempt_from(int(k), o, Mb) ? INF : pair_mid(S, w.mid.data() + 3 * k, C.r[k], o);
                     best = std::min(best, ub[j]);
                 }
             }

@@ -397,3 +397,52 @@ def test_exact_evaluations_counted():
     print(f"\nexact pair distances per configuration, arm 31: none skipped {n[(False, False)]:.0f}, "
           f"midpoint skip {n[(True, False)]:.1f}, groups + midpoint {n[(True, True)]:.1f}")
     assert n[(True, True)] < 0.01 * n[(False, False)]
+
+
+# --------------------------------------------------------------------------- exempt boxes
+
+
+def test_box_exemption():
+    """A box exempt for "link1" is not checked against link 1, and only against it."""
+    arm = _arm()
+    T = collide.arm_tables(arm)
+    Q = _q(arm, 400, 50)
+    body = arm.body(Q)
+    link1 = np.array([n.split(".")[0] == "link1" for n in body.names])
+    T_box = np.eye(4)
+    T_box[:3, 3] = 0.5 * (body.p0[:, link1] + body.p1[:, link1]).reshape(-1, 3).mean(axis=0)
+    hanger = dict(name="hanger", T_base_box=T_box, half=np.array([0.12, 0.12, 0.1]), margin=0.02)
+    cage = _cage_scene(np.random.default_rng(51))
+    plain = Obstacles(cage.boxes + (Box(**hanger),), cage.planes, cage.capsules)
+    exempt = Obstacles(cage.boxes + (Box(**hanger, exempt=("link1",)),), cage.planes, cage.capsules)
+    # by hand: everything against the cage, and everything but link 1 against the hanger
+    fixed = np.asarray(body.is_fixed, bool)
+    no_link1 = Body(body.p0, body.p1, body.radius, body.names, body.is_pen, fixed | link1,
+                    body.is_tool)
+    want = np.minimum(collide.clearance(body, cage, prune=False, backend="numpy"),
+                      collide.clearance(no_link1, Obstacles(boxes=(Box(**hanger),)), prune=False,
+                                        backend="numpy"))
+    assert np.any(collide.clearance(body, plain) < want - 1e-4)      # the hanger bites link 1 most
+    P = collide.pack(exempt)
+    ref = collide.clearance_detail(body, P, backend="numpy", prune=False)
+    assert np.abs(ref.value - want).max() <= TOL
+    hanger_idx = len(cage.boxes)
+    for backend in ("native", "numpy"):
+        for groups in (True, False):
+            d = collide.clearance_detail(body, P, backend=backend, groups=groups)
+            _same(d, ref)
+            assert not np.any(link1[d.capsule] & (d.obstacle == hanger_idx))
+            _same(collide.clearance_detail_q(T, Q, P, backend=backend, groups=groups), ref)
+    # no exemptions anywhere: the new field changes nothing
+    assert np.array_equal(collide.clearance(body, collide.pack(plain)),
+                          collide.clearance(body, collide.pack(plain), prune=False, backend="numpy"))
+    # along paths and edges, both engines agree with the exemption in place
+    Qa, Qb = Q[:20], Q[20:40]
+    for i in range(5):
+        q = Qa[i] + np.linspace(0, 1, 5)[:, None] * (Qb[i] - Qa[i])
+        a = collide.path_clearance_q(T, arm.reach, q, P, backend="native")
+        b = collide.path_clearance_q(T, arm.reach, q, P, backend="numpy")
+        assert abs(a - b) <= TOL
+    e = [collide.edges_clearance_q(T, arm.reach, Qa, Qb, P, floor=None, backend=be)
+         for be in ("native", "numpy")]
+    assert np.abs(e[0] - e[1]).max() <= TOL

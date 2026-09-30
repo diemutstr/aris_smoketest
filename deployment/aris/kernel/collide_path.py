@@ -16,7 +16,7 @@ from aris.kernel import collide_native as _cn
 from aris.kernel import geometry as geo
 from aris.kernel.collide import (_BIG, ClearanceDetail, _detail, capsule_clearance, clearance,
                                  clearance_detail, self_clearance)
-from aris.kernel.collide_native import ArmTables, body_q, pack
+from aris.kernel.collide_native import ArmTables, body_q, exempt_mask, pack
 
 
 def _interval_bound(ca, cb, delta):
@@ -151,6 +151,11 @@ def path_self_clearance(body_of: Callable[[np.ndarray], Body], q: np.ndarray, pa
 # --------------------------------------------------------------------------- from joint angles
 
 
+def _ocaps(tables, P):
+    """The capsule tuple for a call against obstacles: with the boxes' exemptions."""
+    return tables.caps + (exempt_mask(tables.names, P),)
+
+
 def _Q(tables, Q):
     return np.ascontiguousarray(np.asarray(Q, float).reshape(-1, len(tables.dh)))
 
@@ -161,7 +166,7 @@ def clearance_q(tables: ArmTables, Q, obstacles, drawing: bool = False,
     """(N, J) joint angles -> (N,) clearance, as `clearance(body_q(tables, Q), ...)`."""
     Q, P = _Q(tables, Q), pack(obstacles)
     if _cn.native_on(backend):
-        return _cn._native.clearance_q(tables.chain, tables.caps, P.scene, Q, drawing,
+        return _cn._native.clearance_q(tables.chain, _ocaps(tables, P), P.scene, Q, drawing,
                                        (prune, groups, 0.0), threads)
     return clearance(body_q(tables, Q, "numpy"), P, drawing, prune, "numpy", groups=groups)
 
@@ -170,7 +175,7 @@ def exact_count_q(tables: ArmTables, Q, obstacles, drawing: bool = False, prune:
                   groups: bool = True, span: float = 0.0) -> int:
     """How many exact capsule-obstacle distances the compiled engine takes for Q (statistics)."""
     Q, P = _Q(tables, Q), pack(obstacles)
-    return int(_cn._native.capsule_values_q(tables.chain, tables.caps, P.scene, Q, drawing,
+    return int(_cn._native.capsule_values_q(tables.chain, _ocaps(tables, P), P.scene, Q, drawing,
                                             (prune, groups, span), 1)[2])
 
 
@@ -179,7 +184,7 @@ def clearance_detail_q(tables: ArmTables, Q, obstacles, drawing: bool = False,
                        groups: bool = True) -> ClearanceDetail:
     Q, P = _Q(tables, Q), pack(obstacles)
     if _cn.native_on(backend):
-        val, arg, _ = _cn._native.capsule_values_q(tables.chain, tables.caps, P.scene, Q,
+        val, arg, _ = _cn._native.capsule_values_q(tables.chain, _ocaps(tables, P), P.scene, Q,
                                                    drawing, (True, groups, 0.0), threads)
         return _detail(val, arg, tables.names, P)
     return clearance_detail(body_q(tables, Q, "numpy"), P, drawing, backend="numpy",
@@ -204,7 +209,8 @@ def path_clearance_q(tables: ArmTables, reach, q, obstacles, drawing: bool = Fal
     q, P = _Q(tables, q), pack(obstacles)
     R = _reach(reach, len(tables.dh), len(tables.radius))
     if _cn.native_on(backend):
-        return _cn._native.path_clearance_q(tables.chain, tables.caps, P.scene, R, q, drawing, tol,
+        return _cn._native.path_clearance_q(tables.chain, _ocaps(tables, P), P.scene, R, q,
+                                            drawing, tol,
                                             max_depth, max_evals, threads, cap,
                                             (True, groups, SPAN))
     return path_clearance(lambda Q: body_q(tables, Q, "numpy"), q, P, R, drawing, tol,
@@ -251,7 +257,7 @@ def edges_clearance_q(tables: ArmTables, reach, Qa, Qb, obstacles, drawing: bool
     R = _reach(reach, J, K)
     use_floor = floor is not None
     if _cn.native_on(backend):
-        return _cn._native.edges_clearance_q(tables.chain, tables.caps, P.scene, R, Qa, Qb,
+        return _cn._native.edges_clearance_q(tables.chain, _ocaps(tables, P), P.scene, R, Qa, Qb,
                                              drawing, pairs, float(self_margin), tol, max_depth,
                                              max_evals, use_floor, float(floor or 0.0),
                                              max(1, threads), cap, (True, groups, SPAN))

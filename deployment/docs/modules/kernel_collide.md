@@ -26,6 +26,12 @@ Special rules:
   the paper on purpose. The tool stays checked, with its `tool_margin`.
 - Capsules the body marks as fixed (`is_fixed`: the base, inside the arm's own mount) are
   never checked against obstacles.
+- A box can exempt body groups (`Box.exempt`, for example `("link1",)` on an arm's own
+  hanger steel). Those capsules are never checked against that box. Link 1's clearance to
+  the steel it hangs from is settled once, for the rig. The exemption works pair by pair
+  (a capsule against a box). An exempt pair is never measured, never counts towards the
+  first pass's best bound, and is never reported as the closest pair. Planes and capsules
+  have no exemptions.
 
 ## The calls
 

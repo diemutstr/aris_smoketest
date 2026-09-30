@@ -99,22 +99,26 @@ def _group_bounds(p0, p1, r, gid, P, G):
     return out
 
 
-def _chunk_values(p0, p1, r, is_pen, is_tool, P, drawing, mode, gid):
+def _chunk_values(p0, p1, r, is_pen, is_tool, P, drawing, mode, gid, exempt):
     """(n, K, M) clearance of every pair, obstacles in `P.names` order; +inf for a pair the
     work-saving skipped.  A pair is skipped only when a lower bound (its midpoint bound, or
     its two groups' bound) is above (best upper bound + span): its true value is then above
     (configuration minimum + span), so `_finish` gives the same answer as with no skipping.
+    `exempt` (K, Mb) bool: pairs never checked (`Box.exempt`); they read +inf and do not
+    count towards the best upper bound.
     """
     n = p0.shape[0]
     prune, groups, span = mode
     planes = _plane_block(p0, p1, r, is_pen, is_tool, P, drawing)
     if not prune:
-        return np.concatenate([_box_block(p0, p1, r, P), planes, _cap_block(p0, p1, r, P)], axis=2)
+        boxes = np.where(exempt, np.inf, _box_block(p0, p1, r, P))
+        return np.concatenate([boxes, planes, _cap_block(p0, p1, r, P)], axis=2)
     ub_b, ub_c, half = _midpoint_bounds(p0, p1, r, P)
+    ub_b = np.where(exempt, np.inf, ub_b)
     best = np.min([x.reshape(n, -1).min(axis=1, initial=np.inf) for x in (ub_b, ub_c, planes)],
                   axis=0)[:, None, None]
     thr = best + span
-    skip_b, skip_c = ub_b - half[:, :, None] > thr, ub_c - half[:, :, None] > thr
+    skip_b, skip_c = (ub_b - half[:, :, None] > thr) | exempt, ub_c - half[:, :, None] > thr
     if groups:
         G = P.groups
         Mb, Mp = len(P.box_m), len(P.pl_m)
@@ -161,7 +165,8 @@ def _per_capsule(body: Body, obstacles, drawing: bool, mode, backend=None, threa
     P = pack(obstacles)
     r, is_pen, fixed, tool = _caps(body)
     if _cn.native_on(backend):
-        caps = (r, is_pen, fixed, tool) + body_groups(body.names)
+        caps = (r, is_pen, fixed, tool) + body_groups(body.names) + \
+            (_cn.exempt_mask(body.names, P),)
         val, arg, _ = _cn._native.capsule_values(body.p0, body.p1, caps, P.scene, drawing,
                                                  tuple(mode), threads)
         return val, arg, P
@@ -175,10 +180,11 @@ def _per_capsule(body: Body, obstacles, drawing: bool, mode, backend=None, threa
     if M == 0 or N == 0 or L == 0:
         return val, arg, P
     gid = np.unique(_gid(body.names)[live], return_inverse=True)[1]
+    exempt = _cn.exempt_mask(body.names, P)[live].astype(bool)
     step = max(1, _CHUNK_PAIRS // (L * M))
     for s in range(0, N, step):
         v = _chunk_values(p0[s:s + step], p1[s:s + step], r[live], is_pen[live],
-                          tool[live], P, drawing, mode, gid)
+                          tool[live], P, drawing, mode, gid, exempt)
         a = np.argmin(v, axis=2)
         arg[s:s + step, live] = a
         val[s:s + step, live] = np.take_along_axis(v, a[:, :, None], axis=2)[:, :, 0]

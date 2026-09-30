@@ -69,6 +69,8 @@ class Packed:
     og_a: np.ndarray | None = None
     og_b: np.ndarray | None = None
     og_r: np.ndarray | None = None
+    # per box, the body groups (capsule name before the first ".") it is not checked against
+    box_exempt: tuple | None = None
 
     @property
     def tool_m(self) -> np.ndarray:
@@ -125,7 +127,19 @@ def pack(obs: Obstacles | Packed) -> Packed:
     )
     g = obstacle_groups(P.box_R, P.box_c, P.box_h, P.cap_a, P.cap_b, P.cap_r,
                         [x.name for x in c], len(p))
-    return replace(P, og_start=g[0], og_members=g[1], og_a=g[2], og_b=g[3], og_r=g[4])
+    return replace(P, og_start=g[0], og_members=g[1], og_a=g[2], og_b=g[3], og_r=g[4],
+                   box_exempt=tuple(tuple(getattr(x, "exempt", ())) for x in b))
+
+
+def exempt_mask(names, P: Packed) -> np.ndarray:
+    """(K, Mb) uint8: 1 where capsule k's group is exempt from box b (`Box.exempt`)."""
+    m = np.zeros((len(names), len(P.box_m)), np.uint8)
+    if P.box_exempt and any(P.box_exempt):
+        grp = [str(n).split(".")[0] for n in names]
+        for b, ex in enumerate(P.box_exempt):
+            if ex:
+                m[:, b] = [g in ex for g in grp]
+    return m
 
 
 # --------------------------------------------------------------------------- from joint angles
