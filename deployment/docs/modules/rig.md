@@ -77,9 +77,11 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 | perimeter rails and corner legs | 4 + 4 | old model (rails from the drawing, legs assumed) |
 
 An arm's own struts, plate and clamp are obstacles for it like any other steel. Its base (the
-arm model's link0 capsules) sits among them. Link 1, which only turns about the base axis, passes
-just under the strut ends. Both are marked fixed, and the collision check leaves them out: their
-clearance to the rig does not depend on the pose, so the rig checks it once (see "Link 1"). An arm skips any box further from its shoulder than
+arm model's link0 capsules) sits among them. Link 0 is marked fixed, and the collision check leaves it out.
+Link 1, which only turns about the base axis, passes just under the strut ends. It is checked
+per pose like every other link, except against its own arm's struts, plate and clamp. Those
+boxes carry `exempt = ("link1",)` for that arm only (`hanger.exempt_links` in `rig.json`), and
+the rig checks that pair once (see "Link 1"). A neighbour's hanger exempts nothing. An arm skips any box further from its shoulder than
 **1.20 m + the steel clearance**: 1.20 m is how far any part of the arm, hand, holder and pen can
 get from the shoulder. That is a bound from the link lengths, checked by sampling: 1.079 m with
 the old body model and 1.028 m with the new one. Each arm keeps 16 to 23 boxes.
@@ -117,7 +119,9 @@ Every park keeps the demanded clearances, links 0 and 1 not counted (see "Link 1
 ## Link 1
 
 Link 1 turns about the base axis only, so a sweep over all of joint 1 is everything it can ever
-do. The collision check leaves it out, and `tests/test_rig.py` checks it once here.
+do. Against its own hanger it is exempt from the per-pose check, and `tests/test_rig.py` checks
+it once here, over all of joint 1. Against everything else it is checked per pose; the sweep
+below shows it is far from all of that anyway.
 
 Against the arm's own hanger steel (struts, plate, clamp), link 1 must keep 0.020, not 0.050
 (`link1_to_own_mount_m`, orchestrator, 2026-09-30). Link 1 and that steel are bolted to the same

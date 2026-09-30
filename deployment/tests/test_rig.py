@@ -306,7 +306,7 @@ def _link1_sweep(rig, aid, n=721):
     obs = rig.obstacles(aid, parked=others, walls=walls, for_planning=False)
     own, _ = _split_own(obs, aid)
     m_own = rig.clearance["link1_to_own_mount_m"]
-    own = Obstacles(tuple(replace(b, margin=m_own) for b in own.boxes))
+    own = Obstacles(tuple(replace(b, margin=m_own, exempt=()) for b in own.boxes))
     own_names = {b.name for b in own.boxes}
     classes = {
         "own hanger": own,
@@ -336,6 +336,14 @@ def test_gates(rig):
     assert abs(g.self_margin - 0.023) < 1e-15
 
 
+def test_own_hanger_exempts_link1_for_its_own_arm_only(rig):
+    for aid in rig.arm_ids:
+        obs = rig.obstacles(aid, for_planning=False)
+        own = {f"strut{aid}_wide", f"strut{aid}_narrow", f"plate{aid}", f"clamp{aid}"}
+        for b in obs.boxes:
+            assert b.exempt == (("link1",) if b.name in own else ())
+
+
 def test_parked_arm_capsules(rig):
     obs = rig.obstacles(13, parked=(17,), walls=(rig.wall_between(13, 71),))
     m = 0.050 + rig.allowance["arm_to_arm_m"]
@@ -345,8 +353,10 @@ def test_parked_arm_capsules(rig):
     body = rig.arm(17).body(rig.park_q(17)[None, :])
     p_table = rig.to_table(17, body.p0[0])
     T = rig.T_base_table(13)
-    np.testing.assert_allclose(np.array([c.p0 for c in obs.capsules]),
+    body_caps = [c for c in obs.capsules if c.name.startswith("parked17:")]
+    np.testing.assert_allclose(np.array([c.p0 for c in body_caps]),
                                p_table @ T[:3, :3].T + T[:3, 3], atol=1e-12)
+    assert len(body_caps) == len(obs.capsules)
 
 
 # --------------------------------------------------------------------------- 6. calibration

@@ -26,6 +26,7 @@ class SteelBox:
     lo_table: np.ndarray               # (3,)
     hi_table: np.ndarray               # (3,)
     source: str
+    owner: int | None = None           # the arm hanging from it, for hanger boxes
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,7 @@ def _hanger_boxes(arm_id: int, axis_xy: np.ndarray, side: str, h: dict) -> list[
 
     def box(name, x_a, x_b, half_y, za, zb, src):
         return SteelBox(name, np.array([min(x_a, x_b), ay - half_y, za]),
-                        np.array([max(x_a, x_b), ay + half_y, zb]), src)
+                        np.array([max(x_a, x_b), ay + half_y, zb]), src, arm_id)
 
     pc = ax + s * h["plate_centre_toward_wide_side_m"]
     return [
@@ -103,6 +104,7 @@ class Rig:
     allowance: dict                    # planning allowance, metres (rig.json "planning_allowance")
     shoulder_below_base: float
     body_reach: float                  # from the shoulder, see rig.json "reach"
+    own_hanger_exempt: tuple[str, ...] # body groups not checked against the arm's own hanger
     rows: tuple[tuple[int, int], ...]
     leader_sets: dict                  # phase -> tuple of arm ids
     wall_pairs: dict                   # phase -> tuple of (arm, arm) with a wall between them
@@ -138,6 +140,7 @@ class Rig:
             clearance=num(cfg["clearances"]), allowance=num(cfg["planning_allowance"]),
             shoulder_below_base=float(cfg["reach"]["shoulder_below_base_m"]),
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
+            own_hanger_exempt=tuple(cfg["hanger"]["exempt_links"]),
             rows=tuple(tuple(int(i) for i in r) for r in rp["rows"]),
             leader_sets={int(k): tuple(int(i) for i in v) for k, v in rp["leaders"].items()},
             wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v)
@@ -267,9 +270,10 @@ class Rig:
         R, t = T[:3, :3], T[:3, 3]
         m = self.clearance["arm_to_arm_m"] + (self.allowance["arm_to_arm_m"] if for_planning
                                               else 0.0)
-        return tuple(Capsule(f"parked{parked_id}:{name}", R @ body.p0[0, k] + t,
-                             R @ body.p1[0, k] + t, float(body.radius[k]), m)
-                     for k, name in enumerate(body.names))
+        caps = [Capsule(f"parked{parked_id}:{name}", R @ body.p0[0, k] + t,
+                        R @ body.p1[0, k] + t, float(body.radius[k]), m)
+                for k, name in enumerate(body.names)]
+        return tuple(caps)
 
     def obstacles(self, arm_id: int, parked=(), walls=(), for_planning: bool = True) -> Obstacles:
         """Everything `arm_id` must stay clear of, in its base frame: the paper, the steel it
@@ -281,7 +285,8 @@ class Rig:
         for b in near:
             Tb = T.copy()
             Tb[:3, 3] = T[:3, :3] @ (0.5 * (b.lo_table + b.hi_table)) + T[:3, 3]
-            boxes.append(Box(b.name, Tb, 0.5 * (b.hi_table - b.lo_table), steel_m))
+            exempt = self.own_hanger_exempt if b.owner == arm_id else ()
+            boxes.append(Box(b.name, Tb, 0.5 * (b.hi_table - b.lo_table), steel_m, exempt))
         planes = [self.paper(arm_id, for_planning)]
         planes += [self.wall_in_base(arm_id, w, for_planning) for w in walls]
         caps = [c for p in parked for c in self.parked_capsules(arm_id, p, for_planning)]
