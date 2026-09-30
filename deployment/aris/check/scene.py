@@ -1,7 +1,8 @@
 """What one arm must stay clear of in one phase, in the table frame, and how far it is.
 
 Obstacle classes, each with the clearance `rig.json` demands (not the planning allowance):
-  steel    every steel box of the rig, the arm's own struts, plate and clamp included
+  steel    every steel box of the rig, the arm's own struts, plate and clamp included (its link 1
+           excepted against its own hanger, as rig.json's hanger.exempt_links says)
   links    the paper, for the arm's moving links
   tool     the paper, for the tool (gripper, blades, holder, pencil tail), its own clearance
   pen      the paper, for the pen (free motions only), at the lifted-pen clearance
@@ -36,6 +37,8 @@ class Scene:
     box_names: tuple
     box_lo: np.ndarray          # (B,3)
     box_hi: np.ndarray
+    box_own: np.ndarray         # (B,) bool: this arm hangs from the box
+    own_exempt: tuple           # bodies not checked against the arm's own hanger ("link1")
     plane_names: tuple          # walls
     plane_n: np.ndarray         # (W,3), pointing to this arm's side
     plane_d: np.ndarray         # (W,)
@@ -84,8 +87,9 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool) -> Scen
                   pen=c["pen_lifted_to_paper_m"], walls=c["wall_m"],
                   parked=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
+    own = np.array([o == arm_id for o in rig.box_owner], bool)
     return Scene(model, mount.T_table_base, drawing, margin, rig.box_names, rig.box_lo,
-                 rig.box_hi, tuple(names), np.array(n, float).reshape(-1, 3),
+                 rig.box_hi, own, rig.own_exempt, tuple(names), np.array(n, float).reshape(-1, 3),
                  np.array(d, float), rig.paper_z, tuple(o_names), cat(o_a, (3,)),
                  cat(o_b, (3,)), cat(o_r, ()))
 
@@ -205,7 +209,7 @@ def _expand(keep, lb_block, N):
     return n_i[ok][order], p_i[ok][order], floor
 
 
-def _two_level(A, B, r, ob_lb, pair_bounds, pair_exact, n_obs, thr):
+def _two_level(A, B, r, ob_lb, pair_bounds, pair_exact, n_obs, thr, skip=None):
     """Moving capsules against static obstacles, pruned in three levels.
 
     Level 0: over a block of consecutive samples the whole arm fits in one ball (a motion is
@@ -213,6 +217,7 @@ def _two_level(A, B, r, ob_lb, pair_bounds, pair_exact, n_obs, thr):
     dropped.  Level 1: the same per capsule and block.  Level 2: each remaining (sample,
     capsule, obstacle) by the capsule's own ball, then exactly.  Pair index = obstacle*K + k.
     `ob_lb(points (M,3), obstacles (O,))` -> (M,O) lower bound on the distance beyond margin.
+    `skip` (O,K) bool: obstacle-capsule pairs that are not checked at all.
     """
     N, K = A.shape[:2]
     mid = 0.5 * (A + B)
@@ -227,7 +232,12 @@ def _two_level(A, B, r, ob_lb, pair_bounds, pair_exact, n_obs, thr):
                        _BLOCK)[:N]
     lb1 = (ob_lb(cen.reshape(-1, 3), live).reshape(nb, K, -1) - big[:, :, None])
     lb1 = lb1.transpose(0, 2, 1).reshape(nb, len(live) * K)                 # (o, k) pairs
-    n_i, p_i, floor = _expand(lb1 <= thr, lb1, N)
+    keep = lb1 <= thr
+    if skip is not None:                   # skipped pairs: neither kept nor a floor
+        off = skip[live].reshape(-1)
+        keep &= ~off
+        lb1 = np.where(off, np.inf, lb1)
+    n_i, p_i, floor = _expand(keep, lb1, N)
     k_i, o_i = p_i % K, live[p_i // K]
     lb, ub = pair_bounds(mid[n_i, k_i], rad[n_i, k_i], r[k_i], o_i)
     val, sel = _gather(N, n_i, lb, ub,
@@ -250,8 +260,17 @@ def _boxes(scene, A, B, r, names, thr):
 
     val, pair = _two_level(
         A, B, r, lambda c, o: geo.point_box(c[:, None], lo[o], hi[o]) - margin, bounds,
-        lambda a, b, rk, o: geo.segment_box(a, b, lo[o], hi[o]) - rk - margin, nb, thr)
+        lambda a, b, rk, o: geo.segment_box(a, b, lo[o], hi[o]) - rk - margin, nb, thr,
+        _exempt(scene, names))
     return val, pair, lambda p: f"{names[p % K]} / {scene.box_names[p // K]}"
+
+
+def _exempt(scene, names):
+    """(B,K): the arm's own hanger boxes against the bodies rig.json exempts from them (its
+    link 1 turns about the base axis only; a rig test settles that clearance once).  A
+    neighbour's hanger exempts nothing."""
+    body = np.array([n.split(".")[0] in scene.own_exempt for n in names], bool)
+    return scene.box_own[:, None] & body[None, :]
 
 
 def _parked(scene, A, B, r, names, thr):

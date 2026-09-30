@@ -28,7 +28,9 @@
   },
 
   "capsules": {
-    "source": "copied from aris/kernel/fr3.py (LINK_CAPSULES, HAND_CAPSULES) and aris/kernel/tool.py (_CAPSULES); hand, blades, holder and pencil tail refitted to the meshes 2026-09-29 (62 capsules). Frame 0..7 = link0..link7, 8 = hand. Row: name, frame, end a, end b, radius. link0 rows are bolted to the mount (fixed).",
+    "source": "copied from aris/kernel/fr3.py (LINK_CAPSULES, HAND_CAPSULES) and aris/kernel/tool.py (_CAPSULES); hand, blades, holder and pencil tail refitted to the meshes 2026-09-29 (62 capsules). Frame 0..7 = link0..link7, 8 = hand. Row: name, frame, end a, end b, radius. link0 rows are bolted to the mount.",
+    "fixed_frames": [0],
+    "fixed_note": "capsules on these frames do not move: not checked against obstacles; still checked against the arm itself and seen by neighbours",
     "rows": [
       ["link0.0", 0, [0.0000, 0.0000, -0.2380], [0.0000, 0.0000, -0.0750], 0.177],
       ["link0.1", 0, [0.0000, 0.0000, -0.0750], [0.0000, 0.0000, 0.0000], 0.176],

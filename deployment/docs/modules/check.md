@@ -45,8 +45,12 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
 
 The clearances are the **demanded** ones of rig.json (`clearances`), not the planning allowance
-on top. Capsules bolted to the base are not checked against obstacles (they hang inside the
-mount), only against the arm itself. During a drawing motion the pen is not checked against the
+on top. Capsules bolted to the base (link 0) are not checked against obstacles (they hang inside
+the mount), only against the arm itself. One more exception is data in rig.json
+(`hanger.exempt_links`, today `["link1"]`): an arm's link 1 is not checked against its **own**
+struts, plate and clamp, because it only turns about the base axis and a rig test settles that
+clearance once over the whole turn of joint 1 (`clearances.link1_to_own_mount_m`, 0.020). Against
+every other box, a neighbour's hanger included, link 1 is checked like any link. During a drawing motion the pen is not checked against the
 paper.
 
 ## Before the next phase: `check_phase_end`
@@ -122,11 +126,12 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | distances against dense sampling, parallel and point cases | never above, within the sampling error |
 | pen tip over the 4 687 frames of the old hover run of arm 71 against the old code | 5e-16 m |
 | faults caught, one test each | strut, pen 1 mm into the paper (reads -1.5 mm), wall, parked neighbour, self, corner (jerk 2.2 at 1 kHz, 9.0 at 4 kHz, of the limit), velocity 1 % over (reads 1.010; 0.99 passes), tip off the line by 0.5 mm (reads 0.51), stop halfway, empty motion, motion that does not move, start not at q_before, end not at rest, arm not moving in the phase |
-| same motion at 100 Hz, 1 kHz, 4 kHz and as retimed | all pass; tightest clearance 13.592 to 13.594 mm |
+| same motion at 100 Hz, 1 kHz, 4 kHz and as retimed | same verdict; tightest clearance within 0.5 mm |
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
-| reported against the truth (planners' kernel on a 20 kHz sampling) | 13.592 mm reported, 13.842 true: below, within 0.25 mm |
+| reported against the truth (planners' kernel on a 20 kHz sampling) | never above, within 0.25 mm (78.35 reported, 78.60 true) |
 | good free motions (arms 13, 31, 97) | pass |
-| phase end: all arms at park | pass; tightest arm 31 against its own strut, 63.8 mm (demanded 50) |
+| phase end: all arms at park | pass; tightest arm 31, link 6 against the west seam bar, 128.6 mm (demanded 50) |
+| own-hanger exemption, arm 71 at park | without it link1.0 reads 39.5 mm from its own strut (under 50); with it the tightest steel is link2.2, 184.7 mm |
 | phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
 | phase end: arm 71 into parked arm 31; an active arm missing | caught |
 | speed, CPU time, one core, 62 capsules | 6.8 s free motion 200 ms; 60 s drawing motion 635 ms (with the first 40-capsule model: 145 and 650 ms) |
@@ -143,6 +148,7 @@ native code), or a tighter bound on how far a capsule moves.
   provisionally 0: it must not touch). With the refitted tool capsules (62 capsules in all,
   2026-09-29) a straight line drawn by arm 31 passes: tool 14.5 mm above the paper with the hand
   square, 8.1 mm at the worst 15 degree lean; links 112.5 mm (a lower bound) and 84.2 mm.
+  (The hanging struts are 30 mm longer since 2026-09-30; they end 65 mm below the plate.)
 - The old hover run of arm 71 (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
   flown curve (the old code read 89 at 48 Hz), jerk and the 1 kHz/4 kHz comparison, and link 6
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).

@@ -25,6 +25,9 @@ class ArmMount:
 class RigData:
     mounts: dict                   # arm_id -> ArmMount
     box_names: tuple               # steel, table frame, axis aligned
+    box_owner: tuple               # per box: the arm hanging from it, or None
+    own_exempt: tuple              # body names (e.g. "link1") not checked against the arm's own
+                                   # hanger boxes (rig.json hanger.exempt_links)
     box_lo: np.ndarray             # (B,3)
     box_hi: np.ndarray             # (B,3)
     clearance: dict                # the demanded clearances, metres
@@ -37,7 +40,7 @@ def read_rig(config_dir) -> RigData:
     config_dir = Path(config_dir)
     cfg = json.loads((config_dir / "rig.json").read_text())
     mounts = {}
-    names, lo, hi = [], [], []
+    names, lo, hi, owner = [], [], [], []
     for a in cfg["arms"]["list"]:
         aid = int(a["id"])
         T = np.eye(4)
@@ -47,9 +50,9 @@ def read_rig(config_dir) -> RigData:
         T, tip, status = _calibration(config_dir / "calibration" / f"{aid}.json", aid, T)
         mounts[aid] = ArmMount(aid, T, np.asarray(a["park_q_rad"], float), tip, status)
         for n, l, h in _hanger(aid, a, cfg["hanger"]):
-            names.append(n), lo.append(l), hi.append(h)
+            names.append(n), lo.append(l), hi.append(h), owner.append(aid)
     for b in cfg["steel"]["boxes"]:
-        names.append(b["name"]), lo.append(b["lo_m"]), hi.append(b["hi_m"])
+        names.append(b["name"]), lo.append(b["lo_m"]), hi.append(b["hi_m"]), owner.append(None)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)
     if np.any(hi < lo):
         raise ValueError("rig.json: a steel box has hi below lo")
@@ -59,7 +62,8 @@ def read_rig(config_dir) -> RigData:
         clearance["tool_to_paper_m"] = clearance["body_to_paper_m"]
         notes.append("rig.json has no clearances.tool_to_paper_m: the tool keeps "
                      "body_to_paper_m")
-    return RigData(mounts, tuple(names), lo, hi, clearance,
+    return RigData(mounts, tuple(names), tuple(owner),
+                   tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
                    float(cfg["table"]["paper_surface_z_m"]), tuple(notes))
 
 

@@ -320,6 +320,24 @@ def test_agrees_with_the_planners(arm_id):
     assert max(worst.values()) < 1e-6, worst
 
 
+def test_link1_exempt_from_its_own_hanger_only():
+    """rig.json hanger.exempt_links: an arm's link 1 is not checked against its own struts,
+    plate and clamp (a rig test settles that once); it is against every other box."""
+    from dataclasses import replace as dc_replace
+    scene = build_scene(MINE, 71, (), (), False)
+    q = MINE.mounts[71].park_q[None]
+    strict = clearance(dc_replace(scene, own_exempt=()), q)
+    rule = clearance(scene, q)
+    print(f"\narm 71 at park, steel: without the exemption {strict.value['steel'][0] * 1e3:.2f} mm "
+          f"({strict.closest('steel', 0)}), with it {rule.value['steel'][0] * 1e3:.2f} mm "
+          f"({rule.closest('steel', 0)})")
+    assert MINE.own_exempt == ("link1",)
+    assert strict.closest("steel", 0).startswith("link1") and "71" in strict.closest("steel", 0)
+    assert not (rule.closest("steel", 0).startswith("link1") and "71" in rule.closest("steel", 0))
+    other = dc_replace(scene, box_own=np.zeros_like(scene.box_own))       # nobody's own hanger
+    assert clearance(other, q).value["steel"][0] == strict.value["steel"][0]
+
+
 # =========================================================================== faults
 
 
