@@ -1,0 +1,87 @@
+# The controllers of one arm.  This file is the template: `aris-robot bringup` writes one copy
+# per arm with that arm's pen tip (`tip_offset_flange`, from the rig) and, for fake hardware,
+# the position interface for the trajectory controller.  Node names are wildcards so the same
+# file works in every namespace (arm_<id>).
+#
+# Two controllers take the arm, never together (the driver switches between them):
+#   fr3_arm_controller              joint trajectory controller: free moves, parks, jogs
+#   aris_joint_impedance_controller joint impedance around the streamed trajectory, pen force
+#                                   fed forward: lower, draw, lift, touch
+
+/**/controller_manager:
+  ros__parameters:
+    update_rate: 1000  # Hz
+
+    fr3_arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    aris_joint_impedance_controller:
+      type: aris_controllers/JointImpedanceController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    franka_robot_state_broadcaster:
+      type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
+
+/**/franka_robot_state_broadcaster:
+  ros__parameters:
+    arm_id: fr3
+    update_rate: 100   # the driver reads the robot mode and errors; it needs no 1 kHz copy
+
+/**/joint_state_broadcaster:
+  ros__parameters:
+    update_rate: 100
+
+/**/fr3_arm_controller:
+  ros__parameters:
+    joints: [fr3_joint1, fr3_joint2, fr3_joint3, fr3_joint4, fr3_joint5, fr3_joint6, fr3_joint7]
+    command_interfaces: [effort]
+    state_interfaces: [position, velocity]
+    # The trajectory is flown as sent: positions and velocities at their times, joined by
+    # the cubic that matches both (the planner's own definition).  Never re-timed.
+    interpolation_method: splines
+    allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: false
+    open_loop_control: false
+    # the operator stack's gains (franka_fr3_moveit_config/config/fr3_ros_controllers.yaml)
+    gains:
+      fr3_joint1: {p: 600.0, d: 30.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint2: {p: 600.0, d: 30.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint3: {p: 600.0, d: 30.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint4: {p: 600.0, d: 30.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint5: {p: 250.0, d: 10.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint6: {p: 150.0, d: 10.0, i: 0.0, i_clamp: 1.0}
+      fr3_joint7: {p: 50.0, d: 5.0, i: 0.0, i_clamp: 1.0}
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 0.5
+      # abort a move that strays this far from the trajectory (rad), and the goal tolerance
+      fr3_joint1: {trajectory: 0.05, goal: 0.005}
+      fr3_joint2: {trajectory: 0.05, goal: 0.005}
+      fr3_joint3: {trajectory: 0.05, goal: 0.005}
+      fr3_joint4: {trajectory: 0.05, goal: 0.005}
+      fr3_joint5: {trajectory: 0.05, goal: 0.005}
+      fr3_joint6: {trajectory: 0.05, goal: 0.005}
+      fr3_joint7: {trajectory: 0.05, goal: 0.005}
+
+/**/aris_joint_impedance_controller:
+  ros__parameters:
+    arm_id: fr3
+    # Joint stiffness and damping.  About 170 to 200 N/m at the pen tip in its softest
+    # direction at drawing poses; along the paper normal it is 5 to 20 times stiffer (see
+    # docs/modules/robot.md, "How stiff the pen is").  Values must be floats.
+    k_gains: [300.0, 300.0, 250.0, 250.0, 40.0, 40.0, 15.0]
+    d_gains: [30.0, 30.0, 25.0, 20.0, 4.0, 4.0, 1.5]
+    max_torques: [75.0, 75.0, 75.0, 75.0, 11.0, 11.0, 11.0]  # FR3 rated 87 / 12 Nm
+    max_torque_rate: 990.0          # Nm/s per joint; libfranka refuses 1000
+    max_force: 5.0                  # N, largest pen force fed forward
+    starve_timeout: 0.02            # s the stream may run dry before the arm holds
+    max_tracking_error: 0.05        # rad on any joint: hold where the arm is
+    start_tolerance: 0.01           # rad, a stream must start this close to where it holds
+    idle_force_timeout: 2.0         # s without a stream before the pen force is taken away
+    idle_force_ramp: 1.0            # s to take it away
+    tip_offset_flange: [0.0, 0.0, 0.0]   # written per arm from the rig's pen
+    use_model: true                 # false only with fake hardware (no model there)
+    status_rate: 250.0              # Hz
+    queue_capacity: 8192            # samples (8 s at 1 kHz)

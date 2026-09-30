@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aris_robot"
+version = "0.1.0"
+description = "Operator PC side of the drawing rig: arm driver, pen force, job runner"
+requires-python = ">=3.10"
+# rclpy and the ROS messages come from the ROS 2 install (venv with --system-site-packages)
+dependencies = ["aris", "numpy", "pyyaml"]
+
+[project.optional-dependencies]
+dev = ["pytest", "fastapi", "uvicorn"]
+
+[project.scripts]
+aris-robot = "aris_robot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aris_robot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: takes more than a few seconds; left out of the quick set"]

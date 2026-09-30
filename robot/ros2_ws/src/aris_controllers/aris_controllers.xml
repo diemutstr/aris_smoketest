@@ -1,0 +1,10 @@
+<library path="aris_controllers">
+  <class name="aris_controllers/JointImpedanceController"
+         type="aris_controllers::JointImpedanceController"
+         base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Joint impedance around a streamed joint trajectory (aris_msgs/Reference, the cubic between
+      samples), with the pen force fed forward at the tip (J^T f).  Gravity is added by the robot.
+    </description>
+  </class>
+</library>
