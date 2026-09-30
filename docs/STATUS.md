@@ -10,7 +10,7 @@ keeps the old code and is where the first session's agents worked. Both are push
 
 Everything is committed on branch `aris2` of `/home/franka/aris_project/aris_sixarm`
 (last commit of the session: the snapshot "deployment round 2: local planner ..."). Nothing of
-`deployment/` has been pushed. 145 quick tests pass (`cd deployment && ../.venv/bin/python -m
+`deployment/` has been pushed. 145 quick tests pass (`.venv/bin/python -m
 pytest tests -q -m "not slow"`, under a minute).
 
 ## Where each module stands
@@ -115,9 +115,9 @@ consistent state:
 ```
 cd /home/franka/aris_project/aris_sixarm
 git status --short deployment            # see what the agents left uncommitted
-git stash push -- deployment/aris/kernel deployment/native/collide deployment/tests/test_kernel_collide*.py
-.venv/bin/pip install ./deployment/native/collide ./deployment/native/fr3_ik ./deployment/native/retime
-cd deployment && ../.venv/bin/python -m pytest tests -q -m "not slow"
+git stash push -- aris/kernel native/collide tests/test_kernel_collide*.py
+.venv/bin/pip install ./native/collide ./native/fr3_ik ./native/retime
+.venv/bin/python -m pytest tests -q -m "not slow"
 ```
 
 The same three `pip install` lines are what a fresh clone needs before anything runs.

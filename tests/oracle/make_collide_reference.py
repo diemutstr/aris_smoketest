@@ -1,8 +1,8 @@
 """Run the old distance code on fixed random inputs and save its answers.
 
 Run as its own process from the repository root:
-    ARIS_RIG=proposed ARIS_TOOL=lateral .venv/bin/python deployment/tests/oracle/make_collide_reference.py
-Writes deployment/tests/data/collide_old_segbox.npz and collide_old_segseg.npz.
+    ARIS_RIG=proposed ARIS_TOOL=lateral .venv/bin/python tests/oracle/make_collide_reference.py
+Writes tests/data/collide_old_segbox.npz and collide_old_segseg.npz.
 """
 import os
 import sys
@@ -11,12 +11,12 @@ from pathlib import Path
 import numpy as np
 
 assert os.environ.get("ARIS_RIG") == "proposed" and os.environ.get("ARIS_TOOL") == "lateral"
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from aris_sixarm.rig_final import segment_box_clearance  # noqa: E402
 from aris_sixarm.coordination import seg_seg_dist  # noqa: E402
 
-OUT = ROOT / "deployment" / "tests" / "data"
+OUT = ROOT / "tests" / "data"
 rng = np.random.default_rng(20260929)
 
 # ---- segment vs axis-aligned box: random, crossing, grazing a face, parallel to a face

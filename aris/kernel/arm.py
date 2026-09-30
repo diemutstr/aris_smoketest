@@ -20,7 +20,7 @@ from aris.types import Body, Limits, Tool
 try:
     import aris_fr3_ik
 except ImportError as e:        # an installation fault, not a refusal
-    raise ImportError("the FR3 IK is not installed; from deployment/ run "
+    raise ImportError("the FR3 IK is not installed; from the repository root run "
                       "`../.venv/bin/pip install ./native/fr3_ik`") from e
 
 __all__ = ["Arm", "CapsuleTable", "ChainTable", "default_tool"]

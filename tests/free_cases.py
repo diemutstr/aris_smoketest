@@ -1,7 +1,7 @@
 """The fixed test set of the free-space planner: 1 000 pairs of lift-off configurations for arm
 31 (phase 2) and 1 000 for arm 13 (phase 1).
 
-Run `../.venv/bin/python tests/free_cases.py [cache_dir]` from deployment/ to (re)build
+Run `../.venv/bin/python tests/free_cases.py [cache_dir]` from the repository root to (re)build
 `tests/data/free_cases_<arm>.npz` (cache_dir: the local planner's kinematic table).  Everything
 is seeded, so a rebuild gives the same file.
 

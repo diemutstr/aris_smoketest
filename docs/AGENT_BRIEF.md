@@ -1,30 +1,30 @@
-# Brief for every agent working on `deployment/`
+# Brief for every agent working on this repository
 
 ## What this is
 
 Six Franka FR3 arms hang upside down from a frame over a paper-covered table and draw with
-pens held in a holder on the hand. `deployment/` is a clean rebuild of the planning and
+pens held in a holder on the hand. This repository (branch `aris3`) is a clean rebuild of the planning and
 execution software. The old code (`aris_sixarm/`, `scripts/`, about 90 000 lines) works but is
 slow and hard to understand. The project lead, Pete, wants to understand every module of the new
 code and how the modules compose. Clean and small beats clever.
 
-Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. New code: `deployment/`.
+Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. The package is at the repository root (moved out of `deployment/` on 2026-09-30).
 
 ## Read before writing anything
 
-1. `deployment/docs/DESIGN.md` — what the system is
-2. `deployment/docs/BUILD.md` — layout, import rule, the calls between modules, code rules
-3. `deployment/aris/types.py` — the shared data types
+1. `docs/DESIGN.md` — what the system is
+2. `docs/BUILD.md` — layout, import rule, the calls between modules, code rules
+3. `aris/types.py` — the shared data types
 4. `legacy_docs/STAGED_LESSONS_2026-09-29.md` (repository root) — what the old planner learned
    the hard way; read the parts that touch your module and do not repeat those mistakes
-5. `deployment/docs/OPTIMIZATION_NOTES.md` — ideas parked for later; do not build them now unless
+5. `docs/OPTIMIZATION_NOTES.md` — ideas parked for later; do not build them now unless
    your task says so
 
 ## Environment
 
 - Interpreter: `/home/franka/aris_project/aris_sixarm/.venv/bin/python` (Python 3.12, numpy 2.5,
   scipy 1.18, pydrake 1.56, matplotlib, pytest). The package `aris` is installed editable.
-- Run your tests with `cd deployment && ../.venv/bin/python -m pytest tests/<yours> -q`.
+- Run your tests with `.venv/bin/python -m pytest tests/<yours> -q`.
 - g++ 13, cmake and ninja are installed. numba, pybind11 and toppra are not. Do not add a
   dependency without saying so in your report; prefer none.
 - 32 cores. No robot, no ROS on this machine.
@@ -36,15 +36,15 @@ Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. Ne
   lessons file is `legacy_docs/STAGED_LESSONS_2026-09-29.md`, and file and line references in
   it point at branch `aris2`.
 - The new package never imports the old one.
-- Reference numbers produced by the old code are committed as data under `deployment/tests/data/`
-  (see `deployment/tests/oracle/README.md`); tests read the files, never the old code.
+- Reference numbers produced by the old code are committed as data under `tests/data/`
+  (see `tests/oracle/README.md`); tests read the files, never the old code.
 - The rig is at height `h = 0.970` m (paper to mounting plate) with the lateral pen holder
   (`pen_lat = 0.0860369`, `pen_ext = 0.0460262`).
 
 ## Rules
 
-- Write only inside the folders your task names, plus your own tests under `deployment/tests/`
-  and your own page under `deployment/docs/modules/`. Other agents are working in the sibling
+- Write only inside the folders your task names, plus your own tests under `tests/`
+  and your own page under `docs/modules/`. Other agents are working in the sibling
   folders at the same time.
 - Do not edit `aris/types.py`, `docs/BUILD.md`, `docs/DESIGN.md` or this file. If you need a
   change to a shared type or a contract, say so in your report.

@@ -7,32 +7,33 @@ how the code is laid out and in which order it is built.
 ## Layout: one folder per box of the design
 
 ```
-deployment/
-  pyproject.toml
-  config/
-    rig.json              the table, the canvas, where the arms hang, the frame, the margins
-    calibration/          one dated file per arm, written only by the calibration job
-  aris/
-    types.py              the shared data types; the only thing every module imports
-    rig.py                reads config, turns table-frame things into one arm's base frame
-    kernel/
-      arm.py              the arm: kinematics, IK, limits, collision body
-      collide.py          distance between the arm's body and obstacles
-      retime.py           joint path -> timed trajectory inside the limits
-    local/                local planner
-    free/                 free-space planner
-    sequencer/            sequencer
-    arm_planner.py        sequencer + local + free = the arm planner
-    system/               system planner
-    check/                independent checker
-    execute/              queue, executor, arm drivers (simulated, real)
-    server/               drawing server
-    calib/                calibration job
-    gui/
-    cli.py                the one command: `aris ...`
-  native/                 compiled code: fr3_ik (the IK), collide (the collision check)
-  tests/                  mirrors the folders above
-  docs/
+pyproject.toml
+config/
+  rig.json              the table, the canvas, where the arms hang, the frame, the margins
+  calibration/          one dated file per arm, written only by the calibration job
+aris/
+  types.py              the shared data types; the only thing every module imports
+  rig.py                reads config, turns table-frame things into one arm's base frame
+  kernel/
+    arm.py              the arm: kinematics, IK, limits, collision body
+    collide.py          distance between the arm's body and obstacles
+    retime.py           joint path -> timed trajectory inside the limits
+  local/                local planner
+  free/                 free-space planner
+  sequencer/            sequencer
+  arm_planner.py        sequencer + local + free = the arm planner
+  system/               system planner
+  check/                independent checker
+  execute/              queue, executor, arm drivers (simulated, real)
+  server/               drawing server
+  calib/                calibration job
+  gui/
+  cli.py                the one command: `aris ...`
+native/                 compiled code: fr3_ik (the IK), collide (the collision check), retime
+tests/                  mirrors the folders above
+docs/                   design, build plan, status, one page per module
+assets/                 the installation model and meshes, the vendor arm description, drawings
+legacy_docs/            the old planner's documentation (its code is on branch aris2 only)
 ```
 
 ## What may import what

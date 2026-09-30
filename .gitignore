@@ -1,9 +1,9 @@
-.venv/
-__pycache__/
-*.pyc
-*.egg-info/
 build/
 dist/
-*.so
-.pytest_cache/
+*.egg-info/
 out/
+*.pyc
+__pycache__/
+.pytest_cache/
+*.so
+.venv/

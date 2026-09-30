@@ -26,7 +26,7 @@ import numpy as np
 
 from aris.types import Line
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).resolve().parent / "data"
 WORD_FILE = ROOT / "assets" / "site" / "h0970" / "unknown_strokes.json"
 CORPUS_FILE = DATA / "local_corpus.npz"
@@ -438,11 +438,11 @@ if __name__ == "__main__":
     ap.add_argument("--sets", default=",".join(SETS))
     ap.add_argument("--figure", action="store_true", help="draw the module page's figure only")
     a = ap.parse_args()
-    rig = Rig.load(ROOT / "deployment" / "config")
+    rig = Rig.load(ROOT / "config")
     if a.figure:
         example = [x for x in random_lines(rig.T_table_base(31)[:2, 3], 31)
                    if x.id == FIGURE_LINE][0]
-        figure(rig, 31, example, ROOT / "deployment" / "docs" / "modules" / "figures"
+        figure(rig, 31, example, ROOT / "docs" / "modules" / "figures"
                / "local_example.png")
         raise SystemExit
     ref_file = DATA / "local_reference.npz"

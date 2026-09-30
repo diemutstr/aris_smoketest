@@ -6,7 +6,7 @@ For arm 31 (phase 2 obstacles) and arm 13 (phase 1), from the park configuration
   lines         100 random straight lines (every second one of local_cases.random_lines)
 Every motion goes through the independent checker (`aris.check.check`) with the arm's phase.
 
-Run from deployment/:
+Run from the repository root:
     ../.venv/bin/python tests/arm_cases.py [--arms 31,13] [--cases word,...] [--figure]
 It prints the numbers of docs/modules/sequencer.md and arm_planner.md.
 """

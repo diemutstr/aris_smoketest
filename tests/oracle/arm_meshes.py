@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 MESH = ROOT / "assets" / "system_model" / "meshes"
 GLTF_ZUP = np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])
 

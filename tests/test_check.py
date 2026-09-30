@@ -26,7 +26,7 @@ from aris.types import (DrawRules, JointPath, Line, Motion, Obstacles, Phase, Pi
 
 DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
-REPO = DEPLOY.parent
+REPO = DEPLOY   # the package is at the repository root
 RIG = Rig.load(CONFIG)
 MINE = read_rig(CONFIG)
 MINE_MODEL = load_model()
