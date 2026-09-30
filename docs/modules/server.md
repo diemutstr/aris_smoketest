@@ -90,8 +90,11 @@ not read in this round.**
 ## The fit rule
 
 The drawing area is the rectangle centred on the table that the system planner accepts,
-worked out from its drawable maps (1.56 x 3.56 m at the 2 cm grid, the same as rig.json's
-`canvas.drawing_area_m`; `rig.py` does not read that entry yet). If a point of the drawing lies
+worked out from its drawable maps (1.56 x 3.56 m at the 2 cm grid). That is the law. rig.json
+carries the same rectangle (`canvas.drawing_area_m`); `/rig` shows both, and the server refuses
+to start when they differ by more than one grid cell ("the rig file is stale"). The check is
+live once `rig.py` reads that entry (as `Rig.drawing_area_m`); until then `/rig` shows it as
+not read. If a point of the drawing lies
 outside it, the whole drawing is scaled uniformly **about the table centre** until it fits;
 the scale is in the job state and the report. A drawing that fits is not touched. A drawing
 that would shrink below half its size is refused (the job fails at once). The drawing is not
@@ -143,7 +146,7 @@ A park job's report says per arm "parked", "already at its park" or why not.
 - Park all arms from random configurations up to 0.05 rad from their parks (five arms to move):
   planned and checked in 7.9 s, done at 8.2 s; the standing arms' footprints take most of it
   (1.1 s each).
-- Quick tests: 7 in 31 s.
+- Quick tests: 9 in 40 s.
 
 ## What is not built
 

@@ -15,9 +15,9 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from aris.check import check
 from aris.free import plan as free_plan
 from aris.kernel.footprint import footprint, transform_field
-from aris.server.pipeline import guarded_check
 from aris.system.phases import cannot_touch
 from aris.system.planner import AT_PARK
 from aris.types import Capsule, Motion, Phase, Refusal, Trajectory
@@ -81,10 +81,7 @@ def plan_park(st, where: dict) -> list[Step]:
         if isinstance(m, Refusal):
             steps.append(Step(a, phase, why=f"free-space planner: {m.reason}: {m.detail}"))
             continue
-        v = guarded_check(st.config_dir, a, m, phase, now[a], tuple(fields))
-        if isinstance(v, str):
-            steps.append(Step(a, phase, m, why=v))
-            continue
+        v = check(st.config_dir, a, m, phase, now[a], fields=tuple(fields))
         if not v.passed:
             steps.append(Step(a, phase, m, v, tuple(fields),
                               why="checker: " + ", ".join(v.failed)))

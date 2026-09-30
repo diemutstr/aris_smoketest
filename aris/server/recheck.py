@@ -59,9 +59,6 @@ def recheck(job_dir: Path, config_dir: Path, workers: int, say, verdict, assumpt
         n_pass = 0
         for name, arm, e, fut in rows:
             v = fut.result()
-            if isinstance(v, str):
-                say(f"{name:<12} arm {arm:<3} motion {e.index:<4} {e.motion.kind:<5} FAIL  {v}")
-                continue
             n_pass += bool(v.passed)
             say(f"{name:<12} arm {arm:<3} motion {e.index:<4} {e.motion.kind:<5} "
                 f"{'pass' if v.passed else 'FAIL'}  tightest {v.tightest}, clearance "

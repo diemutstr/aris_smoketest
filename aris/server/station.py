@@ -38,6 +38,7 @@ class Station:
     check_workers: int                 # processes for the checker
     settings: Settings = field(default_factory=Settings)
     drawing_area: tuple = ()           # (x, y) full widths, m, centred on the table
+    file_area: tuple | None = None     # the same as written in rig.json, None if not read
 
     @property
     def rules(self):
@@ -100,13 +101,37 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         st.cache_dir.mkdir(parents=True, exist_ok=True)
     if with_area:
         st.drawing_area = drawing_area(st)
+        st.file_area = file_area(rig)
+        stale = area_mismatch(st.drawing_area, st.file_area, cfg.grid_step)
+        if stale:
+            return Refusal("stale_rig_file", stale)
     return st
+
+
+def file_area(rig) -> tuple | None:
+    """rig.json's `canvas.drawing_area_m`, as the rig read it (`Rig.drawing_area_m`); None
+    while rig.py does not read it."""
+    a = getattr(rig, "drawing_area_m", None)
+    return None if a is None else tuple(float(x) for x in np.asarray(a).reshape(2))
+
+
+def area_mismatch(maps_area, rig_area, cell: float) -> str:
+    """Why the rig file's drawing area is stale, or "".  The maps' area is the law (the
+    planner refuses against it); the file must agree to one grid cell."""
+    if rig_area is None:
+        return ""
+    gap = max(abs(a - b) for a, b in zip(maps_area, rig_area))
+    if gap <= cell + 1e-9:
+        return ""
+    return (f"rig.json's canvas.drawing_area_m {rig_area[0]:.3f} x {rig_area[1]:.3f} m differs "
+            f"from the area the drawable maps give, {maps_area[0]:.3f} x {maps_area[1]:.3f} m, "
+            f"by {100 * gap:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "
+            "is stale; write the maps' area into it")
 
 
 def drawing_area(st: Station) -> tuple:
     """The area the system planner accepts, from its own drawable maps (read from the cache,
-    or built): the same number it refuses a drawing against.  rig.json carries the same
-    rectangle (`canvas.drawing_area_m`), but `rig.py` does not read it yet."""
+    or built): the same number it refuses a drawing against."""
     ph = all_phases(st.rig)
     maps = maps_mod.load_or_build(st.rig, ph, st.rules.gates, st.settings, st.cache_dir,
                                   st.workers)

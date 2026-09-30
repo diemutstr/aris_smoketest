@@ -26,7 +26,6 @@ import json
 import queue as queue_mod
 import threading
 import time
-import traceback
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -119,28 +118,10 @@ def context_path(queue) -> Path:
 # --------------------------------------------------------------------------- checking
 
 
-def guarded_check(config_dir, arm, motion, phase, q_before, fields=()):
-    """The checker's verdict, or (a string) why there is none.
-
-    TEMPORARY, until `ob_lb` in aris/check/scene.py `_fields` accepts an empty list: the
-    checker raises when every footprint is pruned as further than its threshold.  Pruned in
-    the first measurement of the whole motion means every footprint is at least that threshold
-    (above zero) away everywhere, so the verdict without them is the verdict.  Pruned only
-    while refining is not that proof, and there is no verdict."""
-    try:
-        return check(config_dir, arm, motion, phase, q_before, fields=fields)
-    except ValueError as e:
-        frames = [f.name for f in traceback.extract_tb(e.__traceback__)]
-        if "need at least one array" not in str(e) or "_fields" not in frames:
-            raise
-        if "_split" in frames:
-            return "the checker could not measure the footprints (checker bug)"
-        return check(config_dir, arm, motion, phase, q_before)
-
-
 def check_one(args):
     """One motion through the checker; runs in a worker process."""
-    return guarded_check(*args)
+    config_dir, arm, motion, phase, q_before, fields = args
+    return check(config_dir, arm, motion, phase, q_before, fields=fields)
 
 
 def check_pool(workers: int):
@@ -189,16 +170,6 @@ def _pump(st, lines, arm_configs, rep, stop, box) -> None:
         box.put(("error", f"{type(e).__name__}: {e}"))
 
 
-@dataclass(frozen=True)
-class _NoVerdict:
-    """A check that gave no verdict counts as failed; the queue refuses it."""
-    tightest: str
-    passed: bool = False
-    min_clearance: float = float("nan")
-    min_clearance_at: str = ""
-    failed: tuple = ("no verdict",)
-
-
 class _Queuer:
     """Verdicts in, motions queued in the planner's order."""
 
@@ -219,8 +190,6 @@ class _Queuer:
         key = (name, arm)
         i = self.index.get(key, 0)
         self.index[key] = i + 1
-        if isinstance(v, str):                      # no verdict: refused like a failed one
-            v = _NoVerdict(v)
         note_verdict(self.out, v, f"{name}, arm {arm}, motion {i}")
         if key in self.cut:
             if motion.piece is not None:

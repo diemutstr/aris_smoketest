@@ -49,6 +49,7 @@ def rig_view(st) -> dict:
         arms={str(a): dict(T_table_base=rig.T_table_base(a), park_q=rig.park_q(a),
                            calibration=rig.calibration_status(a)) for a in rig.arm_ids},
         drawing_area_m=list(st.drawing_area), canvas_m=rig.canvas_size,
+        drawing_area_rig_file_m=None if st.file_area is None else list(st.file_area),
         **st.assumptions()))
 
 

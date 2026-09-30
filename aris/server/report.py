@@ -28,7 +28,7 @@ def line_length(line) -> float:
 
 def _union(iv):
     out = []
-    for a, b in sorted(iv):
+    for a, b in sorted(tuple(x) for x in iv):
         if out and a <= out[-1][1] + 1e-12:
             out[-1][1] = max(out[-1][1], b)
         else:
