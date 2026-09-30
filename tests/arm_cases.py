@@ -87,7 +87,8 @@ def _check_one(job):
     row = "" if worst is None else (f"{worst.name} {worst.value:.5g} (limit {worst.limit:.4g} "
                                     f"{worst.unit}) {worst.detail}")
     failed = tuple((m.name, m.value, m.limit, m.detail) for m in v.measurements if not m.passed)
-    return v.passed, failed, row, v.min_clearance
+    slowest = next((m.value for m in v.measurements if m.name == "never stops"), None)
+    return v.passed, failed, row, v.min_clearance, slowest
 
 
 def save_motion(path, arm_id: int, motion, q_before, note: str = "") -> None:
@@ -140,6 +141,14 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
         tight = min(c[3] for c in checks) if checks else float("nan")
         out.append(f"  checker: {passed} of {len(checks)} motions pass; smallest clearance "
                    f"beyond demanded {tight * 1e3:.1f} mm")
+        slow = sorted((c[4], m.piece.line_id) for m, c in zip(motions, checks)
+                      if m.kind == "draw" and c[4] is not None)
+        if slow:
+            under = [x for x in slow if x[0] < 0.0049]      # below 5 mm/s, beyond rounding
+            out.append(f"  slowest mid-line pen speed per drawing: lowest {slow[0][0] * 1e3:.2f} "
+                       f"mm/s ({slow[0][1]}), median {slow[len(slow) // 2][0] * 1e3:.1f} mm/s; "
+                       f"{len(under)} of {len(slow)} under 4.9 mm/s"
+                       + ("".join(f"; {i} {v * 1e3:.2f}" for v, i in under[:6])))
         fails = {}
         for r, c in zip(rl, checks):
             if not c[0]:

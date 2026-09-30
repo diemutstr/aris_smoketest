@@ -103,31 +103,32 @@ Refill 128 keeps the first motion under 5 s on 1 000 lines and the pen-up cost a
 the time on the rig is what counts, and 4 s to the first motion is fine); 32 starts in 1 to 2 s
 but costs up to 19 % of pen-up time.
 
-## Measured (2026-09-30, branch aris3, one process, machine load 4 to 15)
+## Measured (2026-09-30, branch aris3, smooth timing, 8 workers, batches of 32 with refill 128, machine load 7 to 11)
 
-Planning CPU and time to the first motion, from park back to park, kinematic table on (full
-table of cases in sequencer.md):
+Planning CPU (the 8 workers included) and wall time, time to the first motion, from park back to
+park, kinematic table on (full table of cases in sequencer.md):
 
-| arm, case | lines | planning CPU / wall s | of which local planner CPU s | first motion CPU / wall s | motion on the rig s |
+| arm, case | lines | planning CPU / wall s | first motion, wall s | motion on the rig s | pen-up share |
 |---|---|---|---|---|---|
-| 31 word | 13 | 2.3 / 2.3 | 1.6 | 1.6 / 1.7 | 166.0 |
-| 31 scatter | 27 | 4.1 / 4.1 | 2.8 | 2.8 / 2.9 | 223.8 |
-| 31 lines | 100 | 37.9 / 38.3 | 31.5 | 31.5 / 31.9 | 2420.7 |
-| 13 word | 13 | 2.0 / 2.0 | 1.5 | 1.5 / 1.5 | 153.2 |
-| 13 hatch | 43 | 17.9 / 18.2 | 14.7 | 14.8 / 15.1 | 1578.7 |
-| 13 lines | 100 | 30.7 / 30.8 | 25.1 | 25.2 / 25.3 | 2386.9 |
+| 31 word | 13 | 7.6 / 2.2 | 1.3 | 170.8 | 0.276 |
+| 31 scatter | 27 | 12.8 / 3.5 | 1.6 | 217.5 | 0.337 |
+| 31 lines | 100 | 58.6 / 14.6 | 6.6 | 2428.3 | 0.093 |
+| 13 word | 13 | 6.7 / 2.0 | 1.1 | 165.5 | 0.260 |
+| 13 hatch | 43 | 26.7 / 6.9 | 3.2 | 1582.8 | 0.042 |
+| 13 lines | 100 | 46.0 / 12.2 | 5.1 | 2416.2 | 0.090 |
 
-- Planning is 1 to 2 % of the motion's duration; the arm never waits for the planner after the
-  first motion.
-- **Word, arm 31, against the old planner:** planned in 2.3 s of CPU against 66.8 s; first
-  motion after 1.6 s. At the old drawing speed (80 mm/s) the motion takes 82.7 s against the old
-  67.8 s; at the new rules' 20 mm/s, 166.0 s. The new tour lifts the pen 13 times and draws
-  2.42 m of the word; 0.198 m of the last "n" lies beyond the arm's reach.
-- With `workers` the local planner's wall time drops with the number of processes (see
-  local.md); the sequencer runs in one process.
+- Planning wall time is under 1 % of the motion's duration; the arm never waits for the planner
+  after the first motion.
+- Smooth timing (commit d8895c8) against corner timing: time on the rig 0.2 to 2.5 % shorter,
+  pen-up time about the same, every motion passes the checker; one 72 mm scatter piece of arm 31
+  is lost (see sequencer.md).
+- **Word, arm 31, against the old planner:** planned in 2.2 s wall (7.6 s of CPU over 8
+  workers; 2.6 s in one process) against 66.8 s; first motion after 1.3 s. At 20 mm/s the motion
+  takes 170.8 s; the old planner drew at 80 mm/s and took 67.8 s. 13 pen lifts; 0.173 m of the
+  last "n" lies beyond the arm's reach.
 
 Tests: `tests/test_arm_planner.py`. Quick: two lines for arm 31 end to end (every motion joined,
 timed, holdable; the same bits from a fresh process); the first motion is handed out while the
 second piece is still unplanned. Slow: the word for both arms with every motion through the
-independent checker (all must pass: 53 and 49 motions); ceilings from the numbers above. `tests/arm_cases.py` plans and
+independent checker (all must pass: 53 motions each); ceilings from the numbers above. `tests/arm_cases.py` plans and
 checks every case and draws the figure of sequencer.md.
