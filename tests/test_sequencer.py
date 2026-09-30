@@ -153,3 +153,73 @@ def test_a_piece_under_a_box_is_a_leftover_and_the_rest_is_drawn(problem):
     assert left[0].piece.line_id == "b" and left[0].reason in ("no_free_path", "unreachable")
     assert left[0].detail
     assert_tour(arm, lid, rules, ms, RIG.park_q(31), RIG.park_q(31))
+
+
+# --------------------------------------------------------------------------- the checker in the loop
+
+
+class _Refuse:
+    """A fake independent checker: refuses the first motion of `kind` it sees, passes the rest.
+    Records every call as (kind, q_before)."""
+
+    def __init__(self, kind):
+        self.kind, self.calls, self.done = kind, [], False
+
+    def __call__(self, motion, q_before):
+        self.calls.append((motion.kind, np.array(q_before)))
+        if motion.kind == self.kind and not self.done:
+            self.done = True
+            return {"passed": False, "tightest": f"fake refusal of a {motion.kind} motion"}
+        return {"passed": True, "tightest": "fake: fine"}
+
+
+@pytest.mark.parametrize("kind", ["free", "lower", "draw", "lift"])
+def test_a_refused_motion_leaves_its_piece_over_and_the_tour_goes_on(problem, kind):
+    arm, obs, rules, bunches = problem
+    park = RIG.park_q(31)
+    plain, _, _ = tour_all(arm, bunches, park, obs, rules)
+    fake = _Refuse(kind)
+    ms, left, rep = tour_all(arm, bunches, park, obs, rules, verify=fake)
+    failed = [x for x in left if x.reason == "failed_check"]
+    assert len(failed) == 1 and rep.failed_check == 1
+    role = {"free": "move", "lower": "lower", "draw": "drawing", "lift": "lift"}[kind]
+    assert f"the {role} (" in failed[0].detail and "fake refusal" in failed[0].detail
+    lost = failed[0].piece.line_id
+    assert all(m.piece.line_id != lost for m in ms if m.kind == "draw")
+    assert {m.piece.line_id for m in plain if m.kind == "draw"} - {lost} == \
+        {m.piece.line_id for m in ms if m.kind == "draw"}
+    # every motion handed on passed and carries the word; they join up from the park to the park
+    assert all(m.checked is not None and m.checked["passed"] for m in ms)
+    assert_tour(arm, obs, rules, ms, park, park)
+    # the refused group was checked from where the arm stood: the park (it was the first piece)
+    first_of_group = next(i for i, c in enumerate(fake.calls) if c[0] == "free")
+    assert np.array_equal(fake.calls[first_of_group][1], park)
+    # after the refusal, the next group starts again from the park
+    assert np.max(np.abs(ms[0].q_start - park)) <= 1e-9
+
+
+def test_without_verify_nothing_changes(problem):
+    arm, obs, rules, bunches = problem
+    park = RIG.park_q(31)
+    a, la, _ = tour_all(arm, bunches, park, obs, rules)
+    b, lb, rep = tour_all(arm, bunches, park, obs, rules,
+                          verify=lambda m, q: {"passed": True, "tightest": ""})
+    assert len(a) == len(b) and la == lb and rep.verified == len(b)
+    for x, y in zip(a, b):
+        assert x.checked is None and y.checked == {"passed": True, "tightest": ""}
+        assert np.array_equal(x.traj.q, y.traj.q) and np.array_equal(x.traj.t, y.traj.t)
+
+
+def test_a_refused_move_home_is_the_end_refusal(problem):
+    arm, obs, rules, bunches = problem
+    park = RIG.park_q(31)
+    n = len(tour_all(arm, bunches, park, obs, rules)[0])
+    calls = []
+
+    def last_refused(m, q):
+        calls.append(m)
+        return {"passed": len(calls) < n, "tightest": "fake: home refused"}
+
+    ms, left, rep = tour_all(arm, bunches, park, obs, rules, verify=last_refused)
+    assert len(ms) == n - 1 and rep.end_refusal.startswith("failed_check: the move to q_end")
+    assert not [x for x in left if x.reason == "failed_check"]

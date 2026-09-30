@@ -19,7 +19,7 @@ and at the end one free move to `q_end` (default `q_start`).  See docs/modules/s
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -64,6 +64,9 @@ class TourReport:
     refusals: dict = field(default_factory=dict)   # free-space refusals by reason
     motions: int = 0
     end_refusal: str = ""          # why the move to q_end failed; "" if it did not
+    verified: int = 0              # motions given to `verify`
+    failed_check: int = 0          # pieces left over because `verify` refused a motion
+    verify_wall: float = 0.0       # s spent inside `verify` (wall; it may run elsewhere)
     first_cpu: float = -1.0        # s of CPU from the call to the first motion
     first_wall: float = -1.0
     cpu: float = 0.0               # s of CPU for the whole tour
@@ -96,8 +99,15 @@ def tour_all(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=N
 
 def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRules,
          q_end=None, free_options=None, *, report: TourReport | None = None,
-         intensity: dict | None = None, options: TourOptions | None = None):
-    """Yields the tour's motions in order; returns the pieces it could not draw."""
+         intensity: dict | None = None, options: TourOptions | None = None, verify=None):
+    """Yields the tour's motions in order; returns the pieces it could not draw.
+
+    `verify(motion, q_before) -> dict` (at least "passed", "tightest"): the independent
+    checker.  With it, a piece is handed on only if every motion of its group (the move to it,
+    lower, drawing, lift) passes, checked in order, each from where the one before ended; the
+    first refusal leaves the piece over as "failed_check" and the tour goes on from where the
+    arm stands.  Every motion handed on then carries the checker's dict as `checked`.  Nothing
+    is ever planned on top of a motion that has not passed."""
     c0, w0 = time.process_time(), time.perf_counter()
     rep = report if report is not None else TourReport()
     s = _State(arm, bunches, obstacles, rules, free_options or free.Options(),
@@ -124,14 +134,31 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
         alive.remove(b)
         leftovers += cut_off
         rep.cut += sum(x.piece.s1 - x.piece.s0 for x in cut_off)
+        group = [m for m in (move, entry.down, *draw, exit_.up) if len(m.traj.t) > 1]
+        if verify is not None:
+            group, why = _verified(group, q_cur, verify, rep)
+            if group is None:
+                leftovers.append(Leftover(draw[0].piece if len(draw) == 1 else
+                                          Piece(draw[0].piece.line_id,
+                                                min(d.piece.s0 for d in draw),
+                                                max(d.piece.s1 for d in draw)),
+                                          "failed_check", why))
+                rep.failed_check += 1
+                continue
         rep.pieces += 1
         rep.lifts += 1
         rep.move_time += float(move.traj.t[-1])
         rep.free_length += _length(move)
-        for m in (move, entry.down, *draw, exit_.up):
+        for m in group:
             yield out(m)
         q_cur = exit_.q_up
     home = s.move(q_cur, q_end)
+    if not isinstance(home, Refusal) and len(home.traj.t) > 1 and verify is not None:
+        checked, why = _verified([home], q_cur, verify, rep)
+        if checked is None:
+            home = Refusal("failed_check", f"the move to q_end: {why}")
+        else:
+            home = checked[0]
     if isinstance(home, Refusal):
         rep.end_refusal = f"{home.reason}: {home.detail}"
     elif len(home.traj.t) > 1:                  # a move of zero length is no motion
@@ -141,6 +168,26 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
     rep.leftovers = leftovers
     rep.cpu, rep.wall = time.process_time() - c0, time.perf_counter() - w0
     return leftovers
+
+
+_ROLE = {"free": "move", "lower": "lower", "draw": "drawing", "lift": "lift"}
+
+
+def _verified(group, q_before, verify, rep):
+    """The group's motions with the checker's word attached, each checked from where the one
+    before ended; or (None, which motion was refused and the checker's tightest)."""
+    out, q = [], np.asarray(q_before, float)
+    for i, m in enumerate(group):
+        w = time.perf_counter()
+        word = verify(m, q)
+        rep.verify_wall += time.perf_counter() - w
+        rep.verified += 1
+        if not word.get("passed", False):
+            return None, (f"the {_ROLE.get(m.kind, m.kind)} ({m.kind} motion {i + 1} of "
+                          f"{len(group)} of the piece's group): {word.get('tightest', '')}")
+        out.append(replace(m, checked=word))
+        q = m.q_end
+    return out, ""
 
 
 def _count(rep: TourReport, m: Motion) -> None:

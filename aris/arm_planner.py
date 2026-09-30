@@ -43,8 +43,9 @@ def _cpu() -> float:
 
 def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None,
          workers: int = 1, cache_dir=None, *, stats: PlanStats | None = None,
-         free_options=None, tour_options=None):
-    """Yields the arm's motions in order; returns every leftover (local planner's first)."""
+         free_options=None, tour_options=None, verify=None):
+    """Yields the arm's motions in order; returns every leftover (local planner's first).
+    `verify(motion, q_before) -> dict`: the independent checker, see `sequencer.tour`."""
     st = stats if stats is not None else PlanStats()
     c0, w0 = _cpu(), time.perf_counter()
     st.lines = len(lines)
@@ -53,7 +54,8 @@ def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None
     st.local_cpu, st.local_wall = _cpu() - c0, time.perf_counter() - w0
     st.bunches, st.local_leftovers = len(bunches), list(left_local)
     gen = tour(arm, bunches, q_start, obstacles, rules, q_end, free_options, report=st.tour,
-               intensity={x.id: x.intensity for x in lines}, options=tour_options)
+               intensity={x.id: x.intensity for x in lines}, options=tour_options,
+               verify=verify)
     while True:
         try:
             m = next(gen)

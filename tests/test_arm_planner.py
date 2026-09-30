@@ -133,3 +133,26 @@ def test_word_every_motion_through_the_checker(arm_id, tmp_path_factory):
     passed = sum(c[0] for c in checks)
     assert passed == len(ms) and passed >= want["checked"]
     assert len(ms) >= want["motions"] - 8                        # about the same tour
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("arm_id", sorted(ac.ARMS))
+def test_word_with_the_checker_in_the_loop(arm_id, tmp_path_factory):
+    """The law, with the real checker as `verify`: every motion handed on carries the
+    checker's pass; the same tour as without it; and what the checking costs."""
+    import time
+    cache = tmp_path_factory.getbasetemp() / "kinematic_table"
+    lines = ac.case_lines(RIG, arm_id)["word"]
+    ms0, left0, st0, _ = ac.plan_case(RIG, arm_id, lines, cache)
+    c0 = time.process_time()
+    ms, left, st, load = ac.plan_case(RIG, arm_id, lines, cache,
+                                      verify=ac.checker_verify(arm_id))
+    cpu = time.process_time() - c0
+    print(f"\narm {arm_id} word, load {load:.0f}: CPU {st0.cpu:.1f} s without verify, {cpu:.1f} s "
+          f"with ({st.tour.verify_wall:.1f} s wall inside verify, {st.tour.verified} calls)")
+    assert all(m.checked is not None and m.checked["passed"] for m in ms)
+    assert not [x for x in left if x.reason == "failed_check"] and not st.tour.end_refusal
+    assert len(ms) == len(ms0) and st.tour.verified == len(ms)
+    for a, b in zip(ms0, ms):
+        assert np.array_equal(a.traj.q, b.traj.q)
+    assert cpu <= 10 * 8.0                  # measured 7.9 s (arm 13, load 21)

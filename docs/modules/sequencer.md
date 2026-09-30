@@ -105,6 +105,39 @@ far become leftovers and the step starts again with the rest. On the fixed cases
 free-space planner never refused (0 of 382 calls). If the final move to `q_end` is refused, the
 report says so (`end_refusal`); the last motion still ends holdable.
 
+## The checker in the loop (`verify`)
+
+`tour(..., verify=None)`. The drawing server hands in `verify(motion, q_before) -> dict` (at
+least `passed`, `tightest`): the independent checker, an opaque callable; the sequencer never
+imports the checker. The law: **a piece is drawn only if every motion of its group passes the
+checker; otherwise the piece is left over as `failed_check` with the checker's word, and the
+arm plans on from where it was.** The group is the move to the piece, the set-down (`lower`),
+the drawing and the lift; they are checked in that order, the first from where the arm stands
+(the end of the last motion handed on), each next from where the one before ended. The first
+refusal ends the group: none of its motions is handed on, and the leftover's detail says which
+motion ("the lift (lift motion 4 of 4 of the piece's group): ...") and the checker's tightest.
+A motion that passed is handed on carrying the checker's dict (`Motion.checked`). The group is
+checked before the next piece is chosen, so nothing is ever planned on top of a motion that has
+not passed; no speculation, no rewinding. The move home is checked too; if refused, the report's
+`end_refusal` says "failed_check: the move to q_end: ...". Without `verify` everything is as
+before (same motions, `checked` None).
+
+Measured 2026-09-30, the real checker as `verify` (`tests/arm_cases.py --verify`), machine load
+16 to 21, one process:
+
+| arm, case | motions | planning CPU without / with | wall without / with | inside verify | failed_check |
+|---|---|---|---|---|---|
+| 31 word | 53 | 2.6 / 12.1 s | 2.7 / 16.6 s | 13.7 s | 0 |
+| 31 random lines | 421 | 50.8 / 93.0 s | 57.7 / 103.6 s | 45.1 s | 0 |
+| 13 word | 53 | 2.6 / 7.9 s | 2.6 / 7.9 s | 5.4 s | 0 |
+| 13 random lines | 421 | 35.7 / 85.5 s | 35.9 / 86.9 s | 51.2 s | 0 |
+
+- Every motion handed on carries `checked["passed"]` True; the tours are the same motions as
+  without `verify`.
+- The checker costs 0.1 to 0.26 s per motion here, 3 to 6 times the sequencer's own work: the
+  word plans in 8 to 17 s instead of 3, 100 lines in 90 to 105 s instead of 40 to 60. The first
+  motion comes 0.3 to 2 s later. The motions of 100 lines take about 40 minutes to draw.
+
 ## What the checker says
 
 Every motion of every case below goes through the independent checker (branch aris3,

@@ -9,13 +9,17 @@ File: `aris/arm_planner.py`.
 
 ## In and out
 
-`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None)`
+`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None, verify=None)`
 
 - **In:** the arm, the lines (pen-tip polylines in the arm's base frame, each with its pressure),
   the obstacles in the base frame (paper, steel, walls, parked arms), where the arm is, the
   drawing rules, where it should end (default: where it started). `workers`: processes for the
   local planner. `cache_dir`: where the local planner keeps its kinematic table (built once, 14 s
   of CPU, then read).
+- `verify(motion, q_before) -> dict`: the independent checker, handed to the sequencer: a
+  piece is drawn only if every motion of its group passes, else it is left over as
+  `failed_check`; every motion handed on then carries the checker's word (`Motion.checked`).
+  See sequencer.md, "The checker in the loop".
 - **Out:** a generator of `Motion`s (drawing and free, each timed, each starting where the one
   before ended and ending where the arm can stand), which at the end returns every leftover: the
   local planner's (stretches it cannot draw: unreachable, blocked, too short) followed by the

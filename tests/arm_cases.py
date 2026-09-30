@@ -58,6 +58,20 @@ def plan_case(rig: Rig, arm_id: int, lines_table, cache_dir=None, workers: int =
     return motions, leftovers, st, load
 
 
+def _verify(config_dir, arm_id: int, phase_n: int, motion, q_before) -> dict:
+    """The independent checker as the planners' `verify`: -> {"passed", "tightest", ...}."""
+    from aris.check import check
+    v = check(config_dir, arm_id, motion, Rig.load(config_dir).phase(phase_n), q_before)
+    return {"passed": bool(v.passed), "tightest": str(v.tightest),
+            "min_clearance": float(v.min_clearance)}
+
+
+def checker_verify(arm_id: int):
+    """`verify` for one arm in the phase it leads: the independent checker, picklable."""
+    from functools import partial
+    return partial(_verify, CONFIG, arm_id, ARMS[arm_id])
+
+
 def roles(motions) -> list[str]:
     """What each motion is in the tour: move, set-down, draw, lift-off."""
     names = {"draw": "draw", "lower": "set-down", "lift": "lift-off", "free": "move"}
@@ -135,6 +149,23 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
     return out
 
 
+def compare_verify(rig: Rig, arm_id: int, name: str, lines, cache=None) -> list[str]:
+    """The same case planned without and with the checker in the loop."""
+    ms0, left0, st0, load = plan_case(rig, arm_id, lines, cache)
+    ms1, left1, st1, _ = plan_case(rig, arm_id, lines, cache, verify=checker_verify(arm_id))
+    t1 = st1.tour
+    bad = [x for x in left1 if x.reason == "failed_check"]
+    ok = sum(1 for m in ms1 if m.checked is not None and m.checked["passed"])
+    out = [f"arm {arm_id} {name}: load {load:.0f}; without verify: CPU {st0.cpu:.1f} s, wall "
+           f"{st0.wall:.1f} s, {len(ms0)} motions; with verify: CPU {st1.cpu:.1f} s, wall "
+           f"{st1.wall:.1f} s ({t1.verify_wall:.1f} s inside verify, {t1.verified} calls), "
+           f"{len(ms1)} motions, {ok} of them carry checked passed; first motion after "
+           f"{st0.first_wall:.2f} / {st1.first_wall:.2f} s wall; failed_check {len(bad)}"
+           + (f"; MOVE HOME: {t1.end_refusal}" if t1.end_refusal else "")]
+    out += [f"    {x.piece} {x.detail}" for x in bad]
+    return out
+
+
 def figure(rig: Rig, arm_id: int, motions, path=FIGURE) -> None:
     """Top view of a tour: drawing in one colour, free moves in another, numbered in order."""
     import matplotlib
@@ -186,12 +217,17 @@ if __name__ == "__main__":
     ap.add_argument("--cache", default="", help="kinematic table directory")
     ap.add_argument("--figure", action="store_true")
     ap.add_argument("--draw-speed", type=float, default=None, help="m/s, instead of the rules'")
+    ap.add_argument("--verify", action="store_true",
+                    help="plan each case with and without the checker in the loop, compare")
     a = ap.parse_args()
     rig = Rig.load(CONFIG)
     cache = a.cache or None
     for arm_id in (int(x) for x in a.arms.split(",")):
         for name, lines in case_lines(rig, arm_id).items():
             if a.cases and name not in a.cases.split(","):
+                continue
+            if a.verify:
+                print("\n".join(compare_verify(rig, arm_id, name, lines, cache)), flush=True)
                 continue
             ms, left, st, load = plan_case(rig, arm_id, lines, cache, a.workers, a.draw_speed)
             t = time.perf_counter()
