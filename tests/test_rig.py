@@ -334,6 +334,14 @@ def test_gates(rig):
     assert g.limit_margin == 0.15 and g.sigma_min == 0.04
 
 
+def test_execution(rig, tmp_path):
+    assert rig.execution().start_tolerance == 0.005
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    cfg["execution"]["start_tolerance_rad"] = 0.01
+    (tmp_path / "rig.json").write_text(json.dumps(cfg))
+    assert Rig.load(tmp_path).execution().start_tolerance == 0.01
+
+
 def test_rules(rig):
     r = rig.rules()
     assert r.draw_speed == 0.02 and r.lift_height == 0.025 and r.min_piece == 0.010

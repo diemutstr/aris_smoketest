@@ -21,6 +21,7 @@ comes from here.
 | `obstacles_for(a, phase)` | `obstacles` for a moving arm, with the parked arms it can reach (always its row partner) and the walls it stands next to |
 | `obstacles(a, parked=(), walls=(), for_planning=True)` | everything `a` must stay clear of |
 | `gates()` | the planners' `Gates`, all from `rig.json`: joint-limit margin 0.15 rad, smallest singular value 0.04, self margin 0.020 + 0.003 |
+| `execution()` | what the executor checks before a motion: `start_tolerance`, 0.005 rad per joint between the measured configuration and the motion's start |
 | `rules()` | the drawing rules (`DrawRules`), all from `rig.json`, with `gates()` inside. Every planner takes them from here, not from the type defaults |
 | `leaders(phase)`, `row_partner(a)` | (13, 71, 2) in phase 1, (17, 31, 97) in phase 2; 13-17, 31-71, 2-97 |
 

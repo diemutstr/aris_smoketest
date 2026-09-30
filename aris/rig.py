@@ -30,6 +30,12 @@ class SteelBox:
 
 
 @dataclass(frozen=True)
+class Execution:
+    """What the executor checks before it runs a motion (rig.json "execution")."""
+    start_tolerance: float             # rad, per joint: measured vs the motion's start
+
+
+@dataclass(frozen=True)
 class Mount:
     """Where one arm hangs.  `T_table_base` is the calibrated pose when a calibration applies."""
     arm_id: int
@@ -97,6 +103,7 @@ class Rig:
     allowance: dict                    # planning allowance, metres (rig.json "planning_allowance")
     gate_cfg: dict                     # rig.json "gates", as read
     drawing_cfg: dict                  # rig.json "drawing", as read
+    execution_cfg: Execution
     shoulder_below_base: float
     body_reach: float                  # from the shoulder, see rig.json "reach"
     own_hanger_exempt: tuple[str, ...] # body groups not checked against the arm's own hanger
@@ -136,6 +143,7 @@ class Rig:
             gate_cfg={k: float(v) for k, v in cfg["gates"].items() if not isinstance(v, str)},
             drawing_cfg={k: float(v) for k, v in cfg["drawing"].items()
                          if not isinstance(v, str)},
+            execution_cfg=Execution(float(cfg["execution"]["start_tolerance_rad"])),
             shoulder_below_base=float(cfg["reach"]["shoulder_below_base_m"]),
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
             own_hanger_exempt=tuple(cfg["hanger"]["exempt_links"]),
@@ -221,6 +229,9 @@ class Rig:
         g = self.gate_cfg
         return Gates(limit_margin=g["limit_margin_rad"], sigma_min=g["sigma_min"],
                      self_margin=self.self_margin(for_planning=True))
+
+    def execution(self) -> Execution:
+        return self.execution_cfg
 
     def rules(self) -> DrawRules:
         """The drawing rules, all from rig.json, with `gates()` inside.  The one source every
