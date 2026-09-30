@@ -111,6 +111,8 @@ class Rig:
     leader_sets: dict                  # phase -> tuple of arm ids
     wall_pairs: dict                   # phase -> tuple of (arm, arm) with a wall between them
     canvas_size: np.ndarray            # (2,)
+    drawing_area_m: np.ndarray | None  # (2,) x by y, centred on the table; written by the
+                                       # system planner from its maps, None until it has
     table_size: np.ndarray             # (2,)
     paper_z: float
 
@@ -152,6 +154,8 @@ class Rig:
             wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v)
                         for k, v in rp["walls"].items()},
             canvas_size=np.array([cfg["canvas"]["size_x_m"], cfg["canvas"]["size_y_m"]]),
+            drawing_area_m=(None if "drawing_area_m" not in cfg["canvas"]
+                            else np.asarray(cfg["canvas"]["drawing_area_m"], float).reshape(2)),
             table_size=np.array([cfg["table"]["size_x_m"], cfg["table"]["size_y_m"]]),
             paper_z=float(cfg["table"]["paper_surface_z_m"]),
         )

@@ -3,6 +3,7 @@
 Run with -s to see the tables (steel list, box counts, park clearances).
 """
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -342,6 +343,15 @@ def test_execution(rig, tmp_path):
     assert Rig.load(tmp_path).execution().start_tolerance == 0.01
 
 
+def test_drawing_area(rig, tmp_path):
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    np.testing.assert_array_equal(rig.drawing_area_m, cfg["canvas"]["drawing_area_m"])
+    assert rig.drawing_area_m.shape == (2,) and np.all(rig.drawing_area_m <= rig.canvas_size)
+    del cfg["canvas"]["drawing_area_m"]
+    (tmp_path / "rig.json").write_text(json.dumps(cfg))
+    assert Rig.load(tmp_path).drawing_area_m is None
+
+
 def test_rules(rig):
     r = rig.rules()
     assert r.draw_speed == 0.02 and r.lift_height == 0.025 and r.min_piece == 0.010
@@ -477,6 +487,10 @@ def test_leaders_and_rows(rig):
         rig.leaders(3)
 
 
+# a file name used as a path: "rig.json" as a whole string, or the calibration folder joined on
+PATH_IN_CONFIG = r"""(["'])rig\.json\1|/\s*(["'])calibration\2|["']calibration/"""
+
+
 def test_config_only_read_by_rig():
     """Only rig.py reads config/.  Exempt: the independent checker, which has its own reader on
     purpose, and the calibration job, which writes config/calibration/."""
@@ -484,7 +498,7 @@ def test_config_only_read_by_rig():
     exempt = (pkg / "check", pkg / "calib")
     offenders = [p for p in pkg.rglob("*.py")
                  if p != pkg / "rig.py" and not any(e in p.parents for e in exempt)
-                 and ("rig.json" in p.read_text() or "calibration/" in p.read_text())]
+                 and re.search(PATH_IN_CONFIG, p.read_text())]
     assert offenders == []
 
 

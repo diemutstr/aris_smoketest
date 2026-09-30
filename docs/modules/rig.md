@@ -22,6 +22,7 @@ comes from here.
 | `obstacles(a, parked=(), walls=(), for_planning=True)` | everything `a` must stay clear of |
 | `gates()` | the planners' `Gates`, all from `rig.json`: joint-limit margin 0.15 rad, smallest singular value 0.04, self margin 0.020 + 0.003 |
 | `execution()` | what the executor checks before a motion: `start_tolerance`, 0.005 rad per joint between the measured configuration and the motion's start |
+| `drawing_area_m` | the admissible drawing area, x by y, centred on the table (1.56 x 3.56 today); written into `rig.json` by the system planner from its maps; None if absent |
 | `rules()` | the drawing rules (`DrawRules`), all from `rig.json`, with `gates()` inside. Every planner takes them from here, not from the type defaults |
 | `leaders(phase)`, `row_partner(a)` | (13, 71, 2) in phase 1, (17, 31, 97) in phase 2; 13-17, 31-71, 2-97 |
 
