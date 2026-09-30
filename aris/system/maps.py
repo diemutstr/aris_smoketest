@@ -25,7 +25,6 @@ from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import binary_erosion
 
 from aris.local.gates import Judge
 from aris.local.lattice import Lattice
@@ -45,7 +44,6 @@ class Map:
     x: np.ndarray            # (nx,) grid x, table frame
     y: np.ndarray            # (ny,) grid y
     state: np.ndarray        # (nx, ny) int8: OUT, BLOCKED or DRAWABLE
-    usable: np.ndarray       # (nx, ny) bool: DRAWABLE, shrunk by `erode` grid steps
     cpu: float = 0.0         # s it took to build (0 when read from the cache)
 
     @property
@@ -54,14 +52,14 @@ class Map:
         return float(np.mean(self.state == DRAWABLE))
 
     def contains(self, p_table: np.ndarray) -> np.ndarray:
-        """(n,) bool: each point's nearest grid point is usable (off the grid: no)."""
+        """(n,) bool: each point's nearest grid point is drawable (off the grid: no)."""
         p = np.asarray(p_table, float).reshape(-1, 3)
         step = self.x[1] - self.x[0]
         i = np.rint((p[:, 0] - self.x[0]) / step).astype(int)
         j = np.rint((p[:, 1] - self.y[0]) / step).astype(int)
         inside = (i >= 0) & (i < len(self.x)) & (j >= 0) & (j < len(self.y))
         out = np.zeros(len(p), bool)
-        out[inside] = self.usable[i[inside], j[inside]]
+        out[inside] = self.state[i[inside], j[inside]] == DRAWABLE
         return out
 
 
@@ -89,7 +87,8 @@ def digest(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> str:
     h = hashlib.blake2b(digest_size=12)
     arm = rig.arm(arm_id)
     tool = arm.tool
-    h.update(repr((VERSION, phase.name, arm_id, gates, cfg, tool.pen_names)).encode())
+    h.update(repr((VERSION, phase.name, arm_id, gates, cfg.grid_step, cfg.n_spin, cfg.reach,
+                   tool.pen_names)).encode())
     for a in (rig.T_table_base(arm_id), np.asarray(rig.canvas_size, float), tool.tip_hand,
               tool.pen_axis_hand, arm.limits.q_min, arm.limits.q_max):
         h.update(np.ascontiguousarray(a, float).tobytes())
@@ -110,8 +109,7 @@ def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> Map:
     T = rig.T_base_table(arm_id)
     p_base = p_table[near] @ T[:3, :3].T + T[:3, 3]
     arm = rig.arm(arm_id)
-    local_cfg = LocalSettings()
-    judge = Judge(arm, rig.obstacles_for(arm_id, phase), gates, local_cfg.hand_paper_margin)
+    judge = Judge(arm, rig.obstacles_for(arm_id, phase), gates)
     node_cfg = LocalSettings(n_spin=cfg.n_spin)
     state = np.zeros(X.size, np.int8)
     for a in range(0, len(near), _CHUNK):
@@ -120,14 +118,7 @@ def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> Map:
         state[near[a:a + _CHUNK]] = [DRAWABLE if L.free.any() else BLOCKED if len(L.q) else OUT
                                      for L in lat.layers]
     state = state.reshape(X.shape)
-    return _finish(phase.name, arm_id, x, y, state, cfg, time.process_time() - t0)
-
-
-def _finish(phase_name, arm_id, x, y, state, cfg: Settings, cpu=0.0) -> Map:
-    drawable = state == DRAWABLE
-    usable = drawable if cfg.erode <= 0 else \
-        binary_erosion(drawable, np.ones((3, 3), bool), iterations=cfg.erode, border_value=1)
-    return Map(phase_name, arm_id, x, y, state, usable, cpu)
+    return Map(phase.name, arm_id, x, y, state, time.process_time() - t0)
 
 
 def _build_job(job):
@@ -149,7 +140,7 @@ def load_or_build(rig, phases, gates: Gates, cfg: Settings, cache_dir=None,
         f = files.get((p.name, a))
         if f is not None and f.exists():
             d = np.load(f)
-            out[(p.name, a)] = _finish(p.name, a, d["x"], d["y"], d["state"], cfg)
+            out[(p.name, a)] = Map(p.name, a, d["x"], d["y"], d["state"])
         else:
             todo.append((rig, p, a, gates, cfg))
     if workers > 1 and len(todo) > 1:

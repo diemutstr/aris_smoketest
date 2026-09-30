@@ -20,7 +20,7 @@ from aris.system.allocate import allocate, cover  # noqa: E402
 from aris.system.phases import cannot_touch, fill_groups, horizontal_reach, is_fill  # noqa: E402
 from aris.system.settings import Settings  # noqa: E402
 from aris.system.stretch import of_line  # noqa: E402
-from aris.types import DrawRules, Leftover, Line, Piece  # noqa: E402
+from aris.types import Leftover, Line, Piece, Refusal  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parents[1] / "config"
 COARSE = Settings(grid_step=0.05)          # quick tests: a 5 cm grid
@@ -38,7 +38,7 @@ def rig():
 
 @pytest.fixture(scope="module")
 def rules(rig):
-    return DrawRules(gates=rig.gates())
+    return rig.rules()
 
 
 @pytest.fixture(scope="module")
@@ -119,26 +119,54 @@ def test_cover_cuts_longest_first_with_overlap_and_gaps():
 def test_leader_phases_come_first(rig, rules, all_maps):
     # arm 31 alone could draw it whole, but the leaders hold all of it in two long runs
     both = _line("both", (-0.58, 0.40), (-0.24, 0.69))
-    # the leaders hold under 80 % of it between them: arm 31 alone takes it whole
-    fill = _line("fill", (-0.10, -0.60), (-0.87, -0.29))
-    got, left, _ = allocate([of_line(both), of_line(fill)], _cands(rig, all_maps), rules, COARSE)
+    got, left, _ = allocate([of_line(both)], _cands(rig, all_maps), rules, COARSE)
     by = {}
     for s in got:
         by.setdefault(s.line_id, []).append(s.target)
     assert sorted(by["both"]) == [(0, 2), (1, 31)] and not left
-    assert by["fill"] == [(4, 31)]
 
 
-def test_cover_prefers_leaders_unless_a_fill_run_is_much_longer():
-    u = np.arange(11) * 0.01
-    inside = np.array([[1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0],       # a leader: 4 cm
-                       [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0],       # a fill phase: 7 cm, 1.75 times
-                       [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1]], bool)
-    leader = [True, False, True]
-    assert cover(inside, u, 0.0, leader, fill_ok=True, factor=1.5)[0][2] == 1
-    assert cover(inside, u, 0.0, leader, fill_ok=True, factor=2.0)[0][2] == 0
-    got = cover(inside, u, 0.0, leader, fill_ok=False, factor=1.5)
-    assert [c for _, _, c in got] == [0, 1, 2]         # the fill only where no leader holds it
+def _toy_map(name, arm, x_lo, x_hi, hole=None):
+    """A map drawable for x_lo <= x <= x_hi (grid 2 cm), except the grid column at `hole`."""
+    x = y = np.arange(16) * 0.02
+    state = np.zeros((16, 16), np.int8)
+    state[(x >= x_lo - 1e-9) & (x <= x_hi + 1e-9), :] = mp.DRAWABLE
+    if hole is not None:
+        state[np.isclose(x, hole), :] = mp.OUT
+    return mp.Map(name, arm, x, y, state)
+
+
+def test_the_laws_on_toy_maps(rules):
+    cfg = Settings()
+    line = of_line(_line("l", (0.0, 0.1), (0.2, 0.1)))
+    fill = (2, 31, _toy_map("fill 31", 31, 0.0, 0.3), False)
+    # law 3: the leaders hold all of it, in two stretches: cut, joined, the fill unused
+    two = [(0, 13, _toy_map("phase 1", 13, 0.0, 0.12), True),
+           (1, 17, _toy_map("phase 2", 17, 0.10, 0.3), True), fill]
+    got, left, joins = allocate([line], two, rules, cfg)
+    assert [s.target for s in got] == [(0, 13), (1, 17)]
+    assert got[0].s1 - got[1].s0 == pytest.approx(rules.min_piece)       # one join
+    assert got[0].s1 == pytest.approx(0.13, abs=0.005)
+    assert joins == 1 and not left
+    # law 3: the leaders hold under 80 % of it: the fill phase takes it whole
+    few = [(0, 13, _toy_map("phase 1", 13, 0.0, 0.08), True), fill]
+    got, left, _ = allocate([line], few, rules, cfg)
+    assert [(s.target, s.s0, s.s1) for s in got] == [((2, 31), 0.0, 0.2)]
+    # laws 2 and 3: a hole in the leader's map goes to the fill, with a join at both ends
+    holed = [(0, 13, _toy_map("phase 1", 13, 0.0, 0.3, hole=0.10), True), fill]
+    got, left, joins = allocate([line], holed, rules, cfg)
+    assert [s.target for s in got] == [(0, 13), (2, 31), (0, 13)] and joins == 2 and not left
+    assert got[1].s0 < got[0].s1 and got[2].s0 < got[1].s1
+    # law 5: nothing holds it
+    got, left, _ = allocate([line], [(0, 13, _toy_map("phase 1", 13, 0.25, 0.3), True)], rules,
+                            cfg)
+    assert not got and [x.reason for x in left] == ["unreachable"]
+
+
+def test_parts_for_the_same_arm_that_meet_are_one():
+    from aris.system.allocate import _merge
+    assert _merge([(0.0, 0.1, 0), (0.09, 0.2, 0), (0.19, 0.3, 1)]) == [(0.0, 0.2, 0),
+                                                                        (0.19, 0.3, 1)]
 
 
 def test_fill_groups_cannot_touch(rig):
@@ -162,14 +190,14 @@ def test_fill_groups_cannot_touch(rig):
 def test_account_raises_on_a_drop_or_a_double():
     lines = [_line("a", (0, 0), (0.1, 0))]
     left = [Leftover(Piece("a", 0.0, 0.04), "blocked"), Leftover(Piece("a", 0.04, 0.1), "unreachable")]
-    acc = account(lines, [], left)
+    acc = account(lines, [], left, 0.01)
     assert acc.drawn == 0.0 and acc.left == pytest.approx(0.1)
     with pytest.raises(NoDropViolation, match="not covered"):
-        account(lines, [], left[:1])
+        account(lines, [], left[:1], 0.01)
     with pytest.raises(NoDropViolation, match="overlap"):
-        account(lines, [], left + [Leftover(Piece("a", 0.02, 0.08), "blocked")])
+        account(lines, [], left + [Leftover(Piece("a", 0.02, 0.08), "blocked")], 0.01)
     with pytest.raises(NoDropViolation, match="not in the drawing"):
-        account(lines, [], left + [Leftover(Piece("b", 0.0, 0.01), "blocked")])
+        account(lines, [], left + [Leftover(Piece("b", 0.0, 0.01), "blocked")], 0.01)
 
 
 # --------------------------------------------------------------------------- end to end
@@ -177,8 +205,7 @@ def test_account_raises_on_a_drop_or_a_double():
 
 def _small():
     return [_line("under13", (-0.45, -1.0), (-0.30, -0.95)),
-            _line("under71", (0.30, 0.25), (0.45, 0.20)),
-            _line("out", (-0.88, -0.62), (-0.88, -0.58))]
+            _line("under71", (0.30, 0.25), (0.45, 0.20))]
 
 
 def _joined(rig, tagged):
@@ -206,9 +233,9 @@ def test_small_drawing_end_to_end_on_two_arms(rig, rules):
     drawn = {m.piece.line_id: (a, m.piece) for _, a, m in tagged if m.kind == "draw"}
     assert drawn["under13"][0] == 13 and drawn["under71"][0] == 71
     assert drawn["under13"][1].s1 == pytest.approx(np.hypot(0.15, 0.05))
-    acc = account(lines, tagged, left)
+    acc = account(lines, tagged, left, rules.min_piece)
     assert acc.drawn == pytest.approx(2 * np.hypot(0.15, 0.05))
-    assert acc.left_by_reason == {"unreachable": pytest.approx(0.04)}
+    assert acc.left_by_reason == {}
     assert [p.name for p in rep.phases] == ["phase 1"]
     assert all(r.first_phase_wall >= 0 for r in rep.phases[0].arms.values())
     # the same plan from one process
@@ -216,6 +243,14 @@ def test_small_drawing_end_to_end_on_two_arms(rig, rules):
     key = lambda xs: sorted((a, m.kind, round(float(m.traj.t[-1]), 9),
                              m.piece.line_id if m.piece else "") for _, a, m in xs)
     assert key(tagged1) == key(tagged) and left1 == left
+
+
+def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
+    lines = _small()[:1] + [_line("wide", (0.0, 0.0), (0.95, 0.0))]
+    tagged, out, rep = plan_detailed(rig, lines, rules, settings=COARSE)
+    assert tagged == [] and isinstance(out, Refusal) and out.reason == "outside_drawing_area"
+    assert "line wide" in out.detail and "(0.9500, 0.0000)" in out.detail
+    assert 1.0 < rep.drawing_area[0] < 1.8 and 3.0 < rep.drawing_area[1] < 3.63
 
 
 def test_an_arm_away_from_its_park_must_move_first(rig, rules):
@@ -233,6 +268,8 @@ def test_word_across_the_middle_arms_through_the_checker(rig, tmp_path_factory):
     cache = tmp_path_factory.mktemp("system_cache")
     t = time.process_time()
     res = sc.run_case(rig, "word", sc.word(), cache, workers=4, check_workers=8)
+    # the drawing area in rig.json is what the maps at rig.json's gates give
+    assert np.allclose(res["rep"].drawing_area, sc.AREA, atol=1e-9)
     cpu = time.process_time() - t
     print("\n".join(sc.summary(res)), f"\n  (this process CPU {cpu:.1f} s)")
     n = sc.numbers(res)

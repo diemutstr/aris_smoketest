@@ -1,24 +1,19 @@
 """Allocation: which arm, in which phase, draws each stretch still to draw.
 
-The candidates are every (phase, arm) still to come, phases in order, arms in the phase's
-order; each is a leader phase (1, 2) or a fill phase.  A map "holds" a point when the point
-is inside it (`Settings.sample_step` apart, judged against the map shrunk by `erode` grid
-steps).
+The candidates are the (phase, arm) pairs still to come, in the fixed phase order.  A map holds
+a stretch when it holds every point of it (`Settings.sample_step` apart).  The laws:
 
-The rule, leader phases first:
-1. A stretch one leader-phase map holds whole goes to the first such candidate.
-2. Otherwise a fill phase may take part of it only if it is worth it: the leader phases
-   between them hold less than `leader_share` (80 %) of it, or some fill map holds a run at
-   least `fill_factor` (1.5) times the longest run any leader map holds.  If so, a fill map
-   that holds all of it takes it whole.
-3. Otherwise it is cut.  From its start, take the leader candidate holding the longest run
-   from here (a fill candidate instead only where it is allowed and its run is at least
-   `fill_factor` times as long, or where no leader map holds the line at all); the next piece
-   starts where that run ends, reaching back `rules.min_piece` over the join, so a join is
-   drawn twice rather than not at all.  (A run starting one sample later counts as starting
-   here: the sample spacing is well inside the erosion.)
-Where no map holds the line, the part up to the next point some map holds is left over.
-Stretches shorter than `rules.min_piece` are left over as "too_short".
+1. A stretch goes to the first candidate whose map holds all of it.
+2. A stretch no map holds whole is cut into the longest stretches some map holds, from its
+   start (the earlier phase on a tie), with one join of `rules.min_piece` between neighbouring
+   stretches.
+3. A stretch goes to a fill phase only when the leader phases hold less than
+   `Settings.leader_share` (80 %) of it.
+4. Parts of one line given to the same arm in the same phase are one stretch.
+5. What no map holds is left over as "unreachable"; a stretch shorter than `rules.min_piece`
+   as "too_short".
+
+The arm planner is the judge: what it hands back returns to the pool for the phases after.
 """
 from __future__ import annotations
 
@@ -43,50 +38,73 @@ def run_ends(inside: np.ndarray) -> np.ndarray:
     return end
 
 
-def longest_run(inside: np.ndarray, u: np.ndarray) -> float:
-    """The longest stretch (m) any one row of `inside` (C, n) holds without a break."""
-    if not len(inside):
-        return 0.0
-    end = run_ends(inside)
-    start = inside & ~np.concatenate([np.zeros((len(inside), 1), bool), inside[:, :-1]], axis=1)
-    c, i = np.nonzero(start)
-    return float(np.max(u[end[c, i]] - u[i], initial=0.0))
-
-
-def _pick(reach, u, cur, leader, fill_ok, factor):
-    """The candidate to take from sample `cur`, or None."""
-    gain = np.where(reach > cur, u[np.maximum(reach, 0)] - u[cur], 0.0)
-    gl = np.where(leader, gain, 0.0)
-    gf = np.where(~leader, gain, 0.0)
-    bl, bf = int(np.argmax(gl)), int(np.argmax(gf))       # the first candidate on a tie
-    if gl[bl] > 0.0 and not (fill_ok and gf[bf] >= factor * gl[bl]):
-        return bl
-    return bf if gf[bf] > 0.0 else None
-
-
-def cover(inside: np.ndarray, u: np.ndarray, overlap: float, leader=None, fill_ok=True,
-          factor: float = 1.0) -> list[tuple]:
-    """Cut arc lengths `u` (n,) into [(a, b, candidate or None)], None where no candidate holds
-    the line.  `inside` (C, n): candidate c holds sample i; `leader` (C,) bool (default: all)."""
+def cover(inside: np.ndarray, u: np.ndarray, join: float) -> list[tuple]:
+    """Law 2 on sampled arc lengths `u` (n,): [(a, b, candidate or None)], each run the longest
+    from where the last one ended (the first candidate on a tie), reaching back `join` over
+    the join; None where no candidate holds the line.  `inside` (C, n)."""
     n = len(u)
-    leader = np.ones(len(inside), bool) if leader is None else np.asarray(leader, bool)
     end = run_ends(inside)
     out, cur, joined = [], 0, False
     while cur < n - 1:
-        reach = np.maximum(end[:, cur], end[:, cur + 1])
-        best = _pick(reach, u, cur, leader, fill_ok, factor)
-        if best is not None:
-            a = max(u[0], u[cur] - overlap) if joined else u[cur]
-            out.append((a, u[reach[best]], best))
-            cur, joined = int(reach[best]), True
+        best = int(np.argmax(end[:, cur]))
+        if end[best, cur] > cur:
+            a = max(u[0], u[cur] - join) if joined else u[cur]
+            out.append((a, u[end[best, cur]], best))
+            cur, joined = int(end[best, cur]), True
             continue
         later = np.flatnonzero(inside[:, cur + 1:].any(axis=0))
         nxt = n - 1 if not len(later) else cur + 1 + int(later[0])
+        # a stretch between two samples counts as held only if one map holds both ends
+        nxt = max(nxt, cur + 1)
         if out and out[-1][2] is None:
             out[-1] = (out[-1][0], u[nxt], None)
         else:
             out.append((u[cur], u[nxt], None))
         cur, joined = nxt, False
+    return out
+
+
+def held_share(inside: np.ndarray, u: np.ndarray) -> float:
+    """Share of the length (sample steps with both ends held by some row)."""
+    if not len(inside) or u[-1] <= u[0]:
+        return 0.0
+    held = inside.any(axis=0)
+    return float(np.sum(np.diff(u)[held[:-1] & held[1:]]) / (u[-1] - u[0]))
+
+
+def _place(st: Stretch, a, b, candidates, leader, rules, cfg, fill_ok=None):
+    """Laws 1 to 3 and 5 on the part a..b of `st`.  -> ([(a, b, candidate)], [(a, b)] held by
+    no map)."""
+    u, p = st.sub(a, b).samples(cfg.sample_step)
+    inside = np.array([m.contains(p) for _, _, m, _ in candidates])
+    if fill_ok is None:
+        fill_ok = held_share(inside[leader], u) < cfg.leader_share
+    allowed = np.ones(len(leader), bool) if fill_ok else leader
+    whole = np.flatnonzero(inside.all(axis=1) & allowed)
+    if len(whole):
+        return [(a, b, int(whole[0]))], []
+    parts, gaps = [], []
+    for x, y, c in cover(inside & allowed[:, None], u, rules.min_piece):
+        if c is not None:
+            parts.append((x, y, c))
+        elif fill_ok:
+            gaps.append((x, y))
+        else:                  # held by no leader: a stretch of its own, joined at both ends
+            got, left = _place(st, max(a, x - rules.min_piece), min(b, y + rules.min_piece),
+                               candidates, leader, rules, cfg, fill_ok=True)
+            parts += got
+            gaps += [(max(g0, x), min(g1, y)) for g0, g1 in left if min(g1, y) > max(g0, x)]
+    return parts, gaps
+
+
+def _merge(parts: list) -> list:
+    """Law 4: neighbouring parts for the same candidate become one."""
+    out = []
+    for x, y, c in sorted(parts):
+        if out and out[-1][2] == c and x <= out[-1][1] + 1e-9:
+            out[-1] = (out[-1][0], max(out[-1][1], y), c)
+        else:
+            out.append((x, y, c))
     return out
 
 
@@ -97,20 +115,12 @@ def _left(st: Stretch, reason_if_new: str, detail_if_new: str) -> Leftover:
     return Leftover(st.piece, reason_if_new, detail_if_new)
 
 
-def _held_share(inside: np.ndarray, u: np.ndarray) -> float:
-    """Share of the length where both ends of a sample step are held by some row."""
-    if not len(inside) or u[-1] <= u[0]:
-        return 0.0
-    held = inside.any(axis=0)
-    return float(np.sum(np.diff(u)[held[:-1] & held[1:]]) / (u[-1] - u[0]))
-
-
 def allocate(pool, candidates, rules: DrawRules, cfg: Settings):
-    """-> (stretches, each with a target (phase index, arm id), leftovers, cuts made).
+    """-> (stretches, each with a target (phase index, arm id), leftovers, joins made).
 
-    `candidates`: [(phase index, arm id, Map, is a leader phase)] in order of preference.
-    Stretches that already have a target keep it."""
-    out, left, cuts = [], [], 0
+    `candidates`: [(phase index, arm id, Map, is a leader phase)] in phase order.  Stretches
+    that already have a target keep it."""
+    out, left, joins = [], [], 0
     leader = np.array([c[3] for c in candidates], bool)
     for st in pool:
         if st.target is not None:
@@ -122,30 +132,10 @@ def allocate(pool, candidates, rules: DrawRules, cfg: Settings):
         if not candidates:
             left.append(_left(st, "unreachable", "outside every drawable map"))
             continue
-        u, p = st.samples(cfg.sample_step)
-        inside = np.array([m.contains(p) for _, _, m, _ in candidates])
-        whole = inside.all(axis=1)
-        first = np.flatnonzero(whole & leader)
-        if len(first):
-            out.append(replace(st, target=candidates[first[0]][:2]))
-            continue
-        fill_ok = (_held_share(inside[leader], u) < cfg.leader_share
-                   or longest_run(inside[~leader], u)
-                   >= cfg.fill_factor * longest_run(inside[leader], u))
-        first = np.flatnonzero(whole & ~leader)
-        if fill_ok and len(first):
-            out.append(replace(st, target=candidates[first[0]][:2]))
-            continue
-        parts = cover(inside, u, rules.min_piece, leader, fill_ok, cfg.fill_factor)
-        cuts += sum(1 for x, y in zip(parts, parts[1:]) if x[2] is not None and y[2] is not None)
-        for a, b, c in parts:
-            part = st.sub(a, b)
-            if c is None:
-                left.append(_left(replace(part, reason=st.reason, detail=st.detail),
-                                  "unreachable", "outside every drawable map"))
-            elif part.length < rules.min_piece:
-                left.append(Leftover(part.piece, "too_short",
-                                     "a cut piece shorter than the shortest piece worth drawing"))
-            else:
-                out.append(replace(part, target=candidates[c][:2]))
-    return out, left, cuts
+        parts, gaps = _place(st, st.s0, st.s1, candidates, leader, rules, cfg)
+        parts = _merge(parts)
+        joins += sum(1 for p, q in zip(parts, parts[1:]) if q[0] < p[1] + 1e-9)
+        out += [replace(st.sub(x, y), target=candidates[c][:2]) for x, y, c in parts]
+        left += [_left(replace(st.sub(x, y), reason=st.reason, detail=st.detail),
+                       "unreachable", "outside every drawable map") for x, y in gaps]
+    return out, left, joins

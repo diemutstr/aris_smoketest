@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from aris.system.stretch import line_length
-from aris.types import DrawRules
 
 TOL = 1e-6          # m
 
@@ -78,8 +77,9 @@ def _worst_overlap(iv) -> float:
     return worst
 
 
-def account(lines, motions, leftovers, join: float = DrawRules().min_piece) -> Account:
-    """`motions`: Motion or (phase, arm, Motion); `leftovers`: Leftover.  Raises
+def account(lines, motions, leftovers, join: float) -> Account:
+    """`motions`: Motion or (phase, arm, Motion); `leftovers`: Leftover; `join`: the drawing
+    rules' `min_piece`.  Raises
     NoDropViolation when a line is not covered end to end, when something lies outside a
     line or belongs to no line, or when two stretches overlap by more than `join`."""
     lengths = {x.id: line_length(x) for x in lines}

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from aris.system import area
 from aris.system import maps as maps_mod
 from aris.system.allocate import allocate
 from aris.system.phases import is_fill
@@ -33,7 +34,7 @@ from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
 from aris.system.settings import Settings
 from aris.system.stretch import Stretch, of_line
-from aris.types import DrawRules, Leftover, Motion, Piece
+from aris.types import DrawRules, Leftover, Motion, Piece, Refusal
 
 AT_PARK = 1e-6          # rad
 
@@ -78,6 +79,7 @@ class Report:
     cpu: float = 0.0            # s, everything (this process, arm planners, map builders)
     wall: float = 0.0
     first_wall: float = -1.0    # s from the call to the first motion
+    drawing_area: np.ndarray | None = None           # (2,) m, the admissible area (area.py)
     cuts: int = 0               # joins made by cutting stretches (allocate)
     # Phases not run, and why: nothing was allocated to them, or their arms planned and drew
     # nothing (everything handed back).  [(phase name, why)]
@@ -111,13 +113,16 @@ def at_park(rig, arm_id, q) -> bool:
     return float(np.max(np.abs(np.asarray(q) - rig.park_q(arm_id)))) <= AT_PARK
 
 
-def plan(rig, lines, rules: DrawRules, arm_configs=None, cache_dir=None, workers: int = 1,
-         settings: Settings | None = None, report: Report | None = None):
+def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir=None,
+         workers: int = 1, settings: Settings | None = None, report: Report | None = None):
     """Yields (phase name, arm id, Motion) as the arm planners produce them; returns the
-    leftovers.  `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
+    leftovers, or a Refusal (before anything is planned) when a point of the drawing lies
+    outside the admissible drawing area.  `rules`: default `rig.rules()`, the only source.
+    `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
     stands (default: its park).  `cache_dir`: where the drawable maps and the local planner's
     kinematic table are kept.  `workers`: processes (map building, arms of a phase)."""
     cfg = settings or Settings()
+    rules = rig.rules() if rules is None else rules
     rep = report if report is not None else Report()
     c0, w0 = _cpu(), time.perf_counter()
     phases = all_phases(rig)
@@ -127,6 +132,13 @@ def plan(rig, lines, rules: DrawRules, arm_configs=None, cache_dir=None, workers
     maps = maps_mod.load_or_build(rig, phases, rules.gates, cfg, cache_dir, workers)
     rep.map_cpu, rep.map_wall = _cpu() - c0, time.perf_counter() - w0
     rep.coverage = maps_mod.coverage(maps, phases)
+    rep.drawing_area = area.admissible(maps)
+    out = area.first_outside(lines, rep.drawing_area)
+    if out is not None:
+        return Refusal("outside_drawing_area",
+                       f"line {out[0]}: point ({out[1][0]:.4f}, {out[1][1]:.4f}) m lies outside "
+                       f"the drawing area {rep.drawing_area[0]:.3f} x {rep.drawing_area[1]:.3f} m "
+                       "centred on the table")
     pool, left = [of_line(x) for x in lines], []
     for k, ph in enumerate(phases):
         cands = [(j, a, maps[(phases[j].name, a)], not is_fill(phases[j]))

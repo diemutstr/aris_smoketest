@@ -1,6 +1,7 @@
 """The acceptance cases of the system planner, and the script that measures them.
 
-Whole drawings in the table frame, over the whole canvas (1.80 x 3.63 m, centred on the table):
+Whole drawings in the table frame, over the admissible drawing area of rig.json (canvas,
+drawing_area_m: 1.56 x 3.56 m, centred on the table):
   word       the word "unknown" (tests/local_cases.py), scaled to 0.55 m wide and centred on the
              table, so it sits between arms 31 and 71 as on the hardware day
   hatch      40 parallel lines 1.5 m long across the canvas (along x), evenly spaced along it
@@ -35,14 +36,18 @@ import local_cases as lc  # noqa: E402
 from aris.rig import Rig  # noqa: E402
 from aris.system import account, phase_named, plan_detailed  # noqa: E402
 from aris.system.phases import is_fill  # noqa: E402
-from aris.types import DrawRules, Line  # noqa: E402
+from aris.types import Line  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
 FIGURES = ROOT / "docs" / "modules" / "figures"
 DATA = Path(__file__).resolve().parent / "data"
 HALF = np.array([0.9017, 1.81532])          # half the canvas
-INSET = 0.01                                # m kept from the canvas edge
+# The drawings lie inside the admissible drawing area of rig.json (the system planner refuses
+# anything outside it), scaled to it.
+AREA = np.asarray(json.loads((CONFIG / "rig.json").read_text())["canvas"]["drawing_area_m"])
+AHALF = 0.5 * AREA
+INSET = 0.01                                # m kept from the edge of the drawing area
 CASES = ("word", "hatch", "scatter", "starburst", "spiral", "duotone", "random")
 
 
@@ -60,7 +65,7 @@ def word(width: float = 0.55) -> list[Line]:
 
 
 def hatch() -> list[Line]:
-    ys = np.linspace(-HALF[1] + 0.05, HALF[1] - 0.05, 40)
+    ys = np.linspace(-AHALF[1] + 0.05, AHALF[1] - 0.05, 40)
     x = np.linspace(-0.75, 0.75, 31)
     return [_line(f"hatch:{i}", np.column_stack([x, np.full_like(x, y)]))
             for i, y in enumerate(ys)]
@@ -70,11 +75,11 @@ def scatter(seed: int = 1) -> list[Line]:
     rng = np.random.default_rng(seed)
     out = []
     while len(out) < 80:
-        c = rng.uniform(-HALF + INSET, HALF - INSET)
+        c = rng.uniform(-AHALF + INSET, AHALF - INSET)
         t, L = rng.uniform(0, np.pi), rng.uniform(0.05, 0.20)
         d = 0.5 * L * np.array([np.cos(t), np.sin(t)])
         xy = np.array([c - d, c + d])
-        if np.all(np.abs(xy) <= HALF - INSET):
+        if np.all(np.abs(xy) <= AHALF - INSET):
             out.append(_line(f"scatter:{len(out)}", xy))
     return out
 
@@ -83,7 +88,7 @@ def starburst() -> list[Line]:
     out = []
     for i, t in enumerate(np.arange(24) * 2 * np.pi / 24 + np.pi / 48):
         d = np.array([np.cos(t), np.sin(t)])
-        r = np.min((HALF - INSET) / np.maximum(np.abs(d), 1e-12))
+        r = np.min((AHALF - INSET) / np.maximum(np.abs(d), 1e-12))
         u = np.linspace(0.02, r, max(2, int(np.ceil(r / 0.05)) + 1))
         out.append(_line(f"starburst:{i}", u[:, None] * d))
     return out
@@ -92,15 +97,15 @@ def starburst() -> list[Line]:
 def spiral() -> list[Line]:
     t = np.linspace(0, 4 * 2 * np.pi, 4000)
     r = 0.03 + (1 - 0.03) * t / t[-1]
-    xy = np.column_stack([r * np.cos(t), r * np.sin(t)]) * (HALF - 0.03)
+    xy = np.column_stack([r * np.cos(t), r * np.sin(t)]) * (AHALF - 0.03)
     return [_line("spiral:0", xy)]
 
 
 def duotone(seed: int = 3) -> list[Line]:
     rng = np.random.default_rng(seed)
-    y = np.linspace(-HALF[1] + 0.03, HALF[1] - 0.03, 600)
+    y = np.linspace(-AHALF[1] + 0.03, AHALF[1] - 0.03, 600)
     out = []
-    for i, x0 in enumerate(np.linspace(-0.78, 0.78, 10)):
+    for i, x0 in enumerate(np.linspace(-(AHALF[0] - 0.06), AHALF[0] - 0.06, 10)):
         amp, waves, ph = rng.uniform(0.02, 0.05), rng.uniform(2, 4), rng.uniform(0, 2 * np.pi)
         x = x0 + amp * np.sin(2 * np.pi * waves * (y - y[0]) / (y[-1] - y[0]) + ph)
         out.append(_line(f"duotone:{i}", np.column_stack([x, y])))
@@ -111,11 +116,11 @@ def random_lines(n: int = 300, seed: int = 7) -> list[Line]:
     rng = np.random.default_rng(seed)
     out = []
     while len(out) < n:
-        c = rng.uniform(-HALF + INSET, HALF - INSET)
+        c = rng.uniform(-AHALF + INSET, AHALF - INSET)
         t, L = rng.uniform(0, np.pi), rng.uniform(0.05, 1.5)
         d = 0.5 * L * np.array([np.cos(t), np.sin(t)])
         xy = np.array([c - d, c + d])
-        if np.all(np.abs(xy) <= HALF - INSET):
+        if np.all(np.abs(xy) <= AHALF - INSET):
             k = max(2, int(np.ceil(L / 0.05)) + 1)
             out.append(_line(f"random:{len(out)}", xy[0] + np.linspace(0, 1, k)[:, None]
                              * (xy[1] - xy[0])))
@@ -169,10 +174,10 @@ def check_all(rig, tagged, workers: int = 16):
 
 
 def run_case(rig, name, lines, cache_dir, workers, check_workers=16, do_check=True):
-    rules = DrawRules(gates=rig.gates())
+    rules = rig.rules()
     load = os.getloadavg()[0]
     tagged, left, rep = plan_detailed(rig, lines, rules, cache_dir=cache_dir, workers=workers)
-    acc = account(lines, tagged, left)
+    acc = account(lines, tagged, left, rules.min_piece)
     checks = check_all(rig, tagged, check_workers) if do_check else None
     return dict(name=name, lines=lines, tagged=tagged, left=left, rep=rep, acc=acc,
                 checks=checks, load=load)
@@ -257,6 +262,7 @@ def _walls(ax, rig, which=(1, 2)):
 def _frame(ax, rig, which=(1, 2)):
     from matplotlib.patches import Rectangle
     ax.add_patch(Rectangle(-HALF, *(2 * HALF), fill=False, lw=0.8, ec="#8a8984"))
+    ax.add_patch(Rectangle(-AHALF, *AREA, fill=False, lw=0.8, ls=":", ec="#8a8984"))
     _walls(ax, rig, which)
     for a in rig.arm_ids:
         c = rig.T_table_base(a)[:2, 3]
@@ -358,7 +364,7 @@ def main():
         from aris.system import maps as mp
         from aris.system.phases import phases
         from aris.system.settings import Settings
-        M = mp.load_or_build(rig, phases(rig), rig.gates(), Settings(), a.cache, a.workers)
+        M = mp.load_or_build(rig, phases(rig), rig.rules().gates, Settings(), a.cache, a.workers)
         print("coverage:", json.dumps(mp.coverage(M, phases(rig))))
         maps_figure(rig, M, FIGURES / "system_maps.png")
     for name in a.cases.split(","):

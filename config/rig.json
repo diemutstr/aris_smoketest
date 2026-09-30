@@ -18,7 +18,9 @@
     "source": "old layout.SHEET_FINAL6 = (1.8034, 3.63064), centred on the table. The task sheet rounds the length to 3.6306.",
     "size_x_m": 1.8034,
     "size_y_m": 3.63064,
-    "centre_xy_m": [0.0, 0.0]
+    "centre_xy_m": [0.0, 0.0],
+    "drawing_area_m": [1.56, 3.56],
+    "drawing_area_note": "The admissible drawing area, x by y, centred on the table: the largest rectangle with sides along the table that lies entirely inside the union of every arm's drawable map in every phase (aris/system/maps.py: 2 cm grid over the canvas, pen upright, 8 hand turns, every elbow value and arm shape, the local planner's node test with the phase's obstacles), after shrinking that union by 2 cm (aris/system/area.py). Computed 2026-09-30 at the gates of this file: limit margin 0.15 rad, sigma_min 0.04, self margin 0.020 + 0.003. The system planner refuses a drawing with a point outside it; the drawing server scales drawings to fit. Recompute when the gates, the arms' poses or the obstacles change."
   },
 
   "arms": {
