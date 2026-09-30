@@ -149,6 +149,42 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
     return out
 
 
+def big_lines(rig: Rig, arm_id: int, n: int = 1000) -> list:
+    """The first n lines of tests/big_cases.big() that lie wholly within 0.80 m of the arm's
+    axis (table frame)."""
+    import big_cases
+    from aris.types import Line
+    axis = rig.T_table_base(arm_id)[:2, 3]
+    out = []
+    for x in big_cases.big()["lines"]:
+        xy = np.asarray(x["points"], float) * 1e-3
+        if np.all(np.linalg.norm(xy - axis, axis=1) <= lc.CORPUS_RADIUS):
+            out.append(Line(x["id"], np.column_stack([xy, np.zeros(len(xy))]), "table"))
+            if len(out) == n:
+                break
+    return out
+
+
+def compare_batches(rig: Rig, arm_id: int, name: str, lines, cache=None, workers=8,
+                    batch=32) -> list[str]:
+    """The same case planned all at once and in batches (8 workers)."""
+    rows = []
+    for b in (None, batch):
+        ms, left, st, load = plan_case(rig, arm_id, lines, cache, workers, batch=b)
+        t = st.tour
+        rows.append((b, st, t, load, len(ms), sum(float(m.traj.t[-1]) for m in ms)))
+    out = [f"arm {arm_id} {name}: {len(lines)} lines, {workers} workers"]
+    for b, st, t, load, n, total in rows:
+        out.append(f"  {'all at once' if b is None else f'batches of {b}'} (load {load:.0f}): "
+                   f"first motion after {st.first_wall:.2f} s wall; planning CPU {st.cpu:.1f} s, "
+                   f"wall {st.wall:.1f} s; {n} motions, {total:.1f} s on the rig, pen up "
+                   f"{t.penup_time:.1f} s, share {t.penup_share:.3f}; pieces {t.pieces}")
+    (_, _, t0, _, _, T0), (_, _, t1, _, _, T1) = rows
+    out.append(f"  batches against all at once: pen-up time {t1.penup_time / t0.penup_time - 1:+.1%},"
+               f" motion time {T1 / T0 - 1:+.1%}")
+    return out
+
+
 def compare_verify(rig: Rig, arm_id: int, name: str, lines, cache=None) -> list[str]:
     """The same case planned without and with the checker in the loop."""
     ms0, left0, st0, load = plan_case(rig, arm_id, lines, cache)
@@ -217,14 +253,23 @@ if __name__ == "__main__":
     ap.add_argument("--cache", default="", help="kinematic table directory")
     ap.add_argument("--figure", action="store_true")
     ap.add_argument("--draw-speed", type=float, default=None, help="m/s, instead of the rules'")
+    ap.add_argument("--batches", action="store_true",
+                    help="plan each case all at once and in batches (8 workers), compare")
+    ap.add_argument("--big", type=int, default=0, help="add a case of this many big_cases lines")
     ap.add_argument("--verify", action="store_true",
                     help="plan each case with and without the checker in the loop, compare")
     a = ap.parse_args()
     rig = Rig.load(CONFIG)
     cache = a.cache or None
     for arm_id in (int(x) for x in a.arms.split(",")):
-        for name, lines in case_lines(rig, arm_id).items():
+        cases = case_lines(rig, arm_id)
+        if a.big:
+            cases[f"big{a.big}"] = big_lines(rig, arm_id, a.big)
+        for name, lines in cases.items():
             if a.cases and name not in a.cases.split(","):
+                continue
+            if a.batches:
+                print("\n".join(compare_batches(rig, arm_id, name, lines, cache)), flush=True)
                 continue
             if a.verify:
                 print("\n".join(compare_verify(rig, arm_id, name, lines, cache)), flush=True)

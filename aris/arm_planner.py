@@ -7,13 +7,22 @@ The local planner turns every line into bunches of alternative drawing plans (wi
 kinematic table kept in `cache_dir`, if given; `workers` processes); the sequencer orders them
 into a tour of drawing and free-space motions, from `q_start` to `q_end` (default `q_start`).
 The leftovers of both are merged.  Everything is in the arm's base frame.
+
+The lines are planned in batches of `batch` lines, nearest first (by the distance from the pen
+tip at `q_start` to the line's nearest point); the pool of workers plans them all in that
+order, in the background, while the sequencer draws from the batches that have arrived.
+`batch=None` plans every line before the tour starts.
 See docs/modules/arm_planner.md.
 """
 from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+from multiprocessing import get_context
+
+import numpy as np
 
 from aris import local
 from aris.sequencer import TourReport, tour
@@ -33,6 +42,8 @@ class PlanStats:
     cpu: float = 0.0               # s, the whole plan
     wall: float = 0.0
     local_leftovers: list = field(default_factory=list)
+    batches: int = 0               # batches of lines handed to the sequencer
+    last_batch_wall: float = -1.0  # s from the call until the last batch was planned
     tour: TourReport = field(default_factory=TourReport)
 
 
@@ -43,19 +54,27 @@ def _cpu() -> float:
 
 def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None,
          workers: int = 1, cache_dir=None, *, stats: PlanStats | None = None,
-         free_options=None, tour_options=None, verify=None):
+         free_options=None, tour_options=None, verify=None, batch: int | None = 32):
     """Yields the arm's motions in order; returns every leftover (local planner's first).
-    `verify(motion, q_before) -> dict`: the independent checker, see `sequencer.tour`."""
+    `verify(motion, q_before) -> dict`: the independent checker, see `sequencer.tour`.
+    `batch`: lines per batch (nearest first), None for all at once."""
     st = stats if stats is not None else PlanStats()
     c0, w0 = _cpu(), time.perf_counter()
     st.lines = len(lines)
-    bunches, left_local = local.plan(arm, lines, obstacles, rules, workers=workers,
-                                     cache_dir=cache_dir)
-    st.local_cpu, st.local_wall = _cpu() - c0, time.perf_counter() - w0
-    st.bunches, st.local_leftovers = len(bunches), list(left_local)
+    left_local: list[Leftover] = []
+    if batch is None:
+        bunches, left_local = local.plan(arm, lines, obstacles, rules, workers=workers,
+                                         cache_dir=cache_dir)
+        st.local_cpu, st.local_wall = _cpu() - c0, time.perf_counter() - w0
+        st.bunches, st.local_leftovers = len(bunches), list(left_local)
+        batches, refill = None, 0
+    else:
+        bunches, refill = [], batch
+        batches = _collect(_batches(arm, lines, obstacles, rules, q_start, workers, cache_dir,
+                                    batch), st, left_local, w0)
     gen = tour(arm, bunches, q_start, obstacles, rules, q_end, free_options, report=st.tour,
                intensity={x.id: x.intensity for x in lines}, options=tour_options,
-               verify=verify)
+               verify=verify, batches=batches, refill=refill)
     while True:
         try:
             m = next(gen)
@@ -65,8 +84,69 @@ def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None
         if st.first_cpu < 0:
             st.first_cpu, st.first_wall = _cpu() - c0, time.perf_counter() - w0
         yield m
+    if batches is not None:
+        batches.close()                 # shuts the pool down (it is done by now)
     st.cpu, st.wall = _cpu() - c0, time.perf_counter() - w0
     return list(left_local) + list(left_tour)
+
+
+def nearest_first(arm, lines, q_start) -> list[int]:
+    """Line indices sorted by the distance from the pen tip at q_start to the line's nearest
+    point (ties: the given order)."""
+    tip = arm.tip(np.asarray(q_start, float)[None])[0]
+    dist = []
+    for line in lines:
+        p = np.asarray(line.points, float)
+        if len(p) < 2:
+            dist.append(float(np.min(np.linalg.norm(p - tip, axis=1))) if len(p) else np.inf)
+            continue
+        a, d = p[:-1], np.diff(p, axis=0)
+        u = np.clip(np.einsum("ij,ij->i", tip - a, d) / np.maximum(
+            np.einsum("ij,ij->i", d, d), 1e-300), 0.0, 1.0)
+        dist.append(float(np.min(np.linalg.norm(a + u[:, None] * d - tip, axis=1))))
+    return sorted(range(len(lines)), key=lambda i: (dist[i], i))
+
+
+def _one(job):
+    arm, line, obstacles, rules, cache_dir = job
+    return local.plan(arm, [line], obstacles, rules, cache_dir=cache_dir)
+
+
+def _batches(arm, lines, obstacles, rules, q_start, workers, cache_dir, size):
+    """Yields (bunches, leftovers) per batch of `size` lines, nearest first.  With workers > 1
+    every line is handed to one pool at once, in that order, so later batches are planned
+    while the tour draws from the earlier ones; each batch is yielded when all its lines are
+    done, in order.  With one worker a batch is planned when it is asked for."""
+    order = nearest_first(arm, lines, q_start)
+    chunks = [order[i:i + size] for i in range(0, len(order), size)]
+    if workers <= 1 or len(lines) <= 1:
+        for c in chunks:
+            yield local.plan(arm, [lines[i] for i in c], obstacles, rules, cache_dir=cache_dir)
+        return
+    pool = ProcessPoolExecutor(workers, mp_context=get_context("spawn"))
+    try:
+        futures = [[pool.submit(_one, (arm, lines[i], obstacles, rules, cache_dir)) for i in c]
+                   for c in chunks]
+        for fs in futures:
+            got = [f.result() for f in fs]
+            yield [b for r in got for b in r[0]], [x for r in got for x in r[1]]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _collect(batches, st: PlanStats, left_local: list, w0: float):
+    """The bunches of each batch for the sequencer; the local planner's leftovers and the
+    counts kept aside."""
+    try:
+        for bunches, left in batches:
+            st.batches += 1
+            st.bunches += len(bunches)
+            left_local.extend(left)
+            st.local_leftovers = list(left_local)
+            st.last_batch_wall = time.perf_counter() - w0
+            yield bunches
+    finally:
+        batches.close()
 
 
 def plan_all(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None,

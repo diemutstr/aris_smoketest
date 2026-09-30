@@ -48,6 +48,11 @@ The cheapest is tried: its lift-offs and drawing motion are made, then the free-
 is asked for the move. If anything refuses, the next cheapest is tried. Ties go to the earlier
 piece, so the same input always gives the same tour, also from a fresh process.
 
+**Batches.** The pieces may come in batches (`batches`, an iterator of lists of bunches, from the
+arm planner). The sequencer chooses among the pieces it has; whenever fewer than `refill` (32)
+are alive, it takes the next batch, waiting for it if it is not there yet. That depends only on
+the pieces, never on when a batch arrives, so the tour is the same however fast they come.
+
 ## The lift-off and the set-down: two rules
 
 Decided by Pete, 2026-09-30: as simple and reliable as possible.

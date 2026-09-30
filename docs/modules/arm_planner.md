@@ -9,7 +9,7 @@ File: `aris/arm_planner.py`.
 
 ## In and out
 
-`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None, verify=None)`
+`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None, verify=None, batch=32)`
 
 - **In:** the arm, the lines (pen-tip polylines in the arm's base frame, each with its pressure),
   the obstacles in the base frame (paper, steel, walls, parked arms), where the arm is, the
@@ -29,13 +29,21 @@ File: `aris/arm_planner.py`.
   CPU and wall, and the sequencer's `TourReport` (see sequencer.md). CPU counts this process and
   its finished worker processes.
 
-## How it works
+## How it works: batches, nearest first
 
-1. The local planner plans every line (`workers` processes, kinematic table from `cache_dir`).
-   Lines do not depend on each other; this is the only step that waits for all of them.
-2. The sequencer builds the tour from the bunches and hands out each motion as soon as the
-   piece it belongs to is settled. So the first motion exists once the local planner is done
-   plus the time for one piece, not after the whole tour.
+1. The lines are sorted by the distance from the pen tip at `q_start` to the line's nearest
+   point and cut into batches of `batch` lines (32). All of them go to one pool of `workers`
+   processes at once, in that order, so the pool plans the nearest lines first and keeps
+   planning the later batches in the background while the arm draws. A batch is handed to the
+   sequencer when all its lines are planned. (With one worker, a batch is planned when the
+   sequencer asks for it.) `batch=None` plans every line before the tour starts, as before.
+2. The sequencer chooses among the pieces it has; whenever fewer than `batch` pieces are left,
+   it takes the next batch, waiting for it if it has not arrived.
+
+**Why the tour does not depend on timing.** When the sequencer takes the next batch depends only
+on how many pieces are still to draw, never on whether the batch is ready: if it is not, the
+sequencer waits. So the same drawing gives the same tour with 1 or 8 workers, on a quiet or a
+busy machine (a test slows the batches down on purpose and gets the same motions).
 
 A caller that runs each motion as it comes and a caller that collects everything first use the
 same code; the only difference is when the executor starts. Times reported by `plan` include
@@ -43,11 +51,35 @@ whatever the caller does between two motions; `plan_detailed` measures planning 
 
 ## What it cannot do
 
-- The first motion waits for the local planner on every line. Handing the sequencer the lines
-  as the local planner finishes them would start the arm sooner (the first piece is usually a
-  near one; that needs a sequencer that can wait for more pieces).
+- Batches cost pen-up time on big drawings: the sequencer chooses its next piece among at most
+  about 32 to 64 pieces, not among all lines (below: 16 to 19 % more pen-up time on 1 000 lines, 2 to 3 %
+  more time on the rig). Not tuned (a larger `batch` trades a later first motion for less).
 - It does not re-plan after a failure on the rig; the drawing server calls it again with the
   lines still to draw and where the arm is (DESIGN.md section 4).
+
+## Batches against all at once (2026-09-30, 8 workers, machine load 4 to 10)
+
+`tests/arm_cases.py --batches --big 1000`; "1 000 lines" are the first 1 000 lines of
+`tests/big_cases.big()` wholly within 0.80 m of the arm's axis. First motion: wall time from the
+call. Planning CPU counts the workers.
+
+| arm, case | first motion, all at once / batches | planning CPU | planning wall | pen-up share | pen-up time | time on the rig |
+|---|---|---|---|---|---|---|
+| 13 word | 1.08 / 0.96 s | 6.7 / 6.2 s | 2.0 / 1.9 s | 0.262 / 0.262 | same | same |
+| 13 100 lines | 5.41 / 3.12 s | 44.6 / 50.6 s | 12.6 / 11.9 s | 0.091 / 0.092 | +1.5 % | +0.1 % |
+| 13 1 000 lines | 19.44 / 1.60 s | 184.6 / 221.2 s | 67.1 / 62.6 s | 0.141 / 0.163 | +18.8 % | +2.8 % |
+| 31 word | 1.17 / 1.05 s | 7.2 / 6.5 s | 2.0 / 1.9 s | 0.277 / 0.277 | same | same |
+| 31 100 lines | 5.87 / 3.23 s | 50.4 / 54.2 s | 14.2 / 13.2 s | 0.092 / 0.098 | +6.7 % | +0.7 % |
+| 31 1 000 lines | 21.41 / 1.20 s | 203.5 / 225.3 s | 73.7 / 62.9 s | 0.146 / 0.165 | +15.9 % | +2.2 % |
+
+- The first motion no longer grows with the drawing: 1.0 to 3.2 s for any size here (with the
+  kinematic table already on disk; building it the first time adds about 5 s).
+- Planning CPU is 8 to 20 % higher with batches on 100 and 1 000 lines: each line is its own job
+  in the pool (the table and the arm are handed over per line), and more free-space moves are
+  planned. Wall time is lower, because the tour runs while the pool plans.
+- Pen-up time: more than 5 % over all-at-once on arm 31's 100 lines (+6.7 %) and on both 1 000
+  line sets (+16 to 19 %); the drawing time is the same, so the time on the rig grows 0.7 to
+  2.8 %.
 
 ## Measured (2026-09-30, branch aris3, one process, machine load 4 to 15)
 

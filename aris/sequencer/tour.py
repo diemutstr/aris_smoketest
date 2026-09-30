@@ -99,8 +99,14 @@ def tour_all(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=N
 
 def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRules,
          q_end=None, free_options=None, *, report: TourReport | None = None,
-         intensity: dict | None = None, options: TourOptions | None = None, verify=None):
+         intensity: dict | None = None, options: TourOptions | None = None, verify=None,
+         batches=None, refill: int = 32):
     """Yields the tour's motions in order; returns the pieces it could not draw.
+
+    `batches`: an iterator of further lists of bunches (after `bunches`).  The next batch is
+    taken, waiting for it if need be, whenever fewer than `refill` pieces are alive.  That
+    depends on the pieces only, never on when a batch arrives, so the tour is the same however
+    fast the batches come.
 
     `verify(motion, q_before) -> dict` (at least "passed", "tightest"): the independent
     checker.  With it, a piece is handed on only if every motion of its group (the move to it,
@@ -116,6 +122,16 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
     q_end = q_cur.copy() if q_end is None else np.array(q_end, float)
     alive = list(range(len(bunches)))
     leftovers: list[Leftover] = []
+    more = iter(()) if batches is None else iter(batches)
+
+    def refill_alive():
+        nonlocal more
+        while more is not None and len(alive) < refill:
+            batch = next(more, None)
+            if batch is None:
+                more = None
+            else:
+                alive.extend(s.add(batch))
 
     def out(m: Motion):
         _count(rep, m)
@@ -123,7 +139,10 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
             rep.first_cpu, rep.first_wall = time.process_time() - c0, time.perf_counter() - w0
         return m
 
-    while alive:
+    while True:
+        refill_alive()
+        if not alive:
+            break
         found, refused, dead = s.step(q_cur, alive)
         for b, why in dead + [(b, s.refused_why(b, refused)) for b in refused if found is None]:
             leftovers.append(s.leftover(b, why))
@@ -222,10 +241,19 @@ class _State:
         self.lifts: dict = {}          # (b, p, end 0/1) -> (Lift, cut) | str
         self.draws: dict = {}          # (b, p, backwards) -> [Motion] | str
         self.dead: dict = {}           # (b, p, d) -> why
-        self.cands = [(b, p, d) for b in range(len(bunches))
-                      for p in range(len(bunches[b].plans)) for d in (0, 1)]
-        self.entry = np.array([bunches[b].plans[p].q[-1 if d else 0] for b, p, d in self.cands]
-                              ).reshape(-1, 7)
+        self.bunches, self.cands, self.entry = [], [], np.zeros((0, 7))
+        self.add(bunches)
+
+    def add(self, bunches) -> list[int]:
+        """More bunches (a batch); -> their indices."""
+        first = len(self.bunches)
+        self.bunches.extend(bunches)
+        new = [(b, p, d) for b in range(first, len(self.bunches))
+               for p in range(len(self.bunches[b].plans)) for d in (0, 1)]
+        self.cands += new
+        self.entry = np.concatenate([self.entry, np.array(
+            [self.bunches[b].plans[p].q[-1 if d else 0] for b, p, d in new]).reshape(-1, 7)])
+        return list(range(first, len(self.bunches)))
 
     # ------------------------------------------------------------------ one step
 

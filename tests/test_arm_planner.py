@@ -8,6 +8,7 @@ Run with -s to see the numbers.
 from __future__ import annotations
 
 import hashlib
+import time
 import os
 import subprocess
 import sys
@@ -156,3 +157,79 @@ def test_word_with_the_checker_in_the_loop(arm_id, tmp_path_factory):
     for a, b in zip(ms0, ms):
         assert np.array_equal(a.traj.q, b.traj.q)
     assert cpu <= 10 * 8.0                  # measured 7.9 s (arm 13, load 21)
+
+
+# --------------------------------------------------------------------------- batches
+
+
+def _lines_near(arm_id: int, n: int, seed: int = 5):
+    """n short random lines within the arm's reach, base frame (deterministic)."""
+    axis = RIG.T_table_base(arm_id)[:2, 3]
+    rng = np.random.default_rng(seed)
+    out = []
+    for i in range(n):
+        c = axis + np.sqrt(rng.uniform(0.04, 0.6 ** 2)) * np.array(
+            [np.cos(a := rng.uniform(0, 2 * np.pi)), np.sin(a)])
+        d = rng.uniform(0.03, 0.12) * np.array([np.cos(b := rng.uniform(0, np.pi)), np.sin(b)])
+        xy = np.array([c - d / 2, c + d / 2])
+        out.append(RIG.to_base(arm_id, Line(f"n:{i}", np.column_stack([xy, np.zeros(2)]),
+                                            "table")))
+    return out
+
+
+def test_nearest_first_orders_by_distance_from_the_pen():
+    from aris.arm_planner import nearest_first
+    arm = RIG.arm(31)
+    lines = _lines_near(31, 12)
+    order = nearest_first(arm, lines, RIG.park_q(31))
+    tip = arm.tip(RIG.park_q(31)[None])[0]
+    d = [np.min(np.linalg.norm(np.linspace(x.points[0], x.points[1], 200) - tip, axis=1))
+         for x in (lines[i] for i in order)]
+    assert sorted(order) == list(range(12)) and np.all(np.diff(d) >= -1e-4)
+
+
+def _slowed(monkeypatch, pause):
+    import aris.arm_planner as ap
+    real = ap._batches
+
+    def slow(*a, **k):
+        for b in real(*a, **k):
+            time.sleep(pause)
+            yield b
+    monkeypatch.setattr(ap, "_batches", slow)
+
+
+def test_batches_give_the_same_tour_with_1_or_8_workers_and_a_slow_feeder(monkeypatch):
+    arm, obs, rules, _ = lc.problem(RIG, 31)
+    lines = _lines_near(31, 14)
+    q0 = RIG.park_q(31)
+    kw = dict(batch=4)
+    one = _digest(*plan_all(arm, lines, obs, q0, rules, workers=1, **kw))
+    many = _digest(*plan_all(arm, lines, obs, q0, rules, workers=8, **kw))
+    _slowed(monkeypatch, 0.5)
+    slow = _digest(*plan_all(arm, lines, obs, q0, rules, workers=8, **kw))
+    assert one == many == slow
+    ms, left, st = plan_detailed(arm, lines, obs, q0, rules, **kw)
+    assert st.batches == 4 and st.lines == 14
+    assert_tour(arm, obs, rules, ms, q0, q0)
+    drawn = {m.piece.line_id for m in ms if m.kind == "draw"} | {x.piece.line_id for x in left}
+    assert drawn == {x.id for x in lines}                      # nothing dropped
+
+
+@pytest.mark.slow
+def test_first_motion_of_1000_lines_comes_within_seconds(tmp_path_factory):
+    """1 000 lines of tests/big_cases.big() within arm 13's reach, 8 workers, batches of 32.
+    Measured 2026-09-30 at load 8: first motion after 1.6 s (all at once: 19.4 s), 3 881
+    motions, pen-up share 0.163 (all at once 0.141)."""
+    cache = tmp_path_factory.getbasetemp() / "kinematic_table"
+    lines = ac.big_lines(RIG, 13, 1000)
+    ms, left, st, load = ac.plan_case(RIG, 13, lines, cache, 8)
+    print(f"\n1 000 lines, arm 13, load {load:.0f}: first motion after {st.first_wall:.2f} s, "
+          f"planning wall {st.wall:.1f} s, CPU {st.cpu:.1f} s, pen-up share "
+          f"{st.tour.penup_share:.3f}, {st.batches} batches")
+    arm, obs, rules, _ = lc.problem(RIG, 13)
+    assert_tour(arm, obs, rules, ms, RIG.park_q(13), RIG.park_q(13))
+    assert st.batches == 32 and st.first_wall < 15.0         # 5 s wanted at load under 20
+    assert st.tour.penup_share <= 0.20
+    drawn = {m.piece.line_id for m in ms if m.kind == "draw"} | {x.piece.line_id for x in left}
+    assert drawn == {x.id for x in lines}
