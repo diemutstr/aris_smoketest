@@ -76,11 +76,26 @@ class Capsule:
 
 
 @dataclass(frozen=True)
+class Field:
+    """A distance field on a grid: the footprint of a neighbour over a whole phase.
+
+    `dist[i, j, k]` is a lower bound on the distance from the centre of cell (i, j, k) to the
+    footprint's surface, negative inside.  Outside the grid counts as free.
+    """
+    name: str
+    origin_base: np.ndarray            # (3,) centre of cell (0, 0, 0)
+    cell: float                        # m, the grid spacing
+    dist: np.ndarray                   # (nx, ny, nz) float32, metres
+    margin: float
+
+
+@dataclass(frozen=True)
 class Obstacles:
     """Everything one arm has to stay clear of, in that arm's base frame."""
     boxes: tuple[Box, ...] = ()
     planes: tuple[Plane, ...] = ()
     capsules: tuple[Capsule, ...] = ()
+    fields: tuple[Field, ...] = ()
 
 
 # --------------------------------------------------------------------------- the arm's body
