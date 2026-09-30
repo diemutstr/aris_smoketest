@@ -3,8 +3,8 @@
 **Job.** The system planner takes a whole drawing and decides which arm draws each line, in
 which phase and behind which walls. It runs the arm planners and hands out their motions as
 they come, each tagged with its phase and arm. At the end it says what was not drawn and why.
-It only ever calls the arm planner. This is step 1 of Pete's scheme (DESIGN.md section 3):
-leaders only, followers parked.
+It only ever calls the arm planner. It implements Pete's scheme (DESIGN.md section 3): leaders
+first, then the followers against the leaders' footprints (step 2), then the fill phases.
 
 Files: `aris/system/`:
 - `planner.py`: the one call
@@ -12,6 +12,7 @@ Files: `aris/system/`:
 - `maps.py`: the drawable maps
 - `area.py`: the drawing area
 - `allocate.py`: the laws of who draws what
+- `followers.py`: step 2, a leader's footprint handed to its follower
 - `run.py`: the arm planners of a phase, in parallel
 - `account.py`: the no-drop account
 - `stretch.py`: part of a line
@@ -76,6 +77,42 @@ That is a bound from the arm model, not a sample; sampled, the furthest is 1.02 
 stay 0.121 m apart, against 0.053 m demanded. Arms 31 and 71 each reach another arm, so they
 fill alone (`phases.fill_groups`, tested).
 
+## Step 2: followers in the leader phases (off by default)
+
+`Settings(followers=True)` turns this on. It is off by default because, under the five laws,
+followers draw nothing on any test drawing and cost 3 to 25 times the planning time (see
+"Measured").
+
+In phases 1 and 2, once a leader has planned, its footprint becomes one more obstacle for its
+row partner. The footprint is everywhere the leader's body goes during the phase: all its
+motions, plus its park, as a distance field with 1 cm cells and a margin of the arm-to-arm
+clearance. It is expressed in the partner's base frame.
+
+The follower's obstacles are then:
+- its own steel and the paper;
+- its leader's walls, held on its own side;
+- the footprint.
+
+Nothing stands parked. Its drawable map is computed against these obstacles after the leader
+has planned, so it depends on the plan and is never cached.
+
+The follower's job is what that map holds whole, taken from two places:
+- what the leader handed back;
+- what waits for a fill phase.
+
+It plans that from its park back to its park, and what it hands back flows on. Its motions
+carry the phase's name. There is no timing between leader and follower: the follower avoids
+everywhere the leader will ever be in that phase.
+
+How a follower's motions are checked (`phases.follower_phase`):
+- the phase as the follower sees it: its leader's walls, nothing parked;
+- the leader's footprint, passed to the checker as `check(..., fields=)`, from the report
+  (`Report.fields`);
+- `check_phase_end` covers every arm that moved.
+
+The footprints and follower maps are built only if some follower, alone, could hold one of
+those stretches whole.
+
 ## Drawable maps
 
 For every arm in every phase there is a grid over the canvas, 2 cm apart. A grid point is
@@ -105,15 +142,17 @@ grid):
 
 ## The drawing area
 
+`plan` reads the area from the rig (`rig.drawing_area_m`, from rig.json). Before planning
+anything it refuses if the file has none, or if the maps give a rectangle more than one grid
+cell different from the file's.
+
 The drawing area is the largest rectangle centred on the table, with sides along the table,
 that lies inside the union of all maps shrunk by 2 cm (`area.py`). It is **1.56 x 3.56 m**,
 against the canvas's 1.80 x 3.63 m (86 % along x, 98 % along y, 85 % of the area). It is in
 `config/rig.json` (`canvas.drawing_area_m`, with how and at which gates). Drawings must lie
-inside it; the drawing server will scale them to fit. The rig does not read that entry yet
-(see below), so the planner computes the same rectangle from the maps; the slow test checks
-that the two agree.
+inside it; the drawing server will scale them to fit.
 
-## Measured (2026-09-30, gates of rig.json, machine load 8 to 35, 30 processes, maps cached)
+## Measured (2026-09-30, struts from the technical drawing, gates of rig.json, followers on, machine load 9 to 19, 30 processes, maps cached)
 
 The seven drawings of `tests/system_cases.py`, each scaled to the drawing area:
 - word: "unknown", 0.55 m wide at the table centre;
@@ -127,27 +166,34 @@ The seven drawings of `tests/system_cases.py`, each scaled to the drawing area:
 Drawing speed 20 mm/s. "Phases 1 + 2" answers Pete's question: how much one 1-2-1 / 2-1-2
 alternation draws.
 
-| case | length m | drawn | phases 1 + 2 | fill | cuts | left over | planning CPU / wall s | first motion s | on the rig s (phases) | checker |
-|---|---|---|---|---|---|---|---|---|---|---|
-| word | 1.30 | 1.000 | 1.000 | 0 | 0 | none | 17 / 6.4 | 6.0 | 96 (96) | 53 / 53 |
-| hatch | 60.00 | 1.000 | 1.002 | 0.004 | 42 | < 1 mm | 120 / 13 | 3.6 | 1600 (781 + 798 + 14 + 8) | 377 / 377 |
-| scatter | 9.59 | 1.000 | 0.979 | 0.021 | 0 | none | 63 / 6.3 | 2.5 | 323 (229 + 75 + 19) | 331 / 331 |
-| starburst | 29.36 | 1.000 | 0.999 | 0.006 | 16 | none | 68 / 8.3 | 2.4 | 1052 (524 + 516 + 12) | 180 / 180 |
-| spiral | 16.91 | 1.000 | 1.003 | 0.007 | 17 | none | 47 / 8.1 | 2.1 | 499 (266 + 220 + 13) | 100 / 100 |
-| duotone | 35.29 | 1.000 | 1.004 | 0.002 | 22 | none | 81 / 9.0 | 3.3 | 697 (342 + 346 + 9) | 184 / 184 |
-| random 300 | 179.67 | 1.000 | 0.993 | 0.013 | 95 | < 1 mm | 281 / 30 | 8.1 | 4520 (2369 + 2032 + 81 + 38) | 1665 / 1665 |
+| case | length m | drawn | phases 1 + 2 | of which followers | fill | cuts | left over | planning CPU / wall s | first motion s | on the rig s (phases) | checker |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| word | 1.30 | 1.000 | 1.000 | 0 | 0 | 0 | none | 13 / 1.6 | 1.2 | 98 (98) | 53 / 53 |
+| hatch | 60.00 | 1.000 | 1.002 | 0 | 0.004 | 42 | < 1 mm | 261 / 55 | 4.0 | 1594 (779 + 794 + 14 + 8) | 377 / 377 |
+| scatter | 9.59 | 1.000 | 0.979 | 0 | 0.021 | 0 | none | 174 / 41 | 2.6 | 323 (228 + 76 + 19) | 331 / 331 |
+| starburst | 29.36 | 1.000 | 0.999 | 0 | 0.006 | 16 | none | 191 / 46 | 2.2 | 1052 (524 + 517 + 12) | 180 / 180 |
+| spiral | 16.91 | 1.000 | 1.003 | 0 | 0.007 | 17 | none | 169 / 49 | 2.1 | 494 (265 + 216 + 13) | 100 / 100 |
+| duotone | 35.29 | 1.000 | 1.004 | 0 | 0.002 | 22 | none | 212 / 48 | 3.4 | 694 (341 + 345 + 8) | 184 / 184 |
+| random 300 | 179.67 | 1.000 | 0.993 | 0 | 0.013 | 95 | < 1 mm | 507 / 84 | 7.9 | 4518 (2368 + 2028 + 78 + 44) | 1665 / 1665 |
 
 - Inside the drawing area every drawing is drawn completely. Phases 1 + 2 draw 98 to 100 %
   of it (over 1 where the joins are drawn twice).
+- **Followers draw nothing on any case.** What waits for a fill phase is 0 to 2 % of a
+  drawing: rim bits and the patches where the walls cross. Each leader's footprint covers 41 to
+  100 % of what its follower could draw with the leader parked. Of that, the field's own
+  conservatism is 0 to 1 % (measured with the leader standing at its park); the rest is where
+  the leader really goes. The fill phases and the rig time are unchanged.
+- **The price of step 2 is planning time.** Footprints and follower maps are built in every
+  leader phase with something waiting: planning wall 41 to 84 s against 6 to 30 s without,
+  and CPU doubled. The rig time is not affected.
 - **Checker:** all 2 890 motions pass `aris.check.check` with their phase, and the smallest
   clearance beyond the demanded one is 0.8 mm. `check_phase_end` passes after all 21 phases
   that ran.
-- **Skipped:** phases with nothing to do (2 to 5 per case). One phase whose arm drew nothing:
-  hatch, fill 31, which handed back a 1 cm rim stretch as unreachable.
+- **Corrected struts:** on the steel from the technical drawing the fill maps shrink by
+  0.1 point; the leader maps and the drawing area (1.56 x 3.56 m) do not change. With
+  followers off, every number is within 1 % of the previous table.
 - **Rig time:** each phase lasts as long as its busiest arm. In phase 1 of the random lines,
-  arm 71 works 2 369 s while its partners work less. Nothing balances the arms yet.
-- The word's first motion waited for the local planner's kinematic table, rebuilt once for
-  the new gates; the other cases read it.
+  arm 71 works 2 368 s. Nothing balances the arms yet.
 - **Before the drawing area** (whole-canvas drawings at the old gates), the same laws left
   only what lies beyond every arm's reach: spiral 13 mm, starburst 0.25 m, duotone 0.05 m,
   random 0.27 m.
@@ -163,21 +209,22 @@ rectangle is the drawing area.
 
 ## What it cannot do (yet)
 
-- **Followers do not draw (step 2).** In phases 1 and 2 the three followers stand parked.
-  Step 2 would hand each leader's footprint (everywhere its body goes in the phase) to its row
-  partner as one more obstacle, and the partner would draw what it can next to it. That
-  would also share out the busiest leaders' work.
+- **Followers get almost nothing to do.** The leader phases already take 98 to 100 % of every
+  drawing. What waits for a fill phase lies mostly in the two small patches where the walls
+  of both phases cross; a follower keeps behind its leader's walls, so it cannot reach them.
+  A leader's footprint also covers 41 to 100 % of what its follower could otherwise draw.
+  Followers would only help the rig time if they took work from their leaders before the
+  leaders plan (a different law: a question for Pete).
+
 - **Nothing balances the arms of a phase.** The rig time is the sum of the phases, each as
   long as its busiest arm.
 - A stretch an arm refuses is offered to the phases after only, never to the same arm again.
 - The maps judge single points with the pen upright. A stretch they hold can still fail as a
   whole; it then flows on to the next phases.
-- The drawing area is written in rig.json, but `rig.py` does not read it yet, so the planner
-  recomputes it from the maps.
 
 ## Tests
 
-`tests/test_system.py`, quick set in 36 s:
+`tests/test_system.py`, quick set in 40 s:
 - the maps of one phase build, are cached and read back;
 - hand-made lines land where expected;
 - the laws on toy maps: whole, the cut with its join, the 80 % rule, a hole in a leader's map
@@ -185,7 +232,9 @@ rectangle is the drawing area.
 - parts that meet are one;
 - the fill pairs cannot touch;
 - the account raises on a drop, a double and a stranger;
-- a drawing outside the area is refused;
+- a follower sees its leader's footprint (the leader's body inside it; with the leader
+  standing, the follower loses at most 10 % against a parked leader, on a 5 cm grid);
+- a drawing outside the area is refused, and so is a stale or missing area in the rig;
 - a small drawing runs end to end on arms 13 and 71 in two processes, joined from park to
   park, with the same result from one process.
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from aris.types import Phase
+from aris.types import Phase, Wall
 
 LEADER_PHASES = (1, 2)
 
@@ -82,3 +82,15 @@ def phase_named(rig, name: str) -> Phase:
 
 def is_fill(phase: Phase) -> bool:
     return phase.name.startswith("fill ")
+
+
+def follower_phase(rig, phase: Phase, arm_id: int) -> Phase:
+    """What a follower moves in, during a leader phase: alone, nothing parked (every arm
+    moves), behind the same walls as its leader (each wall next to the leader, held on the
+    follower's own side).  Its leader is a footprint, handed over separately."""
+    lead = rig.row_partner(arm_id)
+    walls = tuple(Wall(f"{w.name}_for_{arm_id}", (arm_id, w.arms[1] if w.arms[0] == lead
+                                                  else w.arms[0]),
+                       w.point_table, w.normal_table)
+                  for w in phase.walls if lead in w.arms)
+    return Phase(phase.name, (arm_id,), (), walls)

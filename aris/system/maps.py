@@ -98,8 +98,9 @@ def digest(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> str:
     return h.hexdigest()
 
 
-def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> Map:
-    """The map of one arm in one phase, computed."""
+def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings, obstacles=None) -> Map:
+    """The map of one arm in one phase, computed; against `obstacles` if given (a follower
+    with its leader's footprint), else the phase's (`rig.obstacles_for`)."""
     t0 = time.process_time()
     x, y = grid(rig, cfg.grid_step)
     X, Y = np.meshgrid(x, y, indexing="ij")
@@ -109,7 +110,8 @@ def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> Map:
     T = rig.T_base_table(arm_id)
     p_base = p_table[near] @ T[:3, :3].T + T[:3, 3]
     arm = rig.arm(arm_id)
-    judge = Judge(arm, rig.obstacles_for(arm_id, phase), gates)
+    obstacles = rig.obstacles_for(arm_id, phase) if obstacles is None else obstacles
+    judge = Judge(arm, obstacles, gates)
     node_cfg = LocalSettings(n_spin=cfg.n_spin)
     state = np.zeros(X.size, np.int8)
     for a in range(0, len(near), _CHUNK):

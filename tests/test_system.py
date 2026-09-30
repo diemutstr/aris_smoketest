@@ -17,7 +17,8 @@ from aris.rig import Rig  # noqa: E402
 from aris.system import NoDropViolation, account, phases, plan_all, plan_detailed  # noqa: E402
 from aris.system import maps as mp  # noqa: E402
 from aris.system.allocate import allocate, cover  # noqa: E402
-from aris.system.phases import cannot_touch, fill_groups, horizontal_reach, is_fill  # noqa: E402
+from aris.system.phases import (cannot_touch, fill_groups, follower_phase,  # noqa: E402
+                                 horizontal_reach, is_fill)
 from aris.system.settings import Settings  # noqa: E402
 from aris.system.stretch import of_line  # noqa: E402
 from aris.types import Leftover, Line, Piece, Refusal  # noqa: E402
@@ -169,6 +170,29 @@ def test_parts_for_the_same_arm_that_meet_are_one():
                                                                         (0.19, 0.3, 1)]
 
 
+def test_a_follower_sees_its_leaders_footprint(rig, rules):
+    from aris.kernel.geometry import field_lookup
+    from aris.system import followers
+    ph = rig.phase(1)
+    assert followers.pairs(rig, ph) == [(13, 17), (71, 31), (2, 97)]
+    t = time.process_time()
+    f, field, obs, m = followers.setup((rig, ph, 13, 17, [], rules.gates, COARSE))
+    print(f"follower set-up (leader standing, 5 cm map): CPU {time.process_time() - t:.1f} s")
+    assert f == 17 and obs.fields == (field,) and field.cell == followers.CELL
+    # the leader's body at its park, in the follower's frame, is inside the footprint
+    body = rig.arm(13).body(rig.park_q(13)[None])
+    p13 = rig.to_table(13, 0.5 * (body.p0[0] + body.p1[0]))
+    T = rig.T_base_table(17)
+    p17 = p13 @ T[:3, :3].T + T[:3, 3]
+    d = field_lookup(p17, np.asarray(field.origin_base), field.cell,
+                     np.array(field.dist.shape), np.asarray(field.dist))
+    assert np.all(d < 0.0)
+    # standing, the leader takes only a little of the follower's area: under its own park
+    alone = mp.build(rig, ph, 17, rules.gates, COARSE,
+                     obstacles=rig.obstacles(17, (13,), follower_phase(rig, ph, 17).walls))
+    assert 0.9 * alone.share <= m.share <= alone.share
+
+
 def test_fill_groups_cannot_touch(rig):
     # the two ends of a column are 2.42 m apart; each arm's body stays within 1.15 m of its axis
     assert fill_groups(rig) == [(13, 2), (17, 97), (31,), (71,)]
@@ -251,6 +275,15 @@ def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
     assert tagged == [] and isinstance(out, Refusal) and out.reason == "outside_drawing_area"
     assert "line wide" in out.detail and "(0.9500, 0.0000)" in out.detail
     assert 1.0 < rep.drawing_area[0] < 1.8 and 3.0 < rep.drawing_area[1] < 3.63
+
+
+def test_the_drawing_area_comes_from_the_rig_and_must_match_the_maps(rig, rules):
+    lines = _small()[:1]
+    stale = replace(rig, drawing_area_m=rig.drawing_area_m - 0.2)
+    _, out, _ = plan_detailed(stale, lines, rules, settings=COARSE)
+    assert isinstance(out, Refusal) and out.reason == "stale_drawing_area"
+    _, out, _ = plan_detailed(replace(rig, drawing_area_m=None), lines, rules, settings=COARSE)
+    assert isinstance(out, Refusal) and out.reason == "no_drawing_area"
 
 
 def test_an_arm_away_from_its_park_must_move_first(rig, rules):

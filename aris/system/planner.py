@@ -28,7 +28,8 @@ import numpy as np
 
 from aris.system import area
 from aris.system import maps as maps_mod
-from aris.system.allocate import allocate
+from aris.system import followers
+from aris.system.allocate import allocate, take_whole
 from aris.system.phases import is_fill
 from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
@@ -79,7 +80,11 @@ class Report:
     cpu: float = 0.0            # s, everything (this process, arm planners, map builders)
     wall: float = 0.0
     first_wall: float = -1.0    # s from the call to the first motion
-    drawing_area: np.ndarray | None = None           # (2,) m, the admissible area (area.py)
+    drawing_area: np.ndarray | None = None           # (2,) m, rig.json's, checked against the maps
+    # Step 2: per (phase name, follower) its leader's footprint in its frame (the checker needs
+    # it: `check(..., fields=)`), and its drawable map against it
+    fields: dict = field(default_factory=dict)
+    follower_maps: dict = field(default_factory=dict)
     cuts: int = 0               # joins made by cutting stretches (allocate)
     # Phases not run, and why: nothing was allocated to them, or their arms planned and drew
     # nothing (everything handed back).  [(phase name, why)]
@@ -116,8 +121,9 @@ def at_park(rig, arm_id, q) -> bool:
 def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir=None,
          workers: int = 1, settings: Settings | None = None, report: Report | None = None):
     """Yields (phase name, arm id, Motion) as the arm planners produce them; returns the
-    leftovers, or a Refusal (before anything is planned) when a point of the drawing lies
-    outside the admissible drawing area.  `rules`: default `rig.rules()`, the only source.
+    leftovers, or a Refusal (before anything is planned) when rig.json has no drawing area, when
+    the maps disagree with it by more than a grid cell, or when a point of the drawing lies
+    outside it.  `rules`: default `rig.rules()`, the only source.
     `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
     stands (default: its park).  `cache_dir`: where the drawable maps and the local planner's
     kinematic table are kept.  `workers`: processes (map building, arms of a phase)."""
@@ -132,7 +138,16 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     maps = maps_mod.load_or_build(rig, phases, rules.gates, cfg, cache_dir, workers)
     rep.map_cpu, rep.map_wall = _cpu() - c0, time.perf_counter() - w0
     rep.coverage = maps_mod.coverage(maps, phases)
-    rep.drawing_area = area.admissible(maps)
+    file_area = getattr(rig, "drawing_area_m", None)
+    if file_area is None:
+        return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
+    rep.drawing_area = np.asarray(file_area, float).reshape(2)
+    maps_area = area.admissible(maps)
+    if np.max(np.abs(maps_area - rep.drawing_area)) > cfg.grid_step + 1e-9:
+        return Refusal("stale_drawing_area",
+                       f"rig.json's drawing area {rep.drawing_area[0]:.3f} x "
+                       f"{rep.drawing_area[1]:.3f} m differs from the maps' {maps_area[0]:.3f} x "
+                       f"{maps_area[1]:.3f} m by more than one grid cell ({cfg.grid_step} m)")
     out = area.first_outside(lines, rep.drawing_area)
     if out is not None:
         return Refusal("outside_drawing_area",
@@ -149,12 +164,11 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
         mine = {a: [s for s in pool if s.target == (k, a)] for a in ph.active}
         pool = [s for s in pool if s.target[0] != k]
         todo = [a for a in ph.active if mine[a] or not at_park(rig, a, q_now[a])]
-        if not todo:
+        if not todo and is_fill(ph):
             rep.skipped.append((ph.name, "nothing allocated to it"))
             continue
-        back, final = yield from _phase(rig, ph, todo, mine, q_now, rules, cache_dir, workers,
-                                        rep, w0)
-        pool += back
+        pool, final = yield from _phase(rig, phases, maps, k, todo, mine, pool, q_now, rules,
+                                        cfg, cache_dir, workers, rep, w0)
         left += final
         for a in todo:
             q_now[a] = rig.park_q(a)
@@ -163,25 +177,75 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     return left + new_left
 
 
-def _phase(rig, ph, todo, mine, q_now, rules, cache_dir, workers, rep: Report, w0):
-    """Runs one phase.  Yields the tagged motions; returns (stretches handed back, leftovers)."""
+def _phase(rig, phases, maps, k, todo, mine, pool, q_now, rules, cfg, cache_dir, workers, rep,
+           w0):
+    """Runs phase k: its arms, then (in a leader phase) the followers against their leaders'
+    footprints.  Yields the tagged motions; returns (the pool for the phases after, leftovers)."""
+    ph = phases[k]
     pr = PhaseReport(ph.name, ph.active)
     rep.phases.append(pr)
     t0 = time.perf_counter()
-    subs, jobs = {}, []
-    for a in todo:
-        ar = pr.arms[a] = ArmReport(a, len(mine[a]), float(sum(s.length for s in mine[a])))
+    jobs = {a: (rig.obstacles_for(a, ph), mine[a], q_now[a]) for a in todo}
+    back, final, trajs = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0)
+    if cfg.followers and not is_fill(ph):
+        back, pool, more = yield from _followers(rig, phases, maps, k, back, pool, trajs, rules,
+                                                 cfg, cache_dir, workers, rep, pr, t0, w0)
+        final += more
+    pr.wall = time.perf_counter() - t0
+    for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
+        pr.idle[a] = pr.arms.pop(a)
+    if not pr.arms:
+        rep.phases.remove(pr)
+        rep.skipped.append((ph.name, "nothing allocated to it" if not pr.idle else
+                            "its arms drew nothing; handed back: " + ", ".join(
+                                f"arm {a} {k} {m:.2f} m" for a, r in pr.idle.items()
+                                for k, m in sorted(r.handed_back.items()))))
+    return pool + back, final
+
+
+def _followers(rig, phases, maps, k, back, pool, trajs, rules, cfg, cache_dir, workers, rep, pr,
+               t0, w0):
+    """Step 2.  The leaders' footprints go to their row partners; each follower takes, whole,
+    what its map then holds among what the leaders handed back and what waits for a fill phase
+    (allocate.take_whole), and plans it from its park back to its park.  Yields its motions;
+    returns (handed back, the pool without what was taken, leftovers)."""
+    ph = phases[k]
+    fill_bound = [s.target is not None and is_fill(phases[s.target[0]]) for s in pool]
+    waiting = [s for s, w in zip(pool, fill_bound) if w]
+    kept = [s for s, w in zip(pool, fill_bound) if not w]
+    # The footprint only takes space away: nothing a follower's map without its leader (its fill
+    # phase's, cached) cannot hold whole is worth building footprints for.
+    alone = [(k, f, maps[(p.name, f)]) for _, f in followers.pairs(rig, ph)
+             for p in phases if is_fill(p) and f in p.active]
+    if not take_whole(back + waiting, alone, cfg)[0]:
+        return back, pool, []
+    setups = followers.setup_all(rig, ph, trajs, rules.gates, cfg, workers)
+    for f, (fld, _, m) in setups.items():
+        rep.fields[(ph.name, f)], rep.follower_maps[(ph.name, f)] = fld, m
+    taken, rest = take_whole(back + waiting, [(k, f, m) for f, (_, _, m) in setups.items()], cfg)
+    jobs = {f: (obs, [s for s in taken if s.target[1] == f], rig.park_q(f))
+            for f, (_, obs, _) in setups.items() if any(s.target[1] == f for s in taken)}
+    back2, final, _ = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0)
+    return back2, kept + rest, final
+
+
+def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0):
+    """The arm planners of `jobs` {arm: (obstacles, stretches, q_start)}, in parallel, each back
+    to its park.  Yields the tagged motions; returns (handed back, leftovers, {arm: [traj]})."""
+    subs, arm_jobs = {}, []
+    for a, (obs, sts, q0) in jobs.items():
+        pr.arms[a] = ArmReport(a, len(sts), float(sum(s.length for s in sts)))
         base = []
-        for i, st in enumerate(mine[a]):
-            sid = f"{st.line_id}#{i}"
-            subs[(a, sid)] = st
-            base.append(rig.to_base(a, st.as_line(sid)))
-        jobs.append(ArmJob(a, tuple(base), rig.obstacles_for(a, ph), q_now[a], rig.park_q(a)))
-    back, final = [], []
-    for a, kind, payload in run_phase(rig, jobs, rules, cache_dir, workers):
+        for i, st in enumerate(sts):
+            subs[(a, f"{st.line_id}#{i}")] = st
+            base.append(rig.to_base(a, st.as_line(f"{st.line_id}#{i}")))
+        arm_jobs.append(ArmJob(a, tuple(base), obs, q0, rig.park_q(a)))
+    back, final, trajs = [], [], {}
+    for a, kind, payload in run_phase(rig, arm_jobs, rules, cache_dir, workers):
         ar = pr.arms[a]
         if kind == "motion":
             m = _retag(payload, subs, a)
+            trajs.setdefault(a, []).append(m.traj)
             ar.motions += 1
             ar.motion_time += float(m.traj.t[-1] - m.traj.t[0])
             if m.kind == "draw":
@@ -204,15 +268,7 @@ def _phase(rig, ph, todo, mine, q_now, rules, cache_dir, workers, rep: Report, w
                 final.append(Leftover(part.piece, x.reason, detail))
             else:
                 back.append(replace(part, reason=x.reason, detail=detail))
-    pr.wall = time.perf_counter() - t0
-    for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
-        pr.idle[a] = pr.arms.pop(a)
-    if not pr.arms:
-        rep.phases.remove(pr)
-        rep.skipped.append((ph.name, "its arms drew nothing; handed back: " + ", ".join(
-            f"arm {a} {k} {m:.2f} m" for a, r in pr.idle.items()
-            for k, m in sorted(r.handed_back.items()))))
-    return back, final
+    return back, final, trajs
 
 
 def _retag(m: Motion, subs: dict, arm_id: int) -> Motion:

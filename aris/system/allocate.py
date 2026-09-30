@@ -139,3 +139,17 @@ def allocate(pool, candidates, rules: DrawRules, cfg: Settings):
         left += [_left(replace(st.sub(x, y), reason=st.reason, detail=st.detail),
                        "unreachable", "outside every drawable map") for x, y in gaps]
     return out, left, joins
+
+
+def take_whole(stretches, candidates, cfg: Settings):
+    """Law 2 for the followers of a leader phase: a stretch goes to the first candidate
+    (phase index, arm id, Map) whose map holds all of it.  -> (taken, the rest unchanged)."""
+    taken, rest = [], []
+    for st in stretches:
+        p = st.samples(cfg.sample_step)[1] if st.length > 0 else st.points
+        hit = next((c for c in candidates if c[2].contains(p).all()), None)
+        if hit is None:
+            rest.append(st)
+        else:
+            taken.append(replace(st, target=hit[:2]))
+    return taken, rest
