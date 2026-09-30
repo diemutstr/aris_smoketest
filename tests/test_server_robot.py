@@ -67,6 +67,7 @@ def _wait(url, jid, timeout=120.0):
     raise AssertionError(f"job {jid} did not end")
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_the_operator_pc_runs_a_job_of_the_server(station, tmp_path):
     rig = station.rig
     st = replace(station, jobs_dir=tmp_path / "jobs")

@@ -567,6 +567,7 @@ def _down(depth, n=60):
     return free_motion(31, Q).traj
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_lower_and_lift():
     ph = phase_of(31)
     tr = _down(0.0)

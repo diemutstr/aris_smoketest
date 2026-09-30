@@ -199,6 +199,7 @@ def _slowed(monkeypatch, pause):
     monkeypatch.setattr(ap, "_batches", slow)
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_batches_give_the_same_tour_with_1_or_8_workers_and_a_slow_feeder(monkeypatch):
     arm, obs, rules, _ = lc.problem(RIG, 31)
     lines = _lines_near(31, 14)

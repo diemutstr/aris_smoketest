@@ -245,6 +245,7 @@ def _joined(rig, tagged):
     return by
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_small_drawing_end_to_end_on_two_arms(rig, rules):
     lines = _small()
     t = time.process_time()
@@ -277,6 +278,7 @@ def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
     assert 1.0 < rep.drawing_area[0] < 1.8 and 3.0 < rep.drawing_area[1] < 3.63
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_the_drawing_area_comes_from_the_rig_and_must_match_the_maps(rig, rules):
     lines = _small()[:1]
     stale = replace(rig, drawing_area_m=rig.drawing_area_m - 0.2)
@@ -313,6 +315,7 @@ def test_each_arm_is_checked_in_its_own_view(rig):
     assert [w.arms for w in view.walls] == [(17, 71)]
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_a_refused_line_flows_on_and_is_left_over_as_failed_check(rig, rules):
     import pickle
     from functools import partial

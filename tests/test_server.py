@@ -165,6 +165,7 @@ def test_rig_and_arms_endpoints(station):
 # --------------------------------------------------------------------------- jobs
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_small_drawing_runs_to_done_and_a_second_job_is_refused(station, tmp_path):
     c = TestClient(create_app(replace(station, jobs_dir=tmp_path)))
     r = c.post("/jobs?name=server_small.json", content=SMALL.read_bytes())
@@ -205,6 +206,7 @@ def test_leftovers_are_a_report_not_a_failure():
     assert not cli.job_passed(dict(done, state="stopped", passed=False))
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_plan_and_check_commands(tmp_path, capsys):
     out = tmp_path / "plan"
     assert cli.main(["plan", str(SMALL), "--out", str(out)] + QUICK) == 0
@@ -217,6 +219,7 @@ def test_plan_and_check_commands(tmp_path, capsys):
     assert text.count(" pass  tightest") == 10 and "PASS: 10 of 10" in text
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_path):
     st = _with_arms(station, tmp_path, speed=1.0)
     c = TestClient(create_app(st))
@@ -251,6 +254,7 @@ def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_pat
     assert cli.main(["draw", str(huge), "--poll", "0.05"], http=ClientHttp(c)) == 1
 
 
+@pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_park_all_arms_from_near_their_parks(station, tmp_path, capsys):
     rng = np.random.default_rng(3)
     rig = station.rig

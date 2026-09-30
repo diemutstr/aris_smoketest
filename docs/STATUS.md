@@ -33,7 +33,7 @@ pytest tests -q -m "not slow"`, under a minute).
 | `gui` | not started | |
 | `robot/` (operator PC) | written here, not yet run under ROS: joint impedance controller soft along the paper normal (100 N/m exact, plane unchanged, force servo on), driver, force logic, bringup, runner reporting every arm's joints | 44 tests here |
 
-Quick test set: about 240 tests, all pass (`.venv/bin/python -m pytest tests -q -m "not slow"`); it takes several minutes on the loaded lab machine, over the one-minute rule (trim it).
+Quick test set: 229 tests, all pass in 87 s at machine load 6 (`.venv/bin/python -m pytest tests -q -m "not slow"`); the nine end-to-end tests over 4.5 s each are marked slow (2026-10-01). The slow set (58 tests) takes about 10 minutes.
 
 ## Decided with Pete, 2026-09-30 evening
 
@@ -57,7 +57,6 @@ Quick test set: about 240 tests, all pass (`.venv/bin/python -m pytest tests -q 
 
 ## Next
 
-- Trim the quick test set back under a minute (mark the long ones slow).
 - The serial check doubles an arm's planning wall time at scale (30 min for 10 000 lines,
   still five times ahead of the arms); levers if it matters: check a group's four motions in
   parallel, a cheaper checker (0.45 CPU-s per motion), and the 30 idle local-planner
