@@ -271,7 +271,7 @@ def test_small_drawing_end_to_end_on_two_arms(rig, rules):
 
 def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
     lines = _small()[:1] + [_line("wide", (0.0, 0.0), (0.95, 0.0))]
-    tagged, out, rep = plan_detailed(rig, lines, rules, settings=COARSE)
+    tagged, out, rep = plan_detailed(rig, lines, rules, settings=COARSE, workers=6)
     assert tagged == [] and isinstance(out, Refusal) and out.reason == "outside_drawing_area"
     assert "line wide" in out.detail and "(0.9500, 0.0000)" in out.detail
     assert 1.0 < rep.drawing_area[0] < 1.8 and 3.0 < rep.drawing_area[1] < 3.63
@@ -280,10 +280,59 @@ def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
 def test_the_drawing_area_comes_from_the_rig_and_must_match_the_maps(rig, rules):
     lines = _small()[:1]
     stale = replace(rig, drawing_area_m=rig.drawing_area_m - 0.2)
-    _, out, _ = plan_detailed(stale, lines, rules, settings=COARSE)
+    _, out, _ = plan_detailed(stale, lines, rules, settings=COARSE, workers=6)
     assert isinstance(out, Refusal) and out.reason == "stale_drawing_area"
-    _, out, _ = plan_detailed(replace(rig, drawing_area_m=None), lines, rules, settings=COARSE)
+    _, out, _ = plan_detailed(replace(rig, drawing_area_m=None), lines, rules, settings=COARSE,
+                              workers=6)
     assert isinstance(out, Refusal) and out.reason == "no_drawing_area"
+
+
+class RefuseLine:
+    """A fake independent checker: refuses every motion that draws `line_id` for `arm_id`,
+    passes everything else.  Picklable (a module-level class)."""
+
+    def __init__(self, arm_id, line_id):
+        self.arm_id, self.line_id = arm_id, line_id
+        self.seen = []
+
+    def __call__(self, arm_id, phase, fields, motion, q_before):
+        self.seen.append((arm_id, phase.name, len(fields)))
+        bad = (arm_id == self.arm_id and motion.piece is not None
+               and motion.piece.line_id.split("#")[0] == self.line_id)
+        return dict(passed=not bad, tightest="fake", min_clearance=0.01 + 0.001 * arm_id)
+
+
+def test_each_arm_is_checked_in_its_own_view(rig):
+    from aris.system import check_view
+    from aris.system.planner import Report
+    ph, rep = rig.phase(1), Report()
+    assert check_view(rig, ph, 13, rep) == (ph, ())
+    rep.fields[("phase 1", 17)] = "the footprint of 13"
+    view, fields = check_view(rig, ph, 17, rep)
+    assert view.active == (17,) and view.parked == () and fields == ("the footprint of 13",)
+    assert [w.arms for w in view.walls] == [(17, 71)]
+
+
+def test_a_refused_line_flows_on_and_is_left_over_as_failed_check(rig, rules):
+    import pickle
+    from functools import partial
+    verify = RefuseLine(13, "under13")
+    pickle.loads(pickle.dumps(partial(verify, 13, rig.phase(1), ())))    # crosses processes
+    lines = _small()
+    tagged, left, rep = plan_detailed(rig, lines, rules, settings=COARSE, workers=4, verify=verify)
+    assert tagged and all(m.checked is not None and m.checked["passed"] for _, _, m in tagged)
+    by = {(m.piece.line_id, a) for _, a, m in tagged if m.kind == "draw"}
+    # arm 13 never draws it; arm 17 (phase 2, then filling with 97) draws what its maps hold
+    assert by == {("under71", 71), ("under13", 17)}
+    # the start of the line only arm 13 holds: offered to it again in fill 13+2, refused again
+    assert [(x.piece.line_id, x.reason) for x in left] == [("under13", "failed_check")]
+    assert left[0].piece.s0 == 0.0 and 0.0 < left[0].piece.s1 < 0.05
+    assert left[0].detail.startswith("fill 13+2, arm 13")
+    p1 = next(p for p in rep.phases if p.name == "phase 1")
+    assert p1.idle[13].handed_back == {"failed_check": pytest.approx(0.1581, abs=1e-3)}
+    assert rep.tightest == pytest.approx(0.027) and "arm 17" in rep.tightest_at
+    account(lines, tagged, left, rules.min_piece)
+    assert sum(r.checked for p in rep.phases for r in p.arms.values()) == len(tagged)
 
 
 def test_an_arm_away_from_its_park_must_move_first(rig, rules):

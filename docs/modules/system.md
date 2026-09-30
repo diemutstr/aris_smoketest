@@ -20,7 +20,7 @@ Files: `aris/system/`:
 
 ## In and out
 
-`plan(rig, lines, rules=None, arm_configs=None, cache_dir=None, workers=1)`
+`plan(rig, lines, rules=None, arm_configs=None, cache_dir=None, workers=1, verify=None)`
 
 - **In:**
   - the rig;
@@ -29,14 +29,41 @@ Files: `aris/system/`:
   - where each arm stands: default, its park;
   - a directory for the drawable maps and the local planner's kinematic table (none: built
     every time);
-  - how many processes to use.
+  - how many processes to use;
+  - `verify(arm_id, phase, fields, motion, q_before) -> dict`: the independent checker, from
+    the server. It must be picklable, because the arm planners run in worker processes.
 - **Out:** a generator of `(phase name, arm id, Motion)`, in the order the arm planners produce
   them. At the end it returns the leftovers.
   - Every drawing motion's `piece` is in the input line's own id and arc length.
   - `plan_all` collects everything; `plan_detailed` also returns a report: per phase and arm,
     times, lengths and what came back; the phases skipped and why; the drawing area.
-  - `phase_named(rig, name)` gives the `Phase` a name stands for, which is what the checker
-    needs.
+  - `phase_named(rig, name)` gives the `Phase` a name stands for.
+  - `check_view(rig, phase, arm, report)` gives the Phase and footprints an arm's motions are
+    checked in; `execution_phase(rig, phase)` gives the phase as the arms run it, followers
+    included.
+
+## Checked as planned
+
+Each arm planner gets `verify` with the arm, its Phase and its footprints bound
+(`functools.partial`, `check_view`):
+- a leader or a fill arm: its own phase and no footprints;
+- a follower: the phase as it sees it, with its leader's footprint.
+
+The arm planner hands on only motions the checker passed, each carrying the verdict as
+`Motion.checked`. A piece with a refused motion comes back as "failed_check", and like any
+stretch handed back it flows on to the phases after. If no later phase draws it, it is left
+over with that reason and the arm and phase that refused it.
+
+The report counts, per phase and arm, the motions handed on with a verdict (`checked`) and
+the length handed back as `failed_check`. It also keeps the tightest checked clearance over
+every motion (`Report.tightest`, `tightest_at`). With `verify=None` nothing is checked here.
+
+**Tested with a fake checker** that refuses every motion of one line for arm 13:
+- arm 13 hands the line back in phase 1;
+- arm 17 draws what its maps hold in phase 2 and in fill 17+97;
+- the 2.6 cm at the line's start that only arm 13 reaches is refused again in fill 13+2 and
+  left over as "failed_check, fill 13+2, arm 13";
+- every motion handed on carries a passing verdict.
 - **Refusals:**
   - A drawing with any point outside the drawing area (below) is refused before anything is
     planned. The generator yields nothing and returns a `Refusal("outside_drawing_area")`
@@ -186,6 +213,9 @@ alternation draws.
 - **The price of step 2 is planning time.** Footprints and follower maps are built in every
   leader phase with something waiting: planning wall 41 to 84 s against 6 to 30 s without,
   and CPU doubled. The rig time is not affected.
+- **Re-run** with followers off, `verify=None` and the sequencer's new lift rule: drawn
+  lengths are the same on all seven cases, the rig times within 2 %, and all 2 906 motions
+  pass the checker (smallest clearance 0.6 mm).
 - **Checker:** all 2 890 motions pass `aris.check.check` with their phase, and the smallest
   clearance beyond the demanded one is 0.8 mm. `check_phase_end` passes after all 21 phases
   that ran.
@@ -235,6 +265,9 @@ rectangle is the drawing area.
 - a follower sees its leader's footprint (the leader's body inside it; with the leader
   standing, the follower loses at most 10 % against a parked leader, on a 5 cm grid);
 - a drawing outside the area is refused, and so is a stale or missing area in the rig;
+- each arm is checked in its own view;
+- a line the checker refuses for one arm flows on and is left over as failed_check where no
+  other arm reaches it;
 - a small drawing runs end to end on arms 13 and 71 in two processes, joined from park to
   park, with the same result from one process.
 

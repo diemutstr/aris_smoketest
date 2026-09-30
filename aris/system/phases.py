@@ -94,3 +94,14 @@ def follower_phase(rig, phase: Phase, arm_id: int) -> Phase:
                        w.point_table, w.normal_table)
                   for w in phase.walls if lead in w.arms)
     return Phase(phase.name, (arm_id,), (), walls)
+
+
+def execution_phase(rig, phase: Phase) -> Phase:
+    """The phase as the arms run it: in a leader phase the followers may move too (each checked
+    in its own view, `planner.check_view`)."""
+    if is_fill(phase):
+        return phase
+    partners = tuple(rig.row_partner(a) for a in phase.active
+                     if rig.row_partner(a) in phase.parked)
+    return Phase(phase.name, phase.active + partners,
+                 tuple(a for a in phase.parked if a not in partners), phase.walls)

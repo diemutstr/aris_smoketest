@@ -29,13 +29,15 @@ class ArmJob:
     obstacles: Obstacles
     q_start: np.ndarray
     q_end: np.ndarray
+    verify: object = None       # verify(motion, q_before) -> dict, picklable; None: unchecked
 
 
 def stream(rig, job: ArmJob, rules: DrawRules, cache_dir, local_workers: int):
     """Events of one arm plan: ("motion", Motion) ..., then ("done", (leftovers, PlanStats))."""
     st = arm_planner.PlanStats()
+    kw = {} if job.verify is None else dict(verify=job.verify)
     gen = arm_planner.plan(rig.arm(job.arm_id), list(job.lines), job.obstacles, job.q_start,
-                           rules, job.q_end, local_workers, cache_dir, stats=st)
+                           rules, job.q_end, local_workers, cache_dir, stats=st, **kw)
     while True:
         try:
             yield "motion", next(gen)
