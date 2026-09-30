@@ -1,5 +1,0 @@
-# Upstream ships no pyproject (bazel needed none).  This gives pip a backend
-# for the setuptools/pybind11 shim in setup.py.  See VENDOR.md.
-[build-system]
-requires = ["setuptools>=61", "pybind11>=2.12", "wheel"]
-build-backend = "setuptools.build_meta"

@@ -8,15 +8,15 @@ execution software. The old code (`aris_sixarm/`, `scripts/`, about 90 000 lines
 slow and hard to understand. The project lead, Pete, wants to understand every module of the new
 code and how the modules compose. Clean and small beats clever.
 
-Repository root: `/home/franka/aris_project/aris_sixarm`. New code: `deployment/`.
+Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. New code: `deployment/`.
 
 ## Read before writing anything
 
 1. `deployment/docs/DESIGN.md` — what the system is
 2. `deployment/docs/BUILD.md` — layout, import rule, the calls between modules, code rules
 3. `deployment/aris/types.py` — the shared data types
-4. `docs/STAGED_LESSONS_2026-09-29.md` — what the old planner learned the hard way; read the
-   parts that touch your module and do not repeat those mistakes
+4. `legacy_docs/STAGED_LESSONS_2026-09-29.md` (repository root) — what the old planner learned
+   the hard way; read the parts that touch your module and do not repeat those mistakes
 5. `deployment/docs/OPTIMIZATION_NOTES.md` — ideas parked for later; do not build them now unless
    your task says so
 
@@ -31,15 +31,15 @@ Repository root: `/home/franka/aris_project/aris_sixarm`. New code: `deployment/
 
 ## The old code as a reference
 
-- You may read anything in `aris_sixarm/`, `scripts/`, `docs/`, `assets/`, `tests/`.
+- The old planner was removed from this branch (`aris3`) on 2026-09-30. It lives on branch
+  `aris2` only. Its documentation is kept under `legacy_docs/` at the repository root; the
+  lessons file is `legacy_docs/STAGED_LESSONS_2026-09-29.md`, and file and line references in
+  it point at branch `aris2`.
 - The new package never imports the old one.
-- To compare answers, write a small script under `deployment/tests/oracle/` that runs the old code
-  and saves reference numbers to `deployment/tests/data/<name>.npz`; your tests read that file.
-  The old code must be imported with the environment `ARIS_RIG=proposed ARIS_TOOL=lateral` set
-  before the import, so run the oracle script as its own process with those variables. The rig
-  is at height `h = 0.970` m (paper to mounting plate) with the lateral pen holder
+- Reference numbers produced by the old code are committed as data under `deployment/tests/data/`
+  (see `deployment/tests/oracle/README.md`); tests read the files, never the old code.
+- The rig is at height `h = 0.970` m (paper to mounting plate) with the lateral pen holder
   (`pen_lat = 0.0860369`, `pen_ext = 0.0460262`).
-- The old analytic IK is vendored in `third_party/franka_analytical_ik`.
 
 ## Rules
 

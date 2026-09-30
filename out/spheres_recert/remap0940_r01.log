@@ -1,7 +1,0 @@
-superset check: the new atlas keeps every old strict-GO cell
-234 dead cells; 10 (arm, cell) pairs have a drawing pose in the new atlas
-
-2 cells turned in 8280s
-live 16330 / 16562 = 98.599 %  | NO_DRAW 225 NO_HOVER 0 NO_ROUTE 7
-wrote out/spheres_recert/fw_h0940_sph_r01_map.npz
-=== R01 DONE ===

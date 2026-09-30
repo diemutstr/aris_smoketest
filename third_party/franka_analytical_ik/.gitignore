@@ -1,9 +1,0 @@
-# `pip install ./third_party/franka_analytical_ik` builds IN TREE (pip does not
-# copy a local source directory), so the install that every robot PC runs drops
-# these here.  They are compiler output, not source; keep the vendored tree
-# clean so `git status` after an install is empty.
-build/
-dist/
-*.egg-info/
-*.so
-*.o

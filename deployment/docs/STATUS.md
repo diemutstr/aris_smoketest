@@ -3,7 +3,12 @@
 Written 2026-09-29, evening, at the end of the first build session. Read this first in a new
 session, then `DESIGN.md`, `BUILD.md`, `AGENT_BRIEF.md` and the pages under `modules/`.
 
-Everything is committed locally on branch `aris2` of `/home/franka/aris_project/aris_sixarm`
+BRANCHES (2026-09-30): the clean branch is `aris3` (worktree `/home/franka/aris_project/aris3`),
+with the old code removed at Pete's request; `aris2` (worktree `/home/franka/aris_project/aris_sixarm`)
+keeps the old code and is where the first session's agents worked. Both are pushed to
+`git@github.com:wernerpe/aris_smoketest.git`. Work on `aris3` from now on.
+
+Everything is committed on branch `aris2` of `/home/franka/aris_project/aris_sixarm`
 (last commit of the session: the snapshot "deployment round 2: local planner ..."). Nothing of
 `deployment/` has been pushed. 145 quick tests pass (`cd deployment && ../.venv/bin/python -m
 pytest tests -q -m "not slow"`, under a minute).

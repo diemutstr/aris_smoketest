@@ -1,6 +1,9 @@
-out/
 .venv/
 __pycache__/
 *.pyc
 *.egg-info/
+build/
 dist/
+*.so
+.pytest_cache/
+out/
