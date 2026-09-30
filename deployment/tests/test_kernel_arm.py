@@ -92,11 +92,26 @@ def test_pen_axis(arm):
 IK_TOL = 1e-7
 
 
+def _old_solver():
+    """The vendored old solver, or None where it is not installed (it is not on the aris3
+    branch).  Tests then skip the comparison with the old code and keep their own checks."""
+    try:
+        from franka_analytical_ik import _franka_ik
+    except ImportError:
+        return None
+    return _franka_ik
+
+
+OLD_MISSING = "old vendored solver franka_analytical_ik not installed; comparison with the old code skipped"
+
+
 def _old_ik(arm, T_hand, q7):
     """The OLD vendored solver, used the way the old code used it (FR3 limits re-applied, every
     answer checked by forward kinematics to 1e-9).  For comparison only; the package never
     calls it.  -> Q (M,4,7) with NaN, valid (M,4)."""
-    ik = pytest.importorskip("franka_analytical_ik")._franka_ik
+    ik = _old_solver()
+    if ik is None:
+        return None
     T = np.asarray(T_hand, float).copy()
     T[:, :3, 3] += fr3.D_HAND_TCP * T[:, :3, 2]
     flat = np.ascontiguousarray(T.transpose(0, 2, 1)).reshape(-1, 16)
@@ -145,10 +160,11 @@ def test_ik_round_trip(arm):
     assert Q.shape == (len(q), 8, 7) and valid.shape == (len(q), 8)
     e = _check_solutions(arm, T, Q, valid)
     found = _found(Q, q)
-    Qo, vo = _old_ik(arm, T, q[:, 6])
-    print(f"\nround trip, 100 000 random configurations: new {found.mean():.4%}, old "
-          f"{_found(Qo, q).mean():.2%}; {valid.sum() / len(q):.2f} answers per pose (old "
-          f"{vo.sum() / len(q):.2f}); pose error worst {e.max():.1e}, "
+    old = _old_ik(arm, T, q[:, 6])
+    cmp = "" if old is None else (f", old {_found(old[0], q).mean():.2%} "
+                                  f"({old[1].sum() / len(q):.2f} answers per pose)")
+    print(f"\nround trip, 100 000 random configurations: new {found.mean():.4%}{cmp}; "
+          f"{valid.sum() / len(q):.2f} answers per pose; pose error worst {e.max():.1e}, "
           f"{int(((e > 1e-9) & (e <= 1e-7)).sum())} answers between 1e-9 and 1e-7; "
           f"{int((flags != 0).sum())} flagged")
     assert found.mean() >= 0.999
@@ -161,10 +177,11 @@ def test_ik_round_trip_drawing(arm):
     Q, valid = arm.ik(T, q[:, 6])
     _check_solutions(arm, T, Q, valid)
     found = _found(Q, q)
-    Qo, vo = _old_ik(arm, T, q[:, 6])
-    print(f"\nround trip, {len(q)} drawing configurations: new {found.mean():.2%}, old "
-          f"{_found(Qo, q).mean():.2%}; poses with no answer: new "
-          f"{(valid.sum(1) == 0).mean():.2%}, old {(vo.sum(1) == 0).mean():.2%}")
+    old = _old_ik(arm, T, q[:, 6])
+    cmp = "" if old is None else (f"; old: found {_found(old[0], q).mean():.2%}, no answer "
+                                  f"{(old[1].sum(1) == 0).mean():.2%}")
+    print(f"\nround trip, {len(q)} drawing configurations: new found {found.mean():.2%}, no "
+          f"answer {(valid.sum(1) == 0).mean():.2%}{cmp}")
     assert found.mean() >= 0.999
 
 
@@ -185,6 +202,8 @@ def test_ik_shoulder_singular_is_flagged(arm):
 
 
 def test_ik_superset_of_old(arm, ref):
+    if _old_solver() is None:
+        pytest.skip(OLD_MISSING)
     worst = 0.0
     for T, q7, count in ((ref["ik_hand"], ref["ik_q"][:, 6], ref["ik_count"]),
                          (ref["ikr_hand"], ref["ikr_q7"], ref["ikr_count"])):
@@ -230,6 +249,8 @@ def test_ik_empty(arm):
 def test_paper_coverage_old_vs_new(arm):
     """Tip positions on the paper 0.97 m below the base, out to 0.95 m, 2 cm grid, 8 spins,
     no lean, q7 on the old 16-value grid: how many have an answer passing the gates."""
+    if _old_solver() is None:
+        pytest.skip(OLD_MISSING)
     g = np.arange(-0.95, 0.95 + 1e-9, 0.02)
     X, Y = np.meshgrid(g, g)
     keep = np.hypot(X, Y) <= 0.95
@@ -439,20 +460,16 @@ def test_body_shape(arm):
     assert np.allclose(d, b.radius[k])
 
 
-def test_fixed_capsules_only_turn_about_the_base_axis(arm):
-    """is_fixed = link0 and link1: distance from the base axis and height never change."""
+def test_fixed_capsules_do_not_move(arm):
     q = random_q(arm, 500, 13)
     b = arm.body(q)
     assert b.is_fixed.shape == (len(b.names),)
-    assert [n for n, f in zip(b.names, b.is_fixed) if f] == \
-        [f"link0.{k}" for k in range(7)] + [f"link1.{k}" for k in range(3)]
+    assert [n for n, f in zip(b.names, b.is_fixed) if f] == [f"link0.{k}" for k in range(7)]
     for P in (b.p0, b.p1):
-        F = P[:, b.is_fixed]
-        for v in (np.hypot(F[..., 0], F[..., 1]), F[..., 2]):
-            assert np.abs(v - v[:1]).max() < 1e-12
-    # every other capsule does move off its circle about the base axis
-    moved = sum(np.abs(v - v[:1]).max(0) for P in (b.p0, b.p1)
-                for v in (np.hypot(P[..., 0], P[..., 1]), P[..., 2]))
+        assert np.array_equal(P[:, b.is_fixed], np.broadcast_to(P[:1, b.is_fixed],
+                                                                P[:, b.is_fixed].shape))
+    # and every other capsule does move
+    moved = np.abs(b.p0 - b.p0[:1]).max(axis=(0, 2)) + np.abs(b.p1 - b.p1[:1]).max(axis=(0, 2))
     assert np.all(moved[~b.is_fixed] > 1e-3)
 
 
@@ -518,8 +535,7 @@ def test_reach_bounds_motion(arm):
     """Straight joint moves: no capsule endpoint moves further than sum_j |dq_j| reach[j, k]."""
     assert arm.reach.shape == (7, len(arm.body(np.zeros((1, 7))).names))
     b0 = arm.body(np.zeros((1, 7)))
-    base = arm.capsule_table().frame == 0
-    assert np.all(arm.reach[:, base] == 0.0)
+    assert np.all(arm.reach[:, b0.is_fixed] == 0.0)
     ratios = []
     for seed, scale in ((25, 1.0), (26, 0.01)):   # large moves, and small ones (tight regime)
         rng = np.random.default_rng(seed)
@@ -531,7 +547,7 @@ def test_reach_bounds_motion(arm):
         bound = np.abs(qb - qa) @ arm.reach                       # (N, K)
         move = np.maximum(np.linalg.norm(B.p0 - A.p0, axis=-1),
                           np.linalg.norm(B.p1 - A.p1, axis=-1))
-        live = ~base
+        live = ~A.is_fixed
         assert np.all(move[:, live] <= bound[:, live] + 1e-12)
         ratios.append((move[:, live] / bound[:, live]).ravel())
     print(f"\nreach bound, endpoint travel / bound: large moves median {np.median(ratios[0]):.2f}"
@@ -543,12 +559,14 @@ def test_speed(arm):
     q = random_q(arm, 10_000, 12)
     T = arm.fk(q)
     out = []
-    for name, f in (("fk", lambda: arm.fk(q)), ("tip", lambda: arm.tip(q)),
-                    ("body", lambda: arm.body(q)), ("sigma_min", lambda: arm.sigma_min(q)),
-                    ("ik new (checked)", lambda: arm.ik(T, q[:, 6])),
-                    ("ik old (checked)", lambda: _old_ik_checked(arm, T, q[:, 6])),
-                    ("new solver alone", lambda: _new_raw(arm, T, q[:, 6])),
-                    ("old solver alone", lambda: _old_ik(arm, T, q[:, 6]))):
+    calls = [("fk", lambda: arm.fk(q)), ("tip", lambda: arm.tip(q)),
+             ("body", lambda: arm.body(q)), ("sigma_min", lambda: arm.sigma_min(q)),
+             ("ik new (checked)", lambda: arm.ik(T, q[:, 6])),
+             ("new solver alone", lambda: _new_raw(arm, T, q[:, 6]))]
+    if _old_solver() is not None:
+        calls += [("ik old (checked)", lambda: _old_ik_checked(arm, T, q[:, 6])),
+                  ("old solver alone", lambda: _old_ik(arm, T, q[:, 6]))]
+    for name, f in calls:
         f()
         t0 = time.process_time()
         f()

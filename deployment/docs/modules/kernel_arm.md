@@ -56,16 +56,15 @@ pen.
 
 ## The collision body
 
-62 capsules. The ten capsules of link0 and link1 are **fixed** (`is_fixed`): they only turn
-about the base axis, so their clearance to the rig is checked once by a rig test over the whole
-turn of joint 1, and the collision check does not test them against obstacles per pose (link0
-sits inside the arm's own mount, link1 passes under the strut ends). They stay in the self pairs. All others move. The 33 capsules of the hand, blades, holder and pencil tail
-are marked `is_tool` (bolted to the flange); the pen is `is_pen` only.
+62 capsules. The seven link0 capsules are **fixed** (`is_fixed`): they do not move with the
+joints, and the collision check does not test them against obstacles (they sit inside the
+arm's own mount). All others move, link1 included, and are checked per pose. The 33 capsules
+of the hand, blades, holder and pencil tail are marked `is_tool` (bolted to the flange); the pen is `is_pen` only.
 
 | body | capsules | radii (mm) | where the numbers come from |
 |---|---|---|---|
 | link0 (base) | link0.0 - link0.6, **fixed** | 177, 176, 171, 160, 112, 76, 78 | old `selfcoll.py` table: seven slices about the base axis; the lowest holds the cable connector stub behind the mounting face |
-| link1 - link7 | three each, link1.0 - link7.2 (link1 **fixed**) | 63 68 76 / 63 69 75 / 62 75 59 / 62 77 64 / 63 67 61 / 51 56 49 / 47 44 38 | old `selfcoll.py` table, fitted to each link's own metal |
+| link1 - link7 | three each, link1.0 - link7.2 | 63 68 76 / 63 69 75 / 62 75 59 / 62 77 64 / 63 67 61 / 51 56 49 / 47 44 38 | old `selfcoll.py` table, fitted to each link's own metal |
 | hand (gripper body) | hand.0 - hand.13 | 26-31 above, 3-6.5 along the bottom edges | new fit, paper-facing (below) |
 | Fat finger blades | finger_left.0-3, finger_right.0-3 | 25, and three of 2 along the edges | new fit, paper-facing |
 | pen holder | holder.0 - holder.8 | 25, 25, and seven of 2 | new fit on the housing and cap meshes, paper-facing |
