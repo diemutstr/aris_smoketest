@@ -67,9 +67,9 @@ Types are in `aris/types.py`. The calls:
 | rig | `Rig.load(config_dir)`, `to_base(arm_id, line)`, `obstacles(arm_id, parked, walls)`, `wall_between(a, b)`, `arm(arm_id)` | `Line`, `Obstacles`, `Plane`, `Arm` |
 | local | `plan(arm, lines, obstacles, rules, gates=None, workers=1, settings=None)`; `plan_detailed` also returns counts and times; `verify_plan`, `reverse_plan` | `list[Bunch]`, `list[Leftover]` |
 | free | `plan(arm, q_start, q_goal, obstacles, rules, gates=None, seed_extra=b"", options=None)`; `plan_detailed` also returns counts and times | a free `Motion` (timed, and checked as flown) or a `Refusal` with reason `outside_limits`, `blocked`, `self_collision`, `no_free_path`, `cannot_time` or `bad_input` |
-| sequencer | `tour(arm, bunches, q_start, obstacles, rules)` | iterator of `Motion`, then `list[Leftover]` |
-| arm_planner | `plan(arm, lines, obstacles, q_start, rules)` | iterator of `Motion`, then `list[Leftover]` |
-| system | `plan(rig, drawing, arm_configs)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]` |
+| sequencer | `tour(arm, bunches, q_start, obstacles, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]`. `verify(motion, q_before) -> dict` (at least `passed`, `tightest`) is the independent checker, handed in by the server: a piece whose group of motions does not all pass is left over as `failed_check`; a motion that passed carries the dict as `Motion.checked` |
+| arm_planner | `plan(arm, lines, obstacles, q_start, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]` |
+| system | `plan(rig, drawing, arm_configs, verify=None)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]`. `verify(arm_id, phase, fields, motion, q_before) -> dict` is picklable (the arm planners run in worker processes); the system planner binds the first three for each arm planner |
 | check | `check(config_dir, arm_id, motion, phase, q_before)` | a verdict: pass or fail, every measured number, and the tightest one |
 
 ## What is checked is what is flown

@@ -202,7 +202,13 @@ everything before running and running each motion as it appears are the same cod
 difference is when the executor is started.
 
 **Checker.** A motion enters the queue only after the independent check has passed. What is in
-the queue is safe to run.
+the queue is safe to run. The check happens inside the arm planner's loop, before the planner
+builds on the motion (decided 2026-09-30, after a 10 000-line run lost 13 % of its ink to one
+refusal): the server hands the arm planner a `verify` callable that runs the checker; a piece
+is drawn only if every motion of its group (the move to it, lower, draw, lift) passes, else the
+piece is left over as `failed_check` with the checker's word, and the arm plans on from where
+it was. A motion carries the checker's numbers (`Motion.checked`); the queue refuses one
+without them. Nothing planned on top of an unchecked motion ever exists.
 
 **Queue.** Append-only, one per arm and phase, stored as a file. It is also the record of what
 was planned, and what the GUI shows.

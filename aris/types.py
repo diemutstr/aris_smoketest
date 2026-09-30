@@ -237,6 +237,10 @@ class Motion:
     piece: Piece | None = None         # draw motions: what is being drawn
     tip_base: np.ndarray | None = None # draw motions: (N, 3) tip positions, same samples as traj
     intensity: float = 1.0
+    # The independent checker's word on this motion, when it was checked before being handed
+    # on: at least {"passed": bool, "tightest": str}, plus the numbers the checker keeps.  The
+    # planners do not read it; the execution side queues nothing without it.  None: unchecked.
+    checked: dict | None = None
 
     @property
     def q_start(self) -> np.ndarray:
