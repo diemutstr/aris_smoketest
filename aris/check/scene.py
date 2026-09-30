@@ -350,6 +350,8 @@ def _fields(scene, A, B, r, names, thr):
         return out
 
     def ob_lb(c, o):                               # points (M,3) x fields (O,) -> (M,O)
+        if len(o) == 0:                            # every field pruned
+            return np.empty((len(c), 0))
         return np.stack([at(c, np.full(len(c), j)) for j in o], axis=1) - margin
 
     def bounds(mid, rad, rk, o):                   # no upper bound for a field reading

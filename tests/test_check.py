@@ -832,3 +832,27 @@ def test_fault_motion_through_a_footprint():
               fields=(f,))
     _fails(v, "clearance footprints")
     assert v.get("clearance footprints").value < 0
+
+
+def test_everything_far_away_is_pruned_without_error(good_free):
+    """Fields, parked arms and boxes all present but far beyond the threshold: every class
+    prunes to nothing and still gives a true (large) answer.  (A far footprint once made the
+    field class stack an empty list.)"""
+    from dataclasses import replace as dc_replace
+    far = replace(_park_footprint_in_31(), origin_base=np.array([20.0, 20.0, 20.0]))
+    v = check(CONFIG, 31, good_free, phase_of(31), good_free.q_start, fields=(far,))
+    assert v.passed, v.failed
+    assert v.get("clearance footprints").value > 1.0
+    scene = build_scene(MINE, 31, (), (71,), False, fields=(far,))
+    shift = np.array([30.0, 0.0, 0.0])
+    scene = dc_replace(scene, box_lo=scene.box_lo[:1] + 40.0, box_hi=scene.box_hi[:1] + 40.0,
+                       box_own=scene.box_own[:1], box_names=scene.box_names[:1],
+                       other_a=scene.other_a + shift, other_b=scene.other_b + shift)
+    Q = good_free.traj.q
+    thr = {c: 0.01 for c in CLASSES}
+    cl = clearance(scene, Q, thr)
+    for c in ("steel", "parked", "fields", "self"):
+        assert np.all(cl.value[c] > 0.01), c
+    exact = clearance(scene, Q)
+    for c in ("steel", "parked", "fields"):
+        assert np.all(cl.value[c] <= exact.value[c] + 1e-12), c
