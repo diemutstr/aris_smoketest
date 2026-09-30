@@ -118,6 +118,9 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
         by[x.reason] = (n + 1, m + x.piece.s1 - x.piece.s0)
     out.append("  leftovers: " + (", ".join(f"{k} {n} ({m:.3f} m)" for k, (n, m) in
                                             sorted(by.items())) or "none"))
+    if getattr(t, "rungs", None):
+        out.append("  lift-offs and set-downs by rung: " + ", ".join(
+            f"{k} {n}" for k, n in sorted(t.rungs.items())))
     if checks is not None:
         rl = roles(motions)
         passed = sum(c[0] for c in checks)

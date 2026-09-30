@@ -26,15 +26,22 @@ import numpy as np
 from aris import free
 from aris.sequencer.draw import draw_motions, oriented
 from aris.sequencer.guard import Guard
-from aris.sequencer.lift import Lift, lift
-from aris.types import Bunch, DrawRules, Leftover, Motion, Obstacles, Plane, Refusal
+from aris.sequencer.ladder import end_lift, trim
+from aris.types import Bunch, DrawRules, Leftover, Motion, Obstacles, Piece, Plane, Refusal
 
 
 @dataclass(frozen=True)
 class TourOptions:
     max_tries: int = 12            # refused free-space moves in one step before giving up there
     lift_step: float = 0.002       # m of tip rise between IK samples of a lift-off
-    lift_jump: float = 0.05        # rad; a larger joint change between two of them is a new shape
+    lift_jump: float = 0.15        # rad; a larger joint change between two of them is a new shape
+                                   # (75 rad/m of rise; next to a fold of the IK a lift runs at
+                                   # 30 to 90 rad/m, a change of shape jumps by 1 rad or more)
+    lift_extra: float = 0.002      # m above the lifted pen's margin: the required lift height
+    lift_back: float = 0.05        # m the pen may go back along the line (ladder rung c)
+    lift_inward: tuple = (0.01, 0.02)  # m the pen may drift toward the base axis (rung d)
+    lift_cut: float = 0.03         # m a piece may be shortened at an end (rung e)
+    cut_step: float = 0.005        # m, the step of rungs c and e
     draw_deviation: float = 1.5e-4  # rad, how far timing may round the drawing path's corners
     # (joint 7, hand about the paper normal) turns during a lift-off, rad, tried smallest first
     lift_turns: tuple = tuple(sorted(
@@ -53,6 +60,7 @@ class TourReport:
     longest_free: float = 0.0      # s, the longest free motion
     free_length: float = 0.0       # rad, joint-space length of the moves between lift-offs
     free_calls: int = 0            # free-space planner calls
+    rungs: dict = field(default_factory=dict)      # lift-offs and set-downs by ladder rung
     refusals: dict = field(default_factory=dict)   # free-space refusals by reason
     motions: int = 0
     end_refusal: str = ""          # why the move to q_end failed; "" if it did not
@@ -112,8 +120,12 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
             alive.remove(b)
         if found is None:
             continue
-        b, move, entry, draw, exit_ = found
+        b, move, entry, draw, exit_, cut_off = found
         alive.remove(b)
+        leftovers += cut_off
+        for x in (entry, exit_):
+            key = x.how.split(",")[0] if x.how.startswith("e") else x.how
+            rep.rungs[key] = rep.rungs.get(key, 0) + 1
         rep.pieces += 1
         rep.lifts += 1
         rep.move_time += float(move.traj.t[-1])
@@ -162,7 +174,7 @@ class _State:
         if len(papers) != 1:
             raise ValueError(f"the obstacles must hold exactly one paper plane, not {len(papers)}")
         self.paper: Plane = papers[0]
-        self.lifts: dict = {}          # (b, p, end 0/1) -> Lift | str
+        self.lifts: dict = {}          # (b, p, end 0/1) -> (Lift, cut) | str
         self.draws: dict = {}          # (b, p, backwards) -> [Motion] | str
         self.dead: dict = {}           # (b, p, d) -> why
         self.cands = [(b, p, d) for b in range(len(bunches))
@@ -185,7 +197,7 @@ class _State:
             if isinstance(made, str):
                 self.dead[(b, p, d)] = made
                 continue
-            entry, draw, exit_ = made
+            entry, draw, exit_, cut_off = made
             move = self.move(q_cur, entry.q_up)
             if isinstance(move, Refusal):
                 refused.setdefault(b, []).append(f"{move.reason}: {move.detail}")
@@ -193,7 +205,8 @@ class _State:
                 if tries >= self.opt.max_tries:
                     break
                 continue
-            return (b, move, entry, draw, exit_), refused, self._dead_pieces(live, {b})
+            return (b, move, entry, draw, exit_, cut_off), refused, \
+                self._dead_pieces(live, {b})
         return None, refused, self._dead_pieces(live, set(refused))
 
     def _dead_pieces(self, live, skip):
@@ -227,26 +240,37 @@ class _State:
         why = self.guard.hold(m.q_end, touching=False)
         return m if why is None else Refusal("blocked", f"cannot hold the end: {why}")
 
-    def _lift(self, b, p, end) -> Lift | str:
+    def _end(self, b, p, end):
+        """The lift-off at one end (0: the plan's first sample, 1: its last) of an alternative,
+        from the ladder: -> (Lift, metres cut at that end) or why not."""
         key = (b, p, end)
         if key not in self.lifts:
-            plan = self.bunches[b].plans[p]
-            self.lifts[key] = lift(self.arm, self.guard, self.paper, plan.q[-1 if end else 0],
-                                   self.rules, self.opt.lift_step, self.opt.lift_jump,
-                                   self.opt.lift_turns)
+            self.lifts[key] = end_lift(self.arm, self.guard, self.paper,
+                                       self.bunches[b].plans[p], end, self.rules, self.opt)
         return self.lifts[key]
 
     def prepare(self, b, p, d):
-        """-> (entry Lift, drawing motions, exit Lift), or why this candidate can never be flown."""
-        entry, exit_ = self._lift(b, p, d), self._lift(b, p, 1 - d)
+        """-> (entry Lift, drawing motions, exit Lift, leftovers cut off), or why this candidate
+        can never be flown."""
+        entry, exit_ = self._end(b, p, d), self._end(b, p, 1 - d)
         for name, x in (("start", entry), ("end", exit_)):
             if isinstance(x, str):
                 return f"no lift-off at its {name}: {x}"
+        (entry, cut_in), (exit_, cut_out) = entry, exit_
+        plan = self.bunches[b].plans[p]
+        whole = plan.piece
+        for end, cut in ((d, cut_in), (1 - d, cut_out)):
+            if cut > 0.0:
+                plan = trim(plan, end, cut)
+                if plan is None or plan.piece.s1 - plan.piece.s0 < self.rules.min_piece:
+                    return "no lift-off: nothing left after cutting both ends"
+        cut_off = [Leftover(Piece(whole.line_id, a, z), "no_free_path",
+                            "cut off at the end of a piece: no lift-off there")
+                   for a, z in ((whole.s0, plan.piece.s0), (plan.piece.s1, whole.s1)) if z > a]
         key = (b, p, d)
         if key not in self.draws:
-            plan = oriented(self.bunches[b].plans[p], bool(d))
-            self.draws[key] = draw_motions(self.arm, self.guard, plan, self.rules,
-                                          self.opt.draw_deviation,
+            self.draws[key] = draw_motions(self.arm, self.guard, oriented(plan, bool(d)),
+                                          self.rules, self.opt.draw_deviation,
                                           self.intensity.get(plan.piece.line_id, 1.0))
         draw = self.draws[key]
         if isinstance(draw, str):
@@ -255,4 +279,4 @@ class _State:
             why = self.guard.hold(m.q_end, touching=True)
             if why is not None:
                 return f"drawing: cannot hold the pen on the paper: {why}"
-        return entry, draw, exit_
+        return entry, draw, exit_, cut_off
