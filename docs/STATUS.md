@@ -25,17 +25,35 @@ pytest tests -q -m "not slow"`, under a minute).
 | `check` | done; reads rig.json itself; footprints with its own lookup | agrees with the kernel to 1e-15; 0.2 s for a 7 s motion |
 | `free` | done | 2 000 of 2 000 pairs; 48 / 75 ms median when a search is needed (quiet machine) |
 | `local` | done | paper only: 100 % of random lines and curves within reach; 0.14 to 0.40 s per line with the table |
-| `sequencer` + `arm_planner` | done; lift = escape ladder (Pete wants it reduced to two rules) | word arm 31: planned in 2.3 s, first motion 1.6 s |
+| `sequencer` + `arm_planner` | done; the lift is two rules (rise by pen clearance + 2 mm with spin and joint 7 changing evenly as needed; else trim 1 cm at a time up to 5 cm) | 1 533 of 1 533 motions pass; 0.13 m 'no path' over all cases at the 22 mm lift |
 | `system` | done: five laws, leaders first, fill in pairs, drawing area, followers built but OFF | seven whole-table drawings 100 % drawn, 2 890 of 2 890 motions pass the checker |
 | `execute` | done: queue per arm, executor, coordinator, event log, simulated arm | word on six simulated arms: queues on disk bit-identical to the plan |
 | `server` + `cli` | done: aris serve / draw / status / stop / park / rig / plan / check | word via `aris draw`: first motion 6.6 s, done 13.4 s at 20x; stop holds and reports |
 | `calib` | not started; Pete builds the hardware | |
 | `gui` | not started | |
-| real arm driver | not started; waits for Pete's decision on the execution path | |
+| `robot/` (operator PC) | written here, not yet run under ROS: joint impedance controller with the pen force, driver, force logic, bringup, runner | 41 tests here; the controller must be soft along the paper normal (in progress) |
 
 Quick test set: 208 tests, all pass (`.venv/bin/python -m pytest tests -q -m "not slow"`).
 
-## Decisions waiting for Pete (2026-09-30 evening)
+## Decided with Pete, 2026-09-30 evening
+
+- Execution path (DESIGN.md 4b): the arm tracks the certified joint trajectory under joint
+  impedance, soft along the paper normal, with the pen force fed forward; free moves through the
+  joint trajectory controller or the same controller with zero force.
+- Drawing input: JSON polylines in mm in the table frame, one pen; it must scale to very big
+  drawings (a 10 000-line test is being measured).
+- Followers stay off to start. The lift is two rules (done).
+- One repository, two roles: `robot/` runs on the operator PC.
+
+## Next
+
+- README as the usage guide: how to use the code base and which computer runs what.
+- The scale test's findings (expected: plan an arm's lines in batches nearest-first).
+- The server's four endpoints for the operator runner.
+- On the operator PC: build `robot/ros2_ws`, fake-hardware run, then one real arm.
+- Calibration software (round 6), GUI (round 7).
+
+## Decisions waiting for Pete (older; 1 to 3 are answered above)
 
 1. Execution path for drawing on the real arms: (a) position control through the joint trajectory
    controller (what is certified is what is flown; no compliance); (b) the impedance controller as
