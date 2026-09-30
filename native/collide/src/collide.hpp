@@ -13,66 +13,11 @@
 #include <vector>
 
 #include "chain.hpp"
+#include "field.hpp"
 #include "geometry.hpp"
+#include "scene.hpp"
 
 namespace acol {
-
-constexpr double INF = std::numeric_limits<double>::infinity();
-constexpr double BIG = 1e6;  // "nothing to hit", keeps the interval arithmetic finite
-
-struct Scene {  // the packed obstacles
-    int Mb = 0, Mp = 0, Mc = 0;
-    const double *box_R, *box_c, *box_h, *box_m;               // (Mb,3,3) (Mb,3) (Mb,3) (Mb)
-    const double *pl_n, *pl_off, *pl_m, *pl_pen_m;             // (Mp,3) (Mp) (Mp) (Mp)
-    const uint8_t* pl_paper;                                   // (Mp)
-    const double *cap_a, *cap_b, *cap_rm;                      // (Mc,3) (Mc,3) (Mc)
-    const double* pl_tool_m;                                   // (Mp) margin for tool capsules
-    // The same boxes and capsules one coordinate per row (see make_soa), so that the cheap
-    // first pass runs as straight loops over obstacles that the compiler vectorises.
-    const double* box_soa;   // (15, Mb): R00 R01 R02 R10 .. R22, cx cy cz, hx hy hz
-    const double* cap_soa;   // (10, Mc): ax ay az, dx dy dz (d = b - a), dd = d.d, (3 unused)
-    // Obstacle groups (boxes and capsules; planes are always checked one by one).  Group h
-    // holds obstacles og_members[og_start[h] .. og_start[h+1]) (global obstacle indices), all
-    // inside one fat capsule og_a/og_b/og_r, and demands at most og_margin[h].
-    int G = 0;
-    const int64_t *og_start, *og_members;
-    const double *og_a, *og_b, *og_r, *og_margin;
-    const double* og_soa;    // (8, G): ax ay az, dx dy dz, dd, og_r + og_margin
-};
-
-// Fill the row-per-coordinate copies of a scene's boxes and capsules.
-inline void make_soa(const Scene& S, std::vector<double>& box, std::vector<double>& cap,
-                     std::vector<double>& og) {
-    og.assign(size_t(8) * S.G, 0.0);
-    for (int h = 0; h < S.G; ++h) {
-        double d[3];
-        for (int i = 0; i < 3; ++i) {
-            d[i] = S.og_b[3 * h + i] - S.og_a[3 * h + i];
-            og[size_t(i) * S.G + h] = S.og_a[3 * h + i];
-            og[size_t(3 + i) * S.G + h] = d[i];
-        }
-        og[size_t(6) * S.G + h] = dot(d, d);
-        og[size_t(7) * S.G + h] = S.og_r[h] + S.og_margin[h];
-    }
-    box.assign(size_t(15) * S.Mb, 0.0);
-    cap.assign(size_t(10) * S.Mc, 0.0);
-    for (int m = 0; m < S.Mb; ++m) {
-        for (int i = 0; i < 9; ++i) box[size_t(i) * S.Mb + m] = S.box_R[9 * m + i];
-        for (int i = 0; i < 3; ++i) {
-            box[size_t(9 + i) * S.Mb + m] = S.box_c[3 * m + i];
-            box[size_t(12 + i) * S.Mb + m] = S.box_h[3 * m + i];
-        }
-    }
-    for (int m = 0; m < S.Mc; ++m) {
-        double d[3];
-        for (int i = 0; i < 3; ++i) {
-            d[i] = S.cap_b[3 * m + i] - S.cap_a[3 * m + i];
-            cap[size_t(i) * S.Mc + m] = S.cap_a[3 * m + i];
-            cap[size_t(3 + i) * S.Mc + m] = d[i];
-        }
-        cap[size_t(6) * S.Mc + m] = dot(d, d);
-    }
-}
 
 // Value-returning max and clip: no reference juggling, so the loops below stay branch-free
 // and the compiler vectorises them.
@@ -137,8 +82,12 @@ struct Scratch {
     std::vector<int> order;
 };
 
-// A pair's clearance, given the obstacle's global index o (boxes, planes, capsules).
+// A pair's clearance, given the obstacle's global index o (boxes, planes, capsules, fields).
 inline double pair_exact(const Scene& S, const double* a, const double* b, double r, int64_t o) {
+    if (o >= S.Mb + S.Mp + S.Mc) {
+        const int f = int(o - S.Mb - S.Mp - S.Mc);
+        return segment_field_distance(S, f, a, b) - r - S.fl_margin[f];
+    }
     if (o < S.Mb)
         return segment_box_distance(a, b, S.box_R + 9 * o, S.box_c + 3 * o, S.box_h + 3 * o) - r -
                S.box_m[o];
@@ -334,6 +283,26 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
                 for (int64_t j = 0; j < no; ++j)
                     if (!(ub[j] - w.half[k] > best + span)) exact(int(k), S.og_members[o0 + j]);
             }
+        }
+    }
+    // the distance fields: every pair measured, unless (with groups) the field's level
+    // bound shows a whole body group is too far to matter
+    const int64_t f0 = Mb + Mp + Mc;
+    if (S.F > 0) {
+        if (md.prune && md.groups) {
+            for (int g = 0; g < C.NG; ++g) {
+                const double* sp = w.sph.data() + 4 * g;
+                if (sp[3] < 0.0) continue;
+                for (int f = 0; f < S.F; ++f) {
+                    if (field_group_bound(S, f, sp) > best + span) continue;
+                    for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n)
+                        if (!C.is_fixed[C.bg_members[n]]) exact(int(C.bg_members[n]), f0 + f);
+                }
+            }
+        } else {
+            for (int k = 0; k < K; ++k)
+                if (!C.is_fixed[k])
+                    for (int f = 0; f < S.F; ++f) exact(k, f0 + f);
         }
     }
     finish(C, span, val, arg);
