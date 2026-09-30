@@ -3,6 +3,9 @@
 
 Run `../.venv/bin/python tests/free_cases.py` from deployment/ to (re)build
 `tests/data/free_cases_<arm>.npz`.  Everything is seeded, so a rebuild gives the same file.
+`tests/free_cases.py --local [cache_dir]` builds the same kind of set from the lift-off
+configurations of the local planner's alternatives instead (`pool_local`), into
+`tests/data/free_cases_local_<arm>.npz`.
 
 How a case is made
 - tips: uniform on the paper within 1.0 m of the arm's axis (table frame, clipped to the canvas),
@@ -19,9 +22,11 @@ from pathlib import Path
 
 import numpy as np
 
-from aris.kernel import collide
-from aris.rig import Rig
-from aris.types import DrawRules
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from aris.kernel import collide  # noqa: E402
+from aris.rig import Rig  # noqa: E402
+from aris.types import DrawRules  # noqa: E402
 
 DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
@@ -69,6 +74,37 @@ def pool(rig: Rig, arm_id: int, seed: int):
     return q[keep], tip_table[m[keep]], b[keep]
 
 
+def pool_local(rig: Rig, arm_id: int, cache_dir=None):
+    """The other source of the pool: the lift-off configurations the sequencer finds at both
+    ends of every alternative plan of the local planner on its fixed set (word, corpus, the
+    random lines; tests/local_cases.py).  -> q (P,7), tip_table (P,3), branch (P,) as `pool`.
+    The branch is the IK slot that reproduces the configuration."""
+    import local_cases as lc
+    from aris import local
+    from aris.sequencer import TourOptions
+    from aris.sequencer.guard import Guard
+    from aris.sequencer.lift import lift
+    arm, obs, rules = scene(rig, arm_id)
+    sets = lc.base_cases(rig, arm_id)
+    lines = sets["word"] + sets["corpus"] + sets["lines"]
+    bunches, _ = local.plan(arm, lines, obs, rules, cache_dir=cache_dir)
+    guard, opt = Guard(arm, obs, rules.gates), TourOptions()
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    q = []
+    for b in bunches:
+        for plan in b.plans:
+            for end in (0, -1):
+                up = lift(arm, guard, paper, plan.q[end], rules, opt.lift_step, opt.lift_jump,
+                          opt.lift_turns)
+                if not isinstance(up, str):
+                    q.append(up.q_up)
+    q = np.array(q)
+    Q, ok = arm.ik(arm.fk(q), q[:, 6])
+    branch = np.argmin(np.where(ok, np.linalg.norm(np.nan_to_num(Q - q[:, None], nan=1e9),
+                                                   axis=2), np.inf), axis=1)
+    return q, rig.to_table(arm_id, arm.tip(q)), branch
+
+
 def pairs(q, tip, branch, seed: int):
     """(PER_GROUP * 4) index pairs into the pool, and the group of each."""
     rng = np.random.default_rng(seed)
@@ -92,11 +128,15 @@ def pairs(q, tip, branch, seed: int):
     return np.array(out), np.array(group)
 
 
-def build(arm_id: int, seed: int = 20260929) -> Path:
+def build(arm_id: int, seed: int = 20260929, source: str = "random", cache_dir=None) -> Path:
+    """`source` "random" (the pool above) or "local" (`pool_local`, written to
+    free_cases_local_<arm>.npz so the default set is not replaced unasked)."""
     rig = Rig.load(CONFIG)
-    q, tip, branch = pool(rig, arm_id, seed + arm_id)
+    q, tip, branch = pool(rig, arm_id, seed + arm_id) if source == "random" else \
+        pool_local(rig, arm_id, cache_dir)
     ij, group = pairs(q, tip, branch, seed + 1000 + arm_id)
-    path = DATA / f"free_cases_{arm_id}.npz"
+    path = DATA / (f"free_cases_{arm_id}.npz" if source == "random" else
+                   f"free_cases_local_{arm_id}.npz")
     np.savez_compressed(
         path, arm_id=arm_id, phase=ARMS[arm_id], groups=np.array(GROUPS),
         q_start=q[ij[:, 0]], q_goal=q[ij[:, 1]], group=group,
@@ -105,15 +145,23 @@ def build(arm_id: int, seed: int = 20260929) -> Path:
     return path
 
 
-def load(arm_id: int) -> dict:
-    with np.load(DATA / f"free_cases_{arm_id}.npz") as f:
+def load(arm_id: int, source: str = "random") -> dict:
+    name = f"free_cases_{arm_id}.npz" if source == "random" else f"free_cases_local_{arm_id}.npz"
+    with np.load(DATA / name) as f:
         return {k: f[k] for k in f.files}
 
 
 if __name__ == "__main__":
-    for aid in (ARMS if len(sys.argv) < 2 else [int(a) for a in sys.argv[1:]]):
-        p = build(aid)
-        d = load(aid)
+    # --local [cache_dir]: the pool from the local planner's alternatives (pool_local)
+    args = sys.argv[1:]
+    source, cache = "random", None
+    if args and args[0] == "--local":
+        source, args = "local", args[1:]
+        if args and not args[0].isdigit():
+            cache, args = args[0], args[1:]
+    for aid in (ARMS if not args else [int(a) for a in args]):
+        p = build(aid, source=source, cache_dir=cache)
+        d = load(aid, source)
         dist = np.linalg.norm(d["tip_start_table"] - d["tip_goal_table"], axis=1)
         print(f"arm {aid}: pool {int(d['pool_size'])}, {len(dist)} pairs -> {p.name}")
         for gi, name in enumerate(GROUPS):
