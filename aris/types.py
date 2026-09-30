@@ -208,6 +208,9 @@ Reason = Literal[
     "no_free_path",       # could be drawn, but the arm cannot fly to it
     "outside_region",     # not inside this arm's region in this phase
     "failed_check",       # the independent checker refused the motion
+    "stopped",            # the job was stopped before this was drawn
+    "failed",             # an arm failed before this was drawn
+    "unaccounted",        # nothing above applies; a bug, reported rather than hidden
 ]
 
 
