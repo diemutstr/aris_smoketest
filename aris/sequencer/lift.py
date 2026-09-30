@@ -118,7 +118,7 @@ def _lift(arm, guard, paper, q_draw, rules, extra, step, max_jump, spin, turn7) 
     why = guard.hold(path[-1], touching=False)
     if why is not None:
         return f"cannot hold the lifted pen: {why}"
-    res = retime_detailed(JointPath(path), arm.limits, rules)
+    res = retime_detailed(JointPath(path), arm.limits, rules, smooth=True)  # IK samples of a straight rise
     if isinstance(res, Refusal):
         return f"cannot be timed: {res.reason} {res.detail}"
     flown = guard.flown(res.traj, touching=True)

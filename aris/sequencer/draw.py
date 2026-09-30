@@ -23,8 +23,11 @@ def draw_motions(arm, guard: Guard, plan: DrawPlan, rules: DrawRules, deviation:
                  intensity: float = 1.0) -> list[Motion] | str:
     """[the timed drawing motion of `plan` (as oriented)], or why it cannot be flown."""
     along = np.abs(plan.s - plan.s[0])          # arc length in the direction of drawing
+    # The plan's samples lie on a smooth curve (the IK solved every 2 mm with spin, lean and
+    # joint 7 read off smooth curves), so they are timed as one: the corner model would round
+    # every sample as a corner and crawl through the joints' turning points.
     res = retime_detailed(JointPath(plan.q), arm.limits, rules, s=along, tip_of=arm.tip,
-                          deviation=deviation)
+                          deviation=deviation, smooth=True)
     if isinstance(res, Refusal):
         return f"cannot be timed: {res.reason} {res.detail}"
     flown = guard.flown(res.traj, touching=True)
