@@ -33,6 +33,8 @@ TURN_MINOR = 0.1      # of the acceleration and jerk targets: turns weaker than 
 N_UNIFORM = 512       # speed nodes spread evenly along the path
 N_CORNER = 12         # extra speed nodes across each corner narrower than two of those,
 CORNER_ANGLE = 0.02   # rad, that turns by more than this
+PEN_SAFETY = 1.003    # the pen gain is read from chords half a cell long, which can miss a
+                      # little of its peak
 RUNG = 1.4            # ratio between the speeds tried when lowering the cap near slow spots
 
 
@@ -54,16 +56,26 @@ def _nodes(r: Rounded):
     return nodes[np.concatenate([[True], np.diff(nodes) > 1e-12 * L])]
 
 
-def profile(r: Rounded, v_max, a_max, j_max, cap, blend_time):
+def profile(r: Rounded, v_max, a_max, j_max, cap, blend_time, tip_of=None):
     """Squared path speed x = (du/dt)^2 at the nodes, from a forward and a backward sweep.
 
     Each cell between two nodes takes the worst |dq/du|, |d2q/du2|, |d3q/du3| of its two ends
     and its middle, which makes the sweeps conservative over the cell.
+
+    With a draw speed `cap` and `tip_of`, the cap applies to the pen itself: where the pen moves
+    more than a metre per metre of path (between the planner's IK samples a straight joint move
+    need not keep the pen in step with s), the path speed is lowered by that much.  The pen is
+    never sent faster than the path.
     """
     nodes = _nodes(r)
     probe = np.empty(2 * len(nodes) - 1)
     probe[0::2], probe[1::2] = nodes, 0.5 * (nodes[1:] + nodes[:-1])
     d1, d2, d3 = evaluate(r, probe, orders=(1, 2, 3))
+    pen_gain = None
+    if cap is not None and tip_of is not None:
+        tips = tip_of(evaluate(r, probe)[0])
+        half = np.linalg.norm(np.diff(tips, axis=0), axis=1) / np.diff(probe)
+        pen_gain = np.maximum(half[0::2], half[1::2])            # per cell, metre of pen per u
     n1, n2, n3 = (np.linalg.norm(d, axis=1) for d in (d1, d2, d3))
     rates = (n1[0::2], n2[0::2], (n2 / np.maximum(n1, 1e-300))[0::2])   # |q'|, |q''|, turn
 
@@ -80,7 +92,8 @@ def profile(r: Rounded, v_max, a_max, j_max, cap, blend_time):
                                     np.min((PLAN_JERK * j_max / c3) ** (2.0 / 3.0), axis=1),
                                     np.maximum(turn, minor)])
     if cap is not None:
-        x_cell = np.minimum(x_cell, cap ** 2)
+        gain = 1.0 if pen_gain is None else np.maximum(PEN_SAFETY * pen_gain, 1.0)
+        x_cell = np.minimum(x_cell, (cap / gain) ** 2)
     x_node = np.minimum(np.concatenate([x_cell[:1], x_cell]), np.concatenate([x_cell, x_cell[-1:]]))
     x_node = _erode(np.minimum(x_node, 1e6), nodes, 1.5 * blend_time)
     du = np.diff(nodes)[:, None]

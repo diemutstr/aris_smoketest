@@ -87,6 +87,7 @@ def _run(name, p2, s, corners, **kw):
                   / (RULES.speed_fraction * ARM.limits.qd_max))
     binds = np.mean(speed[free] < 0.98 * RULES.draw_speed)
     return dict(name=name, r=r, err=np.max(np.abs(speed[free] / RULES.draw_speed - 1.0)),
+                over=float(speed.max() / RULES.draw_speed - 1.0),
                 tip_mm=r.tip_deviation * 1e3, need=need, binds=binds,
                 slowest=speed[5:-5].min(), rep=check(r.traj, ARM.limits))
 
@@ -104,7 +105,9 @@ def test_drawing_through_the_real_arm():
     print(f"{len(rows)} shapes drawn; a joint limit binds at 20 mm/s on {n_bind} of them; "
           f"worst pen deviation {max(x['tip_mm'] for x in rows):.4f} mm; worst speed error "
           f"{max(x['err'] for x in rows if x['need'] <= 1.0) * 100:.3f} % where nothing binds")
+    print(f"fastest pen anywhere: {max(x['over'] for x in rows) * 100:+.2f} % of the draw speed")
     for x in rows:
+        assert x["over"] <= 0.01
         assert x["tip_mm"] <= 0.1
         assert x["slowest"] > 0.0
         assert x["rep"].inside
@@ -127,3 +130,37 @@ def test_tip_budget_needs_tip_of():
     q = joint_path(shapes(3)[0][1])
     r = retime_detailed(JointPath(q), ARM.limits, RULES, tip_budget_m=1e-4)
     assert isinstance(r, Refusal) and r.reason == "bad_rules"
+
+
+def letters(seed, n=6):
+    """Letter-like lines: 8 strokes of up to 7 cm in random directions, sampled every 2 mm."""
+    rng = np.random.default_rng(seed)
+    out = []
+    for k in range(n):
+        start = rng.uniform(0.3, 0.6) * np.array([np.cos(a := rng.uniform(-np.pi, np.pi)),
+                                                  np.sin(a)])
+        corners = start + np.cumsum(rng.uniform(-0.05, 0.05, (8, 2)), axis=0)
+        p = _densify(corners, 2e-3)
+        s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))])
+        out.append((f"letter {seed}.{k}", p, s))
+    return out
+
+
+def test_pen_never_faster_than_the_draw_speed():
+    """Through the real arm's tip, sampled at 1 kHz: at most 1 % over the draw speed anywhere,
+    also where the planner's joint path moves the pen faster than its arc length says."""
+    worst, drawn = 0.0, 0
+    for name, p2, s in letters(1) + letters(2):
+        q = joint_path(p2)
+        if q is None:
+            continue
+        drawn += 1
+        r = retime_detailed(JointPath(q), ARM.limits, RULES, s=s, tip_of=ARM.tip)
+        assert not isinstance(r, Refusal), (name, r)
+        t = np.arange(0.0, r.traj.t[-1], 1e-3)
+        tip = ARM.tip(sample(r.traj, t)[0])
+        over = np.linalg.norm(np.diff(tip, axis=0), axis=1).max() / 1e-3 / RULES.draw_speed - 1
+        worst = max(worst, over)
+    print(f"\n{drawn} letter shapes: fastest pen {worst * 100:+.2f} % of the draw speed")
+    assert drawn >= 4
+    assert worst <= 0.01

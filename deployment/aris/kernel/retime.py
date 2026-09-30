@@ -133,7 +133,7 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
     if isinstance(rounded, str):
         return Refusal("cannot_smooth", rounded)
     cap = rules.draw_speed if s is not None else None
-    nodes, x, rates = speed.profile(rounded, *targets, cap, blend_time)
+    nodes, x, rates = speed.profile(rounded, *targets, cap, blend_time, tip_of)
     t_fine, u_fine = _time_law(nodes, x, blend_time)
     if isinstance(t_fine, Refusal):
         return t_fine

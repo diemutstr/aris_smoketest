@@ -125,6 +125,16 @@ measurement at any rate, 1 kHz included, averages these and can only read less. 
   was given
 - a drawing motion never reverses; it stops only at a 180° cusp of the line; it runs at
   `draw_speed` wherever no joint limit is in the way
+- with `tip_of`, the pen itself never runs more than 1% over `draw_speed`, read through the
+  arm's tip at 1 kHz. Measured worst: +0.53% on letter shapes, +0.48% on the 23 test shapes.
+
+**Why the pen, not the path parameter.** Between the planner's IK samples, a straight move in
+joint space need not keep the pen in step with `s`. Near a corner of a letter, the pen moved up to
+1.24 mm per mm of `s`, and the pen ran up to 3.5% over the draw speed although ds/dt never did.
+So, when `tip_of` is given, the speed choice reads how far the pen moves per unit `s` along the
+rounded path. Wherever that is over 1, it lowers the path speed by the same factor. Where it is
+under 1, the path speed is left alone: the pen is never sent faster than `s` asks. Without
+`tip_of`, only ds/dt is held to `draw_speed`.
 
 ## What it cannot do
 
