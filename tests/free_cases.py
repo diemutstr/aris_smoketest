@@ -84,7 +84,7 @@ def pool_local(rig: Rig, arm_id: int, cache_dir=None):
     from aris import local
     from aris.sequencer import TourOptions
     from aris.sequencer.guard import Guard
-    from aris.sequencer.ladder import escape
+    from aris.sequencer.lift import lift
     arm, obs, rules = scene(rig, arm_id)
     sets = lc.base_cases(rig, arm_id)
     lines = sets["word"] + sets["corpus"] + sets["lines"]
@@ -95,8 +95,8 @@ def pool_local(rig: Rig, arm_id: int, cache_dir=None):
     for b in bunches:
         for plan in b.plans:
             for end in (0, -1):
-                up = escape(arm, guard, paper, plan.q if end == 0 else plan.q[::-1], rules,
-                            opt)
+                up = lift(arm, guard, paper, plan.q[end], rules, opt.lift_extra,
+                          opt.lift_step, opt.lift_jump, opt.lift_turns)
                 if not isinstance(up, str):
                     q.append(up.q_up)
     q = np.array(q)

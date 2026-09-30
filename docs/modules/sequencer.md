@@ -6,7 +6,7 @@ in which direction, and fills in everything between the pieces: the pen coming o
 the move to the next piece, the pen going down again. Out comes the arm's whole job as a list
 of timed motions, from where the arm stands back to where it should end.
 
-Files: `aris/sequencer/tour.py` (the loop and the report), `ladder.py` (the escape ladder), `lift.py` (lift paths and their check),
+Files: `aris/sequencer/tour.py` (the loop and the report), `lift.py` (lift-off, set-down, shortening),
 `draw.py` (drawing motions), `guard.py` (what the sequencer checks itself).
 
 ## In and out
@@ -14,7 +14,7 @@ Files: `aris/sequencer/tour.py` (the loop and the report), `ladder.py` (the esca
 `tour(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=None)`
 
 - **In:** the arm, the local planner's bunches, where the arm is, the obstacles (base frame),
-  the drawing rules (draw speed, lift height 25 mm, speed share, gates), where the arm should end
+  the drawing rules (draw speed, speed share, gates), where the arm should end
   (default: where it started), and settings for the free-space planner.
 - **Out:** a generator. It hands out `Motion`s one at a time, in order, and at the end returns
   the pieces it could not draw (`Leftover`, reason and detail). `tour_all` collects everything;
@@ -29,7 +29,7 @@ Per piece it hands out four motions:
 | move | free | from where the arm is to the piece's first lift-off configuration (free-space planner) |
 | set-down | lower | the pen straight down onto the paper: the lift-off flown backwards |
 | drawing | draw | the piece, pen on the paper |
-| lift-off | lift | the pen straight up 25 mm at the end of the piece |
+| lift-off | lift | the pen straight up by the pen clearance plus 2 mm (22 mm today) at the end of the piece |
 
 and at the end one move to `q_end`. Every motion starts exactly where the one before ended
 (to 1e-9 rad), starts and ends at rest, and ends in a configuration the arm can hold: before a
@@ -48,47 +48,39 @@ The cheapest is tried: its lift-offs and drawing motion are made, then the free-
 is asked for the move. If anything refuses, the next cheapest is tried. Ties go to the earlier
 piece, so the same input always gives the same tour, also from a fresh process.
 
-## The lift-off: the escape ladder
+## The lift-off and the set-down: two rules
 
-The lift only has to bring the pen into free space; from there the free-space planner takes
-over. The free-space planner asks of a start: the pen at least its lifted-pen margin (3 mm) off
-the paper, the arm clear of everything and of itself, inside the joint-limit margin. So the
-**required** lift is 5 mm (3 mm plus 2 mm), and `rules.lift_height`, 25 mm, is only the
-**preferred** height, taken when the arm can have it. The rungs, tried in order at each end of
-a piece until one gives a start the free-space planner accepts (`ladder.py`):
+Decided by Pete, 2026-09-30: as simple and reliable as possible.
 
-| rung | what |
-|---|---|
-| a | straight up to 25 mm, the arm's shape held (hand orientation and joint 7 fixed) |
-| b | straight up as far as the gates allow (1 mm below where one fails), if that is 5 mm or more |
-| c | back along the line just drawn, the pen rising to 5 mm above it, up to 50 mm back, each sample in the drawing configuration's own hand orientation and joint 7 |
-| d | straight up with the shape allowed to change within the gates: joint 7 and the hand's turn about the normal by up to 0.5 rad, and the pen drifting up to 20 mm toward the base axis; to 25 mm, else 5 mm |
-| e | the piece shortened at that end by 5, 10, ... 30 mm, and a to d again; what is cut off is handed back as a leftover `no_free_path`, "cut off at the end of a piece" |
+1. **A piece starts and ends with the pen rising straight up along the paper normal by the pen
+   clearance plus 2 mm, following at every 2 mm the nearest IK answer that passes the gates
+   (at most 0.15 rad from the last), with the hand's spin about the normal and joint 7 changing
+   evenly over the rise by the smallest amounts, each within 0.5 rad, that let every sample
+   pass; the timed motion is checked as flown.**
+2. **If rule 1 fails at an end, the piece is shortened at that end by 1 cm and rule 1 is tried
+   again, up to 5 cm; what is cut off is a leftover "no path".**
 
-The set-down at the start of a piece is the same ladder from the piece's first configuration,
-flown backwards. Every lift is a `lift` motion and every set-down a `lower` motion, solved by
-the IK every 2 mm (each answer the one nearest the last; a jump over 0.15 rad is a change of
-shape), every sample inside the gates, timed, and checked as flown (the pen exempt from the
-paper on its way to or from it); its top must be a configuration the arm can hold with the pen
-judged against the paper too. The lift ends at the nearest pen-up configuration, never at one
-picked for clearance elsewhere (lesson L53).
+The pen clearance is rig.json's `pen_lifted_to_paper_m`: the free-space planner keeps the pen
+that far above the paper, so the lift is just enough to hand over to it. Today 20 mm (until the
+calibration is proven on the rig; then 3 mm), so the lift is 22 mm. `rules.lift_height` is not
+used by the sequencer. The set-down is the lift-off at the piece's first configuration flown
+backwards (motion kind `lower`; the lift-off is `lift`). "Checked as flown": every IK sample
+inside the joint-limit margin and above the singular-value gate, the top configuration one the
+arm can hold with the pen judged against the paper (what the free-space planner asks of a
+start), and the timed motion free of every obstacle and of itself (the pen exempt from the
+paper on its way to or from it). A step of more than 0.15 rad is a change of arm shape; next
+to a fold of the IK, where two arm shapes meet, a straight lift moves 30 to 90 rad per metre of
+rise, continuously.
 
-**Why the old rule left pieces over** (measured 2026-09-30 on every piece the system planner
-left over as "no path", with the old rule, straight up 25 mm or the turns of rung d only):
+A piece where rule 2 runs out at an end in every alternative and direction becomes a leftover
+`no_free_path`, "no lift-off at its start/end", with rule 1's reason.
 
-| piece (system planner, phase, arm) | length | straight up with the shape held | what stops the old lift |
-|---|---|---|---|
-| spiral, fill phase, arm 13 | 1.77 m (0.82 m finally left) | alternative 1: to 25 mm, every gate kept; alternative 2: 5.0 mm, then joint 5's limit margin | alternative 1 starts at a fold of the IK (two arm shapes meet there): the joints move 86 rad per metre of rise at the paper, slower above; the old rule called any step over 0.05 rad per 2 mm (25 rad/m) a change of shape |
-| random line 19, fill, arm 71 | 0.53 m (0.27 m finally left) | both alternatives to 25 mm | the same rule: 34 rad/m at the paper |
-| random line 6, phase 1, arm 71 (drawn in a later phase) | 0.92 m | both alternatives 2.5 mm, then joint 2's limit margin (0.149 against 0.150 rad) at the start | the limit margin: under the required 5 mm; rung d or c is needed |
-| starburst | none left over | | |
+The turns are tried smallest first, from none (the shape held) to 0.5 rad each, as even
+changes over the whole rise. Turns chosen step by step instead zigzag, and the timing slows at
+every corner: such lifts took up to 3.2 s instead of 0.3.
 
-So one real gate (a joint-limit margin within 2.5 to 5 mm of the paper) and one rule that was
-too strict (the jump allowed per step, now 0.15 rad per 2 mm: next to a fold a lift moves 30 to
-90 rad/m, continuously; a change of shape jumps by 1 rad or more).
-
-A piece with no lift-off on any rung, at either end, in any alternative, becomes a leftover
-`no_free_path`, "no lift-off at its start/end", with the reason of the first try.
+(Earlier the same day: a five-rung ladder, then the two rules with the shape held, which lost a
+1.85 m piece of the spiral whose end ran into a joint-limit margin on the way up.)
 
 ## The drawing motion
 
@@ -135,7 +127,7 @@ re-measured since the checker's stop limit changed).
 - A piece refused from where the arm is may be reachable from elsewhere; it is not offered
   again later.
 
-## Measured (2026-09-30, branch aris3, with the escape ladder, machine load 6 to 18, one process)
+## Measured (2026-09-30, branch aris3, the two lift rules, pen clearance 20 mm so a 22 mm lift, machine load 24 to 50, one process)
 
 From park back to park; obstacles of the arm's leading phase (arm 31 phase 2, arm 13 phase 1);
 kinematic table on; drawing speed 20 mm/s. Planning time includes the local planner. "Moves" is
@@ -144,40 +136,35 @@ drawing (moves, set-downs, lift-offs). No hatch lines lie within 0.80 m of arm 3
 
 | arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | moves rad | leftovers (m) | checker |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 31 word | 13 | 13 | 2.5 / 2.5 | 1.8 | 122.9 | 40.0 | 0.246 | 7.3 | 48.1 | unreachable 0.198 | 53 / 53 |
-| 31 scatter | 27 | 24 | 4.8 / 4.8 | 3.2 | 150.7 | 81.6 | 0.351 | 10.3 | 86.8 | blocked 0.320, too short 0.002, unreachable 0.111 | 97 / 97 |
-| 31 starburst | 24 | 26 | 13.7 / 13.9 | 11.3 | 736.1 | 62.3 | 0.078 | 5.2 | 59.9 | blocked 0.908, unreachable 0.429 | 105 / 105 |
-| 31 spiral | 3 | 7 | 10.6 / 10.7 | 9.8 | 461.6 | 24.6 | 0.051 | 5.3 | 28.2 | blocked 1.135, unreachable 0.278 | 29 / 29 |
-| 31 duotone | 5 | 5 | 4.1 / 4.2 | 2.7 | 217.3 | 31.6 | 0.127 | 7.3 | 37.6 | blocked 0.411, unreachable 0.208 | 21 / 21 |
-| 31 lines | 100 | 105 | 39.8 / 40.4 | 32.1 | 2263.0 | 174.4 | 0.072 | 5.6 | 141.1 | blocked 2.325, unreachable 0.015 | 421 / 421 |
-| 13 word | 13 | 12 | 2.7 / 2.7 | 2.2 | 121.3 | 29.5 | 0.196 | 4.2 | 35.6 | blocked 0.014, unreachable 0.199 | 49 / 49 |
-| 13 hatch | 43 | 43 | 19.8 / 20.0 | 15.7 | 1518.7 | 55.6 | 0.035 | 4.5 | 33.5 | none | 173 / 173 |
-| 13 scatter | 24 | 23 | 3.6 / 3.6 | 2.3 | 143.8 | 58.8 | 0.290 | 5.9 | 61.9 | blocked 0.164, unreachable 0.011 | 93 / 93 |
-| 13 starburst | 5 | 6 | 2.5 / 2.5 | 2.2 | 53.3 | 24.0 | 0.310 | 9.2 | 23.9 | blocked 0.489, unreachable 0.163 | 25 / 25 |
-| 13 spiral | 3 | 2 | 1.9 / 1.9 | 1.9 | 73.7 | 6.4 | 0.080 | 2.9 | 5.6 | blocked 0.523, unreachable 0.147 | 9 / 9 |
-| 13 duotone | 5 | 5 | 5.1 / 5.1 | 3.8 | 198.1 | 24.0 | 0.108 | 6.7 | 31.5 | blocked 0.286, unreachable 0.307 | 21 / 21 |
-| 13 lines | 100 | 105 | 33.9 / 34.6 | 27.2 | 2228.5 | 177.6 | 0.074 | 7.4 | 141.5 | blocked 1.652, unreachable 0.014 | 421 / 421 |
+| 31 word | 13 | 13 | 8.5 / 16.6 | 6.3 | 123.8 | 47.4 | 0.277 | 9.6 | 50.1 | unreachable 0.173 | 53 / 53 |
+| 31 scatter | 27 | 24 | 20.6 / 35.5 | 13.1 | 153.1 | 67.5 | 0.306 | 9.6 | 67.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 |
+| 31 starburst | 24 | 28 | 39.0 / 78.5 | 33.1 | 740.1 | 86.4 | 0.105 | 7.8 | 81.7 | blocked 1.204, unreachable 0.023 | 113 / 113 |
+| 31 spiral | 3 | 7 | 18.9 / 20.9 | 17.9 | 460.5 | 28.3 | 0.058 | 5.7 | 29.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 |
+| 31 duotone | 5 | 4 | 5.9 / 6.0 | 5.0 | 206.5 | 23.9 | 0.104 | 5.3 | 23.6 | blocked 0.567, unreachable 0.011 | 17 / 17 |
+| 31 lines | 100 | 105 | 73.0 / 82.0 | 54.0 | 2242.7 | 227.5 | 0.092 | 8.2 | 162.8 | blocked 2.325, no path 0.086, unreachable 0.015 | 421 / 421 |
+| 13 word | 13 | 13 | 3.5 / 3.5 | 2.3 | 122.5 | 43.5 | 0.262 | 6.7 | 44.9 | no path 0.012, unreachable 0.185 | 53 / 53 |
+| 13 hatch | 43 | 43 | 19.6 / 19.7 | 16.3 | 1518.7 | 65.7 | 0.041 | 7.4 | 41.0 | none | 173 / 173 |
+| 13 scatter | 24 | 23 | 3.2 / 3.2 | 2.2 | 143.0 | 60.8 | 0.298 | 5.2 | 58.8 | blocked 0.164 | 93 / 93 |
+| 13 starburst | 5 | 5 | 2.0 / 2.0 | 1.8 | 54.1 | 14.1 | 0.207 | 3.1 | 10.9 | blocked 0.623, unreachable 0.015 | 21 / 21 |
+| 13 spiral | 3 | 3 | 1.6 / 1.6 | 1.4 | 75.7 | 11.0 | 0.127 | 3.1 | 9.9 | blocked 0.613, unreachable 0.015 | 13 / 13 |
+| 13 duotone | 5 | 7 | 13.2 / 25.5 | 10.2 | 200.3 | 39.8 | 0.166 | 8.1 | 38.7 | blocked 0.452, unreachable 0.015 | 29 / 29 |
+| 13 lines | 100 | 105 | 124.9 / 228.9 | 102.8 | 2228.8 | 222.6 | 0.091 | 6.1 | 153.6 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 |
 
-- **Every one of the 1 517 motions passes the independent checker.** No piece is left over as
-  "no path" (before the ladder, same code otherwise: 5 pieces, 0.97 m: 31 scatter 0.104 m,
-  31 starburst 0.417 m, 31 lines 0.198 m, 13 lines 0.250 m; all motions passed then too, 1 493).
-  More is drawn: 31 scatter 24 pieces instead of 22, 13 duotone 0.30 m more.
-- Which rung made the 752 lift-offs and set-downs: a (25 mm straight up) 653, b (straight up,
-  lower) 69, c (back along the line) 13, d (shape allowed to change) 17, e (piece shortened)
-  none. Lower lifts are shorter: the word's pen-up time, arm 31, is 40.0 s instead of 43.1.
-- A lift or set-down takes 0.15 to 0.35 s; the moves between pieces are 34 s of the word's 40 s
-  pen-up time for arm 31.
-- The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 0.6 to
-  0.8 s for the word, 6.8 to 7.7 s for 100 lines; the rest is the local planner. The ladder adds
-  up to 1.5 s per case.
+- **Every one of the 1 533 motions passes the independent checker.**
+- **"No path": 0.132 m in all**, every bit of it cut off at a piece end by rule 2 (spiral arm 31
+  12 mm, word arm 13 12 mm, random lines 86 and 22 mm); no whole piece is lost. With the arm's
+  shape held (the first version of rule 1, same day) it was 3.53 m, 1.85 m of it one piece of
+  the spiral; with the five-rung ladder (earlier the same day, 5 mm lift) nothing.
+- **Pen-up time on the word:** arm 31, 47.4 s (shape held 43.5 s, ladder 40.0 s); arm 13,
+  43.5 s (37.4 s, 29.5 s). Drawing time 123.8 and 122.5 s: more of the word is drawn than with
+  the shape held. The 22 mm lift and its turns cost a few seconds over the ladder's 5 to 25 mm.
+- The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 1.2 to
+  2.5 s for the word, 19 to 22 s for 100 lines, measured at load 24 to 50 (about twice what a
+  quiet machine gives); the rest is the local planner.
 - Free-space planner: 0 refusals.
-- **Whole drawings, system planner** (`tests/system_cases.py`, same seeds): "no path" left over
-  on the spiral 0.824 m before, none after (the spiral is drawn except 0.084 m beyond every
-  arm's reach); random 300 lines 0.271 m before, none after; starburst none either way.
 - **Against the old planner, word, arm 31.** Old: planned in 66.8 s, its motion took 67.8 s (it
-  drew at 80 mm/s). New: planned in 2.5 s of CPU (first motion after 1.8 s); at 20 mm/s the
-  motion takes 162.9 s (122.9 drawing, 40.0 pen up); 13 pieces, 0.198 m of the last "n" beyond
-  the reach.
+  drew at 80 mm/s). New: planned in 2.4 to 8.5 s of CPU depending on the machine's load (first
+  motion after 1.7 to 6.3 s); at 20 mm/s the motion takes 171.2 s (123.8 drawing, 47.4 pen up).
 
 ![the tour of the word for arm 31](figures/arm_word_31.png)
 

@@ -110,10 +110,10 @@ def test_the_first_motion_comes_before_the_tour_is_decided():
 
 # --------------------------------------------------------------------------- slow: the word
 
-# Measured 2026-09-30 on branch aris3 at machine load 4-13 (docs/modules/sequencer.md), with
-# the checker that knows the lower and lift kinds: every motion of the word passes.
-WORD = {31: dict(checked=53, motions=53, share=0.30, cpu=2.3),
-        13: dict(checked=49, motions=49, share=0.25, cpu=2.0)}
+# Measured 2026-09-30 on branch aris3 with the two lift rules (turns allowed) and a 20 mm pen clearance
+# (docs/modules/sequencer.md): every motion of the word passes the checker.
+WORD = {31: dict(checked=53, motions=53, share=0.32, cpu=2.4),
+        13: dict(checked=53, motions=53, share=0.30, cpu=4.3)}
 
 
 @pytest.mark.slow

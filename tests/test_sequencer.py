@@ -20,7 +20,7 @@ from aris.kernel.retime import sample  # noqa: E402
 from aris.sequencer import TourOptions, TourReport, price, tour, tour_all  # noqa: E402
 from aris.sequencer.draw import draw_motions  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
-from aris.sequencer.ladder import escape, trim
+from aris.sequencer.lift import end_lift, lift, lift_height, trim
 from aris.sequencer.lift import reverse  # noqa: E402
 
 
@@ -47,9 +47,12 @@ def test_lift_off_goes_straight_up_and_the_set_down_is_the_same_backwards(proble
     arm, obs, rules, bunches = problem
     guard = Guard(arm, obs, rules.gates)
     paper = [p for p in obs.planes if p.kind == "paper"][0]
-    q = bunches[0].plans[0].q_start
-    up = escape(arm, guard, paper, bunches[0].plans[0].q, rules, TourOptions())
-    assert not isinstance(up, str), up
+    opt = TourOptions()
+    ends = [q for b in bunches for p in b.plans for q in (p.q[0], p.q[-1])]
+    ups = [lift(arm, guard, paper, q, rules, opt.lift_extra, opt.lift_step, opt.lift_jump)
+           for q in ends]
+    k = next(i for i, u in enumerate(ups) if not isinstance(u, str))
+    q, up = ends[k], ups[k]
     assert np.array_equal(up.up.q_start, q) and np.array_equal(up.down.q_end, q)
     assert up.up.kind == "lift" and up.down.kind == "lower"
     assert np.max(np.abs(up.down.q_start - up.q_up)) == 0.0
@@ -58,39 +61,28 @@ def test_lift_off_goes_straight_up_and_the_set_down_is_the_same_backwards(proble
     tip = arm.tip(sample(up.up.traj, t)[0])
     rise = (tip - tip[0]) @ n
     side = np.linalg.norm((tip - tip[0]) - rise[:, None] * n, axis=1)
-    assert abs(rise[-1] - rules.lift_height) < 1e-6 and side.max() < 2e-4
+    assert abs(rise[-1] - lift_height(paper, opt.lift_extra)) < 1e-6 and side.max() < 2e-4
     assert np.all(np.diff(rise) > -1e-6)                         # it only rises
     back = sample(up.down.traj, up.down.traj.t[-1] - t)[0]
     assert np.allclose(back, sample(up.up.traj, t)[0], atol=1e-12)
     assert guard.hold(up.q_up, touching=False) is None
 
 
-def test_ladder_rungs_b_c_and_the_trim(problem):
+def test_rule_2_shortens_the_piece_until_rule_1_works(problem):
     from dataclasses import replace
-    from aris.sequencer.lift import along_path, finish
     arm, obs, rules, bunches = problem
     guard = Guard(arm, obs, rules.gates)
     paper = [p for p in obs.planes if p.kind == "paper"][0]
-    n = paper.normal / np.linalg.norm(paper.normal)
-    plan = bunches[0].plans[0]
-    # b: a preferred height out of straight reach -> straight up as far as the gates allow
-    from aris.sequencer.lift import straight_limit
-    high = replace(rules, lift_height=0.1)
-    ends = [Q for bb in bunches for p in bb.plans for Q in (p.q, p.q[::-1])]
-    Q = next(Q for Q in ends
-             if 0.01 <= straight_limit(arm, guard, paper, Q[0], high, top=0.1)[0] < 0.1)
-    got = escape(arm, guard, paper, Q, high, TourOptions())
-    assert not isinstance(got, str) and got.how.startswith("b"), got
-    h = (arm.tip(got.q_up[None])[0] - arm.tip(Q[:1])[0]) @ n
-    assert 0.009 <= h < 0.1
-    # c: back along the line, the pen 5 mm above it
-    path, d = along_path(arm, Q, paper, 0.005, 0.05, 0.05)
-    tips = arm.tip(path)
-    above = (tips - arm.tip(Q[:len(path)])) @ n
-    assert np.allclose(above, np.minimum(0.005, d), atol=1e-6) and d[-1] > 0.04
-    lift_c = finish(arm, guard, path, rules, "c")
-    assert not isinstance(lift_c, str) and lift_c.up.kind == "lift"
-    # e: trimming an end by 20 mm leaves the rest of the piece, at a sample
+    opt = TourOptions()
+    plan = next(p for b in bunches for p in b.plans
+                if not isinstance(lift(arm, guard, paper, p.q[-1], rules, opt.lift_extra,
+                                       opt.lift_step, opt.lift_jump), str))
+    got, cut = end_lift(arm, guard, paper, plan, 1, rules, opt)
+    assert cut == 0.0 and np.array_equal(got.q_draw, plan.q[-1])
+    # a jump cap nothing can meet: rule 1 fails everywhere, rule 2 gives up after 5 cm
+    assert isinstance(end_lift(arm, guard, paper, plan, 1, rules, replace(opt, lift_jump=0.0)),
+                      str)
+    # trimming an end by 20 mm leaves the rest of the piece, at a sample
     t = trim(plan, 1, 0.02)
     L = plan.piece.s1 - plan.piece.s0
     assert abs((t.piece.s1 - t.piece.s0) - (L - 0.02)) < 0.0021 and t.piece.s0 == plan.piece.s0

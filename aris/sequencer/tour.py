@@ -26,27 +26,27 @@ import numpy as np
 from aris import free
 from aris.sequencer.draw import draw_motions, oriented
 from aris.sequencer.guard import Guard
-from aris.sequencer.ladder import end_lift, trim
+from aris.sequencer.lift import end_lift, trim
 from aris.types import Bunch, DrawRules, Leftover, Motion, Obstacles, Piece, Plane, Refusal
 
 
 @dataclass(frozen=True)
 class TourOptions:
     max_tries: int = 12            # refused free-space moves in one step before giving up there
-    lift_step: float = 0.002       # m of tip rise between IK samples of a lift-off
-    lift_jump: float = 0.15        # rad; a larger joint change between two of them is a new shape
-                                   # (75 rad/m of rise; next to a fold of the IK a lift runs at
-                                   # 30 to 90 rad/m, a change of shape jumps by 1 rad or more)
-    lift_extra: float = 0.002      # m above the lifted pen's margin: the required lift height
-    lift_back: float = 0.05        # m the pen may go back along the line (ladder rung c)
-    lift_inward: tuple = (0.01, 0.02)  # m the pen may drift toward the base axis (rung d)
-    lift_cut: float = 0.03         # m a piece may be shortened at an end (rung e)
-    cut_step: float = 0.005        # m, the step of rungs c and e
-    draw_deviation: float = 1.5e-4  # rad, how far timing may round the drawing path's corners
-    # (joint 7, hand about the paper normal) turns during a lift-off, rad, tried smallest first
+    lift_step: float = 0.002       # m of pen rise between IK samples of a lift-off
+    lift_jump: float = 0.15        # rad, the most a joint path may move per step (a larger jump
+                                   # is a change of arm shape; next to a fold of the IK a lift
+                                   # moves 30 to 90 rad/m, continuously)
+    lift_extra: float = 0.002      # m above the pen clearance: the lift height (rule 1)
+    # (hand spin about the normal, joint 7) change over a whole lift, rad, tried smallest first;
+    # each within 0.5 rad
     lift_turns: tuple = tuple(sorted(
-        ((a, b) for a in (0.0, 0.1, -0.1, 0.2, -0.2, 0.35, -0.35, 0.5, -0.5)
-         for b in (0.0, 0.25, -0.25, 0.5, -0.5)), key=lambda t: abs(t[0]) + abs(t[1])))
+        ((a, b) for a in (0.0, 0.1, -0.1, 0.25, -0.25, 0.5, -0.5)
+         for b in (0.0, 0.1, -0.1, 0.25, -0.25, 0.5, -0.5)),
+        key=lambda t: (abs(t[0]) + abs(t[1]), abs(t[1]))))
+    cut_step: float = 0.01         # m a piece is shortened at an end per try (rule 2)
+    max_cut: float = 0.05          # m, the most it is shortened
+    draw_deviation: float = 1.5e-4  # rad, how far timing may round the drawing path's corners
 
 
 @dataclass
@@ -60,7 +60,7 @@ class TourReport:
     longest_free: float = 0.0      # s, the longest free motion
     free_length: float = 0.0       # rad, joint-space length of the moves between lift-offs
     free_calls: int = 0            # free-space planner calls
-    rungs: dict = field(default_factory=dict)      # lift-offs and set-downs by ladder rung
+    cut: float = 0.0               # m cut off pieces because rule 1 failed at an end (rule 2)
     refusals: dict = field(default_factory=dict)   # free-space refusals by reason
     motions: int = 0
     end_refusal: str = ""          # why the move to q_end failed; "" if it did not
@@ -123,9 +123,7 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
         b, move, entry, draw, exit_, cut_off = found
         alive.remove(b)
         leftovers += cut_off
-        for x in (entry, exit_):
-            key = x.how.split(",")[0] if x.how.startswith("e") else x.how
-            rep.rungs[key] = rep.rungs.get(key, 0) + 1
+        rep.cut += sum(x.piece.s1 - x.piece.s0 for x in cut_off)
         rep.pieces += 1
         rep.lifts += 1
         rep.move_time += float(move.traj.t[-1])
@@ -242,7 +240,7 @@ class _State:
 
     def _end(self, b, p, end):
         """The lift-off at one end (0: the plan's first sample, 1: its last) of an alternative,
-        from the ladder: -> (Lift, metres cut at that end) or why not."""
+        by the two rules (lift.py): -> (Lift, metres cut at that end) or why not."""
         key = (b, p, end)
         if key not in self.lifts:
             self.lifts[key] = end_lift(self.arm, self.guard, self.paper,
@@ -265,7 +263,7 @@ class _State:
                 if plan is None or plan.piece.s1 - plan.piece.s0 < self.rules.min_piece:
                     return "no lift-off: nothing left after cutting both ends"
         cut_off = [Leftover(Piece(whole.line_id, a, z), "no_free_path",
-                            "cut off at the end of a piece: no lift-off there")
+                            "cut off at the end of a piece: no straight lift-off there")
                    for a, z in ((whole.s0, plan.piece.s0), (plan.piece.s1, whole.s1)) if z > a]
         key = (b, p, d)
         if key not in self.draws:

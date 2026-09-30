@@ -68,7 +68,7 @@ def _check_one(job):
     from aris.check import check
     arm_id, motion, q_before, draw_speed = job
     rig = Rig.load(CONFIG)
-    v = check(CONFIG, arm_id, motion, rig.phase(ARMS[arm_id]), q_before, draw_speed=draw_speed)
+    v = check(CONFIG, arm_id, motion, rig.phase(ARMS[arm_id]), q_before)  # draw speed: rig.json
     worst = next(m for m in v.measurements if m.name == v.tightest) if v.tightest else None
     row = "" if worst is None else (f"{worst.name} {worst.value:.5g} (limit {worst.limit:.4g} "
                                     f"{worst.unit}) {worst.detail}")
@@ -118,9 +118,8 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
         by[x.reason] = (n + 1, m + x.piece.s1 - x.piece.s0)
     out.append("  leftovers: " + (", ".join(f"{k} {n} ({m:.3f} m)" for k, (n, m) in
                                             sorted(by.items())) or "none"))
-    if getattr(t, "rungs", None):
-        out.append("  lift-offs and set-downs by rung: " + ", ".join(
-            f"{k} {n}" for k, n in sorted(t.rungs.items())))
+    if getattr(t, "cut", 0.0):
+        out.append(f"  cut off at piece ends (no straight lift-off): {t.cut * 1e3:.0f} mm")
     if checks is not None:
         rl = roles(motions)
         passed = sum(c[0] for c in checks)
