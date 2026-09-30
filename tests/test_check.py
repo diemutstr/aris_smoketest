@@ -63,12 +63,13 @@ def kernel_classes(arm_id, phase, Q, drawing=False) -> dict:
         else np.full(len(Q), np.inf),
         walls=collide.clearance(body, Obstacles(planes=obs.planes[1:]), prune=False, backend=KB),
         parked=collide.clearance(body, Obstacles(capsules=obs.capsules), prune=False, backend=KB),
+        fields=np.full(len(Q), np.inf),
         self=collide.self_clearance(body, arm.self_pairs, RIG.clearance["self_m"],
                                      backend=KB))
 
 
-def my_classes(arm_id, phase, Q, drawing=False, chunk=500) -> dict:
-    scene = build_scene(MINE, arm_id, phase.walls, phase.parked, drawing)
+def my_classes(arm_id, phase, Q, drawing=False, chunk=500, fields=()) -> dict:
+    scene = build_scene(MINE, arm_id, phase.walls, phase.parked, drawing, fields=fields)
     parts = [clearance(scene, Q[s:s + chunk]).value for s in range(0, len(Q), chunk)]
     return {c: np.concatenate([p[c] for p in parts]) for c in CLASSES}
 
@@ -785,3 +786,49 @@ def test_phase_end_catches_a_touching_pair_and_a_missing_arm():
     v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {71: q}))
     _fails(v, "arms 31 and 71")
     _fails(check_phase_end(CONFIG, RIG.phase(1), {13: RIG.park_q(13)}), "well formed")
+
+
+# =========================================================================== footprints
+
+
+def _park_footprint_in_31():
+    """Arm 71 standing at park, as a footprint (a distance field of 2 cm cells) in arm 31's
+    base frame, as the system planner would hand it to arm 31."""
+    from aris.kernel.footprint import footprint, transform_field
+    q = RIG.park_q(71)
+    still = Trajectory(np.array([0.0, 1.0]), np.stack([q, q]), np.zeros((2, 7)))
+    f71 = footprint(RIG.arm(71), [still], cell=0.02, name="footprint71")
+    return transform_field(f71, RIG.T_base_table(31) @ RIG.T_table_base(71), "footprint71")
+
+
+def test_field_readings_never_exceed_the_exact_distance():
+    """Arm 31 against arm 71 at park, 3000 random configurations: the checker's reading and the
+    kernel's reading of the footprint are both lower bounds on the exact distance to 71's
+    capsules."""
+    f = _park_footprint_in_31()
+    rng = np.random.default_rng(12)
+    Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(3000, 7))
+    m = MINE.clearance["arm_to_arm_m"]
+    mine = my_classes(31, Phase("f", (31,), (), ()), Q, fields=(f,))["fields"] + m
+    exact = my_classes(31, Phase("p", (31,), (71,), ()), Q)["parked"] + m
+    kern = collide.clearance(RIG.arm(31).body(Q), Obstacles(fields=(replace(f, margin=0.0),)),
+                             prune=False, backend=KB)
+    near = exact < 0.10
+    print(f"\n{near.sum()} of {len(Q)} within 10 cm; exact minus reading, median / largest: "
+          f"checker {np.median((exact - mine)[near]) * 1e3:.1f} / "
+          f"{(exact - mine)[near].max() * 1e3:.1f} mm, kernel "
+          f"{np.median((exact - kern)[near]) * 1e3:.1f} / {(exact - kern)[near].max() * 1e3:.1f} mm")
+    assert np.all(mine <= exact + 1e-9)
+    assert np.all(kern <= exact + 1e-9)
+    assert near.sum() > 50
+
+
+@pytest.mark.slow
+def test_fault_motion_through_a_footprint():
+    """The motion that touches parked arm 71, checked with 71 given only as a footprint."""
+    path = find_through(31, Phase("pair", (31,), (71,), ()), "parked", seed=3)
+    f = _park_footprint_in_31()
+    v = check(CONFIG, 31, free_motion(31, path), Phase("f", (31,), (), ()), path[0],
+              fields=(f,))
+    _fails(v, "clearance footprints")
+    assert v.get("clearance footprints").value < 0

@@ -34,6 +34,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 4 | `clearance paper (tool)`: everything bolted to the flange except the pen (gripper, blades, holder, pencil tail) | `tool_to_paper_m`; if rig.json lacks it, `body_to_paper_m`, and the verdict says so |
 | 4 | `clearance walls`: the phase's walls that have this arm on one side | 0.025 m |
 | 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, base included | 0.050 m |
+| 4 | `clearance footprints`: other arms' footprints over the phase (distance fields), passed as `check(..., fields=...)` in this arm's base frame, as the planners get them in `Obstacles.fields` (`Phase` has no fields) | 0.050 m (the demanded arm-to-arm clearance, not the field's own margin) |
 | 5 | `clearance self`: the capsule pairs at least four joints apart | 0.020 m |
 | 6 | all of 4 and 5 hold between the samples too (below) | |
 | 7 | drawing: `tip on paper` (before the controller presses) | 0.5 mm |
@@ -61,6 +62,15 @@ This parameter is exactly the planned arc length at every sample and continuous 
 the nearest point of the line is not used, because at a sharp corner it jumps between the two
 legs and briefly runs backwards on a motion that is fine. `never stops` and `never backwards`
 are read on this parameter at 1 kHz.
+
+**Reading a footprint** (`field.py`, written apart from the kernel's lookup). A field holds, at
+each grid centre, a lower bound on the distance to the footprint. At a point inside the grid's
+box the checker takes the nearest centre's value minus the distance to that centre; outside the
+box it reads on the box and adds the distance to the box back in quadrature (the footprint lies
+inside the box). A capsule is read at points along its axis at most half a cell apart; a quarter
+cell (half that spacing) and the radius are subtracted. The kernel reads the 8 surrounding
+centres and samples a cell apart; both are lower bounds, and a test checks both against the
+exact distance to the body the field was built from.
 
 ## Before the next phase: `check_phase_end`
 
@@ -145,8 +155,10 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
 | reported against the truth (planners' kernel on a 20 kHz sampling) | never above, within 0.25 mm (78.35 reported, 78.60 true) |
 | good free motions (arms 13, 31, 97) | pass |
+| footprint of arm 71 at park (2 cm cells) seen by arm 31, 3 000 random configurations | both readings below the exact distance everywhere; within 10 cm, exact minus reading: checker 45 mm median, 65 mm at most; kernel 38 / 68 mm |
+| the motion that touches parked arm 71, with 71 given only as its footprint | fails `clearance footprints` (-45 mm) |
 | phase end: all arms at park | pass; tightest arm 31, link 6 against the west seam bar, 128.6 mm (demanded 50) |
-| own-hanger exemption, arm 71 at park | without it link1.0 reads 39.5 mm from its own strut (under 50); with it the tightest steel is link2.2, 184.7 mm |
+| own-hanger exemption, arm 71 at park | without it the closest steel is link1.0, 61.9 mm from its own minus-x strut; with it link2.2, 201.4 mm from the plus-x strut |
 | phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
 | phase end: arm 71 into parked arm 31; an active arm missing | caught |
 | speed, CPU time, one core, 62 capsules | 6.8 s free motion 200 ms; 60 s drawing motion 635 ms (with the first 40-capsule model: 145 and 650 ms) |
@@ -163,12 +175,17 @@ native code), or a tighter bound on how far a capsule moves.
   provisionally 0: it must not touch). With the refitted tool capsules (62 capsules in all,
   2026-09-29) a straight line drawn by arm 31 passes: tool 14.5 mm above the paper with the hand
   square, 8.1 mm at the worst 15 degree lean; links 112.5 mm (a lower bound) and 84.2 mm.
-  (The hanging struts are 30 mm longer since 2026-09-30; they end 65 mm below the plate.)
+  (The hanging struts follow the technical drawing since 2026-09-30: outer faces 171.75 mm to
+  table -x and 222.05 mm to +x of each axis, plate 25.15 mm toward +x, and 30 mm longer than
+  the old model, ending 65 mm below the plate.)
 - The old hover run of arm 71 (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
   flown curve (the old code read 89 at 48 Hz), jerk and the 1 kHz/4 kHz comparison, and link 6
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).
 - Parked arms are checked at their park configurations from rig.json only. Arms moving at the
   same time are kept apart by the walls; the checker does not compare two moving arms.
 - A class far above the tightest one is reported as "at least" that value.
+- A footprint is read 4 to 7 cm short near the body (2 cm cells), so a configuration that clears
+  the parked arm itself by a few centimetres can fail against its footprint, the end of a motion
+  included (the hold row). Finer cells would buy that back.
 - Drawing: "on the line" is judged against the planned tips as a polyline, locally (the planned
   points around the current sample), so a line that crosses itself is fine.

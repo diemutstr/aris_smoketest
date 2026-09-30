@@ -8,6 +8,7 @@ Obstacle classes, each with the clearance `rig.json` demands (not the planning a
   pen      the paper, for the pen (free motions only), at the lifted-pen clearance
   walls    the walls of the phase that have this arm on one side
   parked   the arms standing parked in this phase, at their park configurations
+  fields   neighbours' footprints over the phase (distance fields), at the arm-to-arm clearance
   self     the arm against itself
 Capsules bolted to the base (link0) are not checked against obstacles, only against the arm
 itself.  Values are the clearance beyond the demanded one ("gap minus margin"), per sample:
@@ -20,11 +21,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from aris.check import field as fld
 from aris.check import geometry as geo
 from aris.check.config import RigData
 from aris.check.model import ArmModel, capsules, load_model
 
-CLASSES = ("steel", "links", "tool", "pen", "walls", "parked", "self")
+CLASSES = ("steel", "links", "tool", "pen", "walls", "parked", "fields", "self")
 _BLOCK = 16                     # consecutive samples that share one ball per capsule
 
 
@@ -47,6 +49,7 @@ class Scene:
     other_a: np.ndarray         # (C,3)
     other_b: np.ndarray
     other_r: np.ndarray
+    fields: tuple = ()          # (name, origin_base, cell, dist) per field, this arm's base frame
 
 
 @dataclass(frozen=True)
@@ -62,9 +65,11 @@ class Clearance:
 
 
 def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
-                pen_floor: float | None = None) -> Scene:
+                pen_floor: float | None = None, fields=()) -> Scene:
     """`pen_floor` replaces the pen's lifted clearance to the paper (a negative number lets the
-    pen touch the paper, for setting it down and taking it up)."""
+    pen touch the paper, for setting it down and taking it up).  `fields`: `types.Field`s in
+    this arm's base frame; each is held to the demanded arm-to-arm clearance of rig.json (the
+    field's own margin is the planner's business)."""
     mount = rig.mounts[arm_id]
     model = load_model(mount.tip_hand)
     base = mount.T_table_base[:3, 3]
@@ -89,13 +94,15 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
     margin = dict(steel=c["steel_m"], links=c["body_to_paper_m"], tool=c["tool_to_paper_m"],
                   pen=c["pen_lifted_to_paper_m"] if pen_floor is None else pen_floor,
                   walls=c["wall_m"],
-                  parked=c["arm_to_arm_m"], self=c["self_m"])
+                  parked=c["arm_to_arm_m"], fields=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
     own = np.array([o == arm_id for o in rig.box_owner], bool)
     return Scene(model, mount.T_table_base, drawing, margin, rig.box_names, rig.box_lo,
                  rig.box_hi, own, rig.own_exempt, tuple(names), np.array(n, float).reshape(-1, 3),
                  np.array(d, float), rig.paper_z, tuple(o_names), cat(o_a, (3,)),
-                 cat(o_b, (3,)), cat(o_r, ()))
+                 cat(o_b, (3,)), cat(o_r, ()),
+                 tuple((f.name, np.asarray(f.origin_base, float), float(f.cell),
+                        np.asarray(f.dist)) for f in fields))
 
 
 def clearance(scene: Scene, Q, thr=None) -> Clearance:
@@ -132,6 +139,7 @@ def clearance_of(scene: Scene, A, B, thr=None) -> Clearance:
         "walls": _plane(Am, Bm, rm, names[move], scene.plane_n, scene.plane_d,
                         scene.plane_names, scene.margin["walls"]),
         "parked": _parked(scene, Am, Bm, rm, names[move], t("parked")),
+        "fields": _fields(scene, Am, Bm, rm, names[move], t("fields")),
         "self": _self(A, B, m, scene.margin["self"], t("self")),
     }
     return Clearance({c: v[0] for c, v in out.items()}, {c: v[1] for c, v in out.items()},
@@ -322,3 +330,39 @@ def _self(A, B, m: ArmModel, margin, thr):
     val, sel = _gather(N, n_i, lb, ub, exact, thr, floor)
     pair = np.where(sel >= 0, p_i[np.maximum(sel, 0)] if len(p_i) else -1, -1)
     return val, pair, lambda p: f"{m.names[i[p]]} / {m.names[j[p]]}"
+
+
+def _fields(scene, A, B, r, names, thr):
+    """Moving capsules against the neighbours' footprints (see field.py for the reading)."""
+    N, K = A.shape[:2]
+    F = scene.fields
+    if K == 0 or not F:
+        return _nothing(N)
+    R, t = scene.T_table_base[:3, :3], scene.T_table_base[:3, 3]
+    base = lambda p: (p - t) @ R                   # table -> this arm's base frame
+    margin = scene.margin["fields"]
+
+    def at(p, o):                                  # points (M,3), fields (M,) -> (M,)
+        out = np.empty(len(p))
+        for j in np.unique(o):
+            sel = o == j
+            out[sel] = fld.point_bound(F[j][1], F[j][2], F[j][3], base(p[sel]))
+        return out
+
+    def ob_lb(c, o):                               # points (M,3) x fields (O,) -> (M,O)
+        return np.stack([at(c, np.full(len(c), j)) for j in o], axis=1) - margin
+
+    def bounds(mid, rad, rk, o):                   # no upper bound for a field reading
+        lb = at(mid, o) - rad - margin
+        return lb, np.full(len(lb), np.inf)
+
+    def exact(a, b, rk, o):
+        out = np.empty(len(a))
+        for j in np.unique(o):
+            sel = o == j
+            out[sel] = fld.capsule_bound(F[j][1], F[j][2], F[j][3], base(a[sel]), base(b[sel]),
+                                         rk[sel])
+        return out - margin
+
+    val, pair = _two_level(A, B, r, ob_lb, bounds, exact, len(F), thr)
+    return val, pair, lambda p: f"{names[p % K]} / {F[p // K][0]}"

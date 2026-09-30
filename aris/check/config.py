@@ -94,24 +94,20 @@ def _hanger(aid, arm, h):
     """The two struts, the plate and the clamp an arm hangs from, as table-frame boxes.
 
     From the words in rig.json: struts of section strut_size_x by strut_size_y, centred on the
-    arm's row line; the outer face of one is `wide_side_outer_face_to_axis` from the axis on the
-    side `strut_wide_side` names, the other's `narrow_side_outer_face_to_axis` on the other side;
-    each strut extends from its outer face back toward the axis.  Plate and clamp are centred
-    `plate_centre_toward_wide_side` from the axis toward the wide side, on the row line.
+    arm's row line; one has its outer face `axis_to_minus_x_outer_face` toward table -x of the
+    axis, the other `axis_to_plus_x_outer_face` toward +x; each extends from its outer face
+    back toward the axis.  Plate and clamp are centred `plate_centre_offset_x` toward table +x
+    of the axis, on the row line.  The same for every arm (one clocking).
     """
     x, y = float(arm["axis_xy_m"][0]), float(arm["axis_xy_m"][1])
-    side = {"-x": -1.0, "+x": 1.0}.get(arm["strut_wide_side"])
-    if side is None:
-        raise ValueError(f"arm {aid}: strut_wide_side {arm['strut_wide_side']!r}")
     out = []
-    for tag, dist, sgn in (("wide", h["wide_side_outer_face_to_axis_m"], side),
-                           ("narrow", h["narrow_side_outer_face_to_axis_m"], -side)):
-        outer = x + sgn * dist
-        inner = outer - sgn * h["strut_size_x_m"]
+    for tag, sign in (("minus_x", -1.0), ("plus_x", 1.0)):
+        outer = x + sign * h[f"axis_to_{tag}_outer_face_m"]
+        inner = outer - sign * h["strut_size_x_m"]
         out.append((f"strut{aid}_{tag}", [min(outer, inner), y - h["strut_size_y_m"] / 2,
                                           h["strut_bottom_z_m"]],
                     [max(outer, inner), y + h["strut_size_y_m"] / 2, h["strut_top_z_m"]]))
-    cx = x + side * h["plate_centre_toward_wide_side_m"]
+    cx = x + h["plate_centre_offset_x_m"]
     for tag in ("plate", "clamp"):
         sx, sy = h[f"{tag}_size_x_m"] / 2, h[f"{tag}_size_y_m"] / 2
         out.append((f"{tag}{aid}", [cx - sx, y - sy, h[f"{tag}_bottom_z_m"]],

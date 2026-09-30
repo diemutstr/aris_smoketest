@@ -21,16 +21,21 @@ PEN_FLOOR = -0.002    # m, pen capsule against the paper plane, "lower" and "lif
 
 _TITLE = dict(steel="clearance steel", links="clearance paper (links)",
               tool="clearance paper (tool)", pen="clearance paper (pen)",
-              walls="clearance walls", parked="clearance parked arms", self="clearance self")
+              walls="clearance walls", parked="clearance parked arms",
+              fields="clearance footprints", self="clearance self")
 PEN_DEPTH = "pen depth (lower, lift)"      # the pen row of a "lower" or "lift" motion
 
 
 def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, *,
-          step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
+          fields=(), step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
           tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
           speed_tol: float = 0.03,
           stop_speed: float = 2.5e-4) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
+
+    fields          the phase's footprints of other arms (`types.Field`), in this arm's base
+                    frame, as the planners get them in `Obstacles.fields`; held to the demanded
+                    arm-to-arm clearance
 
     step            m, the most any capsule point may move between two clearance samples
     tol             m, how far under the true minimum a reported clearance may lie
@@ -59,7 +64,7 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
 
     traj = motion.traj
     drawing = motion.kind == "draw"
-    scene = build_scene(rig, arm_id, phase.walls, phase.parked, drawing,
+    scene = build_scene(rig, arm_id, phase.walls, phase.parked, drawing, fields=fields,
                         pen_floor=PEN_FLOOR if motion.kind in ("lower", "lift") else None)
     ms = [measure("well formed", 1.0, 1.0, "min", "", ranked=False)]
     ms += _ends(traj, q_before)                                      # items 1-2
