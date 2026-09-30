@@ -13,23 +13,42 @@ Everything is committed on branch `aris2` of `/home/franka/aris_project/aris_six
 `deployment/` has been pushed. 145 quick tests pass (`.venv/bin/python -m
 pytest tests -q -m "not slow"`, under a minute).
 
-## Where each module stands
+## Where each module stands (updated 2026-09-30 evening, HEAD on aris3)
 
 | module | state | measured |
 |---|---|---|
 | `aris/types.py` | the contracts; changed by the orchestrator only | |
-| `rig` | done | poses match the old model to 1e-16; 37 steel boxes; diagonal walls 678 mm from both bases, 26.75 degrees |
-| `kernel/arm` + `native/fr3_ik` | done | new IK: round trip 100 % (old solver 66 %); body 62 capsules, all meshes inside; holder 14.7 mm above the paper upright, 9.4 mm at 15 degrees lean |
-| `kernel/collide` + `native/collide` | done, two-level check included | exact distances; real arm 31 scene (55 checked capsules, 88 obstacles) on one thread: 244 000 configurations per second, a 50-sample path check in 0.9 ms, 26 000 edges of 0.3 rad per second; 1.7 to 2.6 million configurations per second with threads |
-| `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; limits hold at any sampling rate; pen within 0.1 mm |
-| `check` | done | agrees with the kernel to 1e-15 on 60 000 configurations; 14 built-in faults caught; 0.2 s for a 7 s motion |
-| `free` | done; target met on a quiet machine | 2 000 of 2 000 test pairs solved; CPU per plan at machine load 8 (arm 13 / arm 31): tree needed 48 / 75 ms median, 118 / 177 ms at the 95th percentile; straight move 9 / 12 ms; all plans 37 / 53 ms. At load 58 the tree case is 106 / 191 ms |
-| `local` | done and measured on both arms; speed still ten times above target | paper only: random lines and curves 100 %, corpus 98-99 %, word 93 % (the rest is beyond the reach); CPU per line at the median with the table 0.14 to 0.40 s |
-| `sequencer`, `arm_planner` | not started (round 3) | |
-| `system` | not started (round 4) | |
-| `execute`, `server`, `cli` | not started (round 5) | |
-| `calib` | not started (round 6); Pete builds the hardware (dimple plates, pin) | |
-| `gui` | not started (round 7) | |
+| `rig` | done; struts from the technical drawing; gates and rules in rig.json | drawing area 1.56 x 3.56 m |
+| `kernel/arm` + `native/fr3_ik` | done | new IK round trip 100 %; body 62 capsules; reach at the paper 0.805 m geometric, sigma gate 0.04 |
+| `kernel/collide` + `native/collide` | done, incl. two-level check, exemptions, distance fields (footprints) | real arm 31 scene 244 000 configurations/s on one thread |
+| `kernel/retime` + `native/retime` | done | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; pen within 0.5 % of the draw speed |
+| `check` | done; reads rig.json itself; footprints with its own lookup | agrees with the kernel to 1e-15; 0.2 s for a 7 s motion |
+| `free` | done | 2 000 of 2 000 pairs; 48 / 75 ms median when a search is needed (quiet machine) |
+| `local` | done | paper only: 100 % of random lines and curves within reach; 0.14 to 0.40 s per line with the table |
+| `sequencer` + `arm_planner` | done; lift = escape ladder (Pete wants it reduced to two rules) | word arm 31: planned in 2.3 s, first motion 1.6 s |
+| `system` | done: five laws, leaders first, fill in pairs, drawing area, followers built but OFF | seven whole-table drawings 100 % drawn, 2 890 of 2 890 motions pass the checker |
+| `execute` | done: queue per arm, executor, coordinator, event log, simulated arm | word on six simulated arms: queues on disk bit-identical to the plan |
+| `server` + `cli` | done: aris serve / draw / status / stop / park / rig / plan / check | word via `aris draw`: first motion 6.6 s, done 13.4 s at 20x; stop holds and reports |
+| `calib` | not started; Pete builds the hardware | |
+| `gui` | not started | |
+| real arm driver | not started; waits for Pete's decision on the execution path | |
+
+Quick test set: 208 tests, all pass (`.venv/bin/python -m pytest tests -q -m "not slow"`).
+
+## Decisions waiting for Pete (2026-09-30 evening)
+
+1. Execution path for drawing on the real arms: (a) position control through the joint trajectory
+   controller (what is certified is what is flown; no compliance); (b) the impedance controller as
+   today (follows the tip pose, picks its own arm shape: what is flown is not what was certified);
+   (c) the impedance controller with the joint reference as its nullspace target (controller work
+   on the operator PC).
+2. Drawing input: assumed a JSON list of polylines in mm in the table frame, one pen, scaled to
+   fit the drawing area. SVG, several pens, tone per line are not built.
+3. Interruptions: assumed "a stopped job is finished; what is left is a new drawing".
+4. Followers: under the five laws they draw nothing. The law that would make them useful: split
+   a row's lines between leader and follower to balance the work before the leader plans.
+5. The lift: reduce the escape ladder to two rules (rise pen clearance + 2 mm on the same shape,
+   else trim 1 cm), with the pen clearance 20 mm until calibration is proven.
 
 ## Local planner against the old planner (both arms, measured 2026-09-29)
 
