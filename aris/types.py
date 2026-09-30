@@ -80,7 +80,8 @@ class Field:
     """A distance field on a grid: the footprint of a neighbour over a whole phase.
 
     `dist[i, j, k]` is a lower bound on the distance from the centre of cell (i, j, k) to the
-    footprint's surface, negative inside.  Outside the grid counts as free.
+    footprint's surface, negative inside.  The footprint lies inside the grid; a point outside
+    the grid is read on the grid's edge, with its distance to the grid added in quadrature.
     """
     name: str
     origin_base: np.ndarray            # (3,) centre of cell (0, 0, 0)
