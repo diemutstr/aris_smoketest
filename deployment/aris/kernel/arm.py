@@ -73,7 +73,9 @@ class Arm:
         self._radius = np.array([r[4] for r in rows], float)
         self._names = tuple(r[0] for r in rows)
         self._is_pen = np.array([n in tool.pen_names for n in self._names])
-        self._is_fixed = self._cap_frame == 0          # link0: bolted to the mount
+        # link0 and link1: they only turn about the base axis, so their clearance to the rig is
+        # checked once by the rig over the whole turn of joint 1, not per pose
+        self._is_fixed = self._cap_frame <= 1
         tool_names = {c.name for c in tool.capsules_hand}
         self._is_tool = np.array([(n in tool_names or n.split(".")[0] in
                                    ("hand", "finger_left", "finger_right"))
@@ -157,7 +159,7 @@ class Arm:
     def body(self, Q) -> Body:
         """(N,7) -> the capsules of links, hand, fingers, holder and pen at each configuration.
 
-        The seven link0 capsules are marked `is_fixed`: they do not move with the joints.
+        The link0 and link1 capsules are marked `is_fixed`: they only turn about the base axis.
         """
         R, p = self._frames(Q)
         Rk, pk = R[:, self._cap_frame], p[:, self._cap_frame]

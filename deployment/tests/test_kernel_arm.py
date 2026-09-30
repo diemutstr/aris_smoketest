@@ -439,16 +439,20 @@ def test_body_shape(arm):
     assert np.allclose(d, b.radius[k])
 
 
-def test_fixed_capsules_do_not_move(arm):
+def test_fixed_capsules_only_turn_about_the_base_axis(arm):
+    """is_fixed = link0 and link1: distance from the base axis and height never change."""
     q = random_q(arm, 500, 13)
     b = arm.body(q)
     assert b.is_fixed.shape == (len(b.names),)
-    assert [n for n, f in zip(b.names, b.is_fixed) if f] == [f"link0.{k}" for k in range(7)]
+    assert [n for n, f in zip(b.names, b.is_fixed) if f] == \
+        [f"link0.{k}" for k in range(7)] + [f"link1.{k}" for k in range(3)]
     for P in (b.p0, b.p1):
-        assert np.array_equal(P[:, b.is_fixed], np.broadcast_to(P[:1, b.is_fixed],
-                                                                P[:, b.is_fixed].shape))
-    # and every other capsule does move
-    moved = np.abs(b.p0 - b.p0[:1]).max(axis=(0, 2)) + np.abs(b.p1 - b.p1[:1]).max(axis=(0, 2))
+        F = P[:, b.is_fixed]
+        for v in (np.hypot(F[..., 0], F[..., 1]), F[..., 2]):
+            assert np.abs(v - v[:1]).max() < 1e-12
+    # every other capsule does move off its circle about the base axis
+    moved = sum(np.abs(v - v[:1]).max(0) for P in (b.p0, b.p1)
+                for v in (np.hypot(P[..., 0], P[..., 1]), P[..., 2]))
     assert np.all(moved[~b.is_fixed] > 1e-3)
 
 
@@ -514,7 +518,8 @@ def test_reach_bounds_motion(arm):
     """Straight joint moves: no capsule endpoint moves further than sum_j |dq_j| reach[j, k]."""
     assert arm.reach.shape == (7, len(arm.body(np.zeros((1, 7))).names))
     b0 = arm.body(np.zeros((1, 7)))
-    assert np.all(arm.reach[:, b0.is_fixed] == 0.0)
+    base = arm.capsule_table().frame == 0
+    assert np.all(arm.reach[:, base] == 0.0)
     ratios = []
     for seed, scale in ((25, 1.0), (26, 0.01)):   # large moves, and small ones (tight regime)
         rng = np.random.default_rng(seed)
@@ -526,7 +531,7 @@ def test_reach_bounds_motion(arm):
         bound = np.abs(qb - qa) @ arm.reach                       # (N, K)
         move = np.maximum(np.linalg.norm(B.p0 - A.p0, axis=-1),
                           np.linalg.norm(B.p1 - A.p1, axis=-1))
-        live = ~A.is_fixed
+        live = ~base
         assert np.all(move[:, live] <= bound[:, live] + 1e-12)
         ratios.append((move[:, live] / bound[:, live]).ravel())
     print(f"\nreach bound, endpoint travel / bound: large moves median {np.median(ratios[0]):.2f}"
