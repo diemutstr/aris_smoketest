@@ -2,6 +2,9 @@
 // does this):
 //   g++ -std=c++17 -O2 -I<eigen3> -I../include core_test.cpp -o core_test
 //   ./core_test                      scenario checks; prints "PASS n" or the first failure
+//   ./core_test probe < poses.txt
+//       reads "J(3x7 row-major) n(3)" lines; prints per line the joint stiffness and damping
+//       matrices the law applies with the pen down (49 + 49 numbers, row-major) and d_normal
 //   ./core_test follow <dt> < samples.txt
 //       reads "t q1..q7 qd1..qd7 f1..f3" lines (one stream), plays it at ticks of dt with the
 //       arm exactly on the reference, and prints "t q_d1..7 qd_d1..7 f1..3" per tick
@@ -36,6 +39,92 @@ static Sample make(uint32_t stream, double t, const Vec7& q, bool last = false) 
 
 static Vec7 tick(Core& c, const Vec7& q, double dt = 0.001) {
   return c.update(q, Vec7::Zero(), Mat37::Zero(), Vec7::Zero(), dt);
+}
+
+// The joint stiffness and damping the law applies at J with the pen down on normal n (n = 0:
+// pen up), probed column by column (the law is linear in e and ed).
+static void probe(const Mat37& J, const Vec3& n, Mat7& Kp, Mat7& Dp, double& dn,
+                  const Mat7& M = Mat7::Zero()) {
+  Params p;
+  p.tau_max.setConstant(1e12);
+  p.tau_rate = 1e18;
+  p.max_error = 1e9;
+  Core c(p, 8);
+  const Vec7 z = Vec7::Zero();
+  c.activate(z);
+  Sample s = make(1, 0.0, z, true);
+  s.n = n;
+  c.offer(s);
+  c.update(z, z, J, z, 0.001, M);
+  for (int i = 0; i < 7; ++i) {
+    const Vec7 u = Vec7::Unit(i);
+    Kp.col(i) = c.update(-u, z, J, z, 0.001, M);
+    Dp.col(i) = c.update(z, -u, J, z, 0.001, M);
+  }
+  dn = c.status().d_normal;
+}
+
+static void pen_down_law() {
+  const Params p;
+  std::srand(3);
+  for (int trial = 0; trial < 50; ++trial) {
+    const Mat37 J = Mat37::Random() * 0.5;
+    const Vec3 n = Vec3::Random().normalized();
+    Mat7 Kp, Dp;
+    double dn = 0.0;
+    probe(J, n, Kp, Dp, dn);
+    CHECK((Kp - Kp.transpose()).norm() < 1e-9 * Kp.norm());       // symmetric
+    CHECK(Eigen::SelfAdjointEigenSolver<Mat7>(Kp).eigenvalues().minCoeff() > 0.0);
+    Mat3 Kt, Kt2, Dt, Dt2;
+    CHECK(tip_space(J, p.k, Kt) && tip_space(J, p.d, Dt));
+    const Mat3 Kpt = (J * Kp.inverse() * J.transpose()).inverse();  // tip stiffness now
+    const Mat3 P = Mat3::Identity() - n * n.transpose();
+    const Mat3 want = P * Kt * P + p.k_normal * n * n.transpose();
+    CHECK((Kpt - want).norm() < 1e-6 * want.norm());
+    CHECK(std::abs(n.dot(Kpt * n) - p.k_normal) < 1e-6 * p.k_normal);
+    CHECK(std::abs(1.0 / n.dot(Kpt.inverse() * n) - p.k_normal) < 1e-6 * p.k_normal);
+    const double d_want = 2.0 * std::sqrt(p.k_normal * p.mass_normal);
+    CHECK(std::abs(dn - d_want) < 1e-12);
+    const Mat3 Dpt = (J * Dp.inverse() * J.transpose()).inverse();
+    CHECK(std::abs(n.dot(Dpt * n) - d_want) < 1e-6 * d_want);
+    CHECK(((P * Dpt * P) - (P * Dt * P)).norm() < 1e-6 * Dt.norm());
+  }
+  {  // pen up: plain joint impedance
+    Mat7 Kp, Dp;
+    double dn;
+    probe(Mat37::Random(), Vec3::Zero(), Kp, Dp, dn);
+    CHECK((Kp - Mat7(p.k.asDiagonal())).norm() < 1e-12 && (Dp - Mat7(p.d.asDiagonal())).norm() < 1e-12);
+  }
+  {  // with a mass matrix: critically damped for the arm's own mass along the normal
+    const Mat37 J = Mat37::Random();
+    const Vec3 n = Vec3::UnitZ();
+    const Mat7 A = Mat7::Random();
+    const Mat7 M = A * A.transpose() + Mat7::Identity();
+    Mat7 Kp, Dp;
+    double dn;
+    probe(J, n, Kp, Dp, dn, M);
+    const double m = 1.0 / n.dot(J * M.inverse() * J.transpose() * n);
+    CHECK(std::abs(dn - 2.0 * std::sqrt(p.k_normal * m)) < 1e-9 * dn);
+  }
+}
+
+static int probe_lines() {
+  Mat37 J;
+  Vec3 n;
+  while (true) {
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 7; ++c)
+        if (!(std::cin >> J(r, c))) return 0;
+    for (int i = 0; i < 3; ++i) std::cin >> n(i);
+    Mat7 Kp, Dp;
+    double dn;
+    probe(J, n, Kp, Dp, dn);
+    for (int r = 0; r < 7; ++r)
+      for (int c = 0; c < 7; ++c) std::printf("%.17g ", Kp(r, c));
+    for (int r = 0; r < 7; ++r)
+      for (int c = 0; c < 7; ++c) std::printf("%.17g ", Dp(r, c));
+    std::printf("%.17g\n", dn);
+  }
 }
 
 static void scenarios() {
@@ -125,6 +214,7 @@ static void scenarios() {
     CHECK(qu.pop(s) && s.t == 0.0 && qu.pop(s) && s.t == 1.0 && qu.pop(s) && s.t == 2.0);
     CHECK(!qu.pop(s));
   }
+  pen_down_law();
   std::printf("PASS %d\n", checks);
 }
 
@@ -162,6 +252,7 @@ static int follow(double dt) {
 
 int main(int argc, char** argv) {
   if (argc >= 3 && std::string(argv[1]) == "follow") return follow(std::atof(argv[2]));
+  if (argc >= 2 && std::string(argv[1]) == "probe") return probe_lines();
   scenarios();
   return 0;
 }

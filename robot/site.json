@@ -29,8 +29,8 @@
     "contact_n": 0.25,
     "contact_ticks": 3,
     "cap_ticks": 12,
-    "servo_ki": 0.0,
-    "servo_ki_note": "1/s; 0 = the force is fed forward without correction. Turn on only after the air-zero drift has been measured on the new controller.",
+    "servo_ki": 1.0,
+    "servo_ki_note": "1/s: the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant (orchestrator, 2026-09-30). 0 turns it off: the force is then fed forward without correction.",
     "trim_max_n": 1.0,
     "sign": 1.0,
     "sign_note": "+1: the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading."

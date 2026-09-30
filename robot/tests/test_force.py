@@ -111,5 +111,6 @@ def test_servo_trims_toward_the_setpoint_and_is_bounded():
     for _ in range(int(5 * RATE)):
         stuck.update(0.85, 0.0, 1 / RATE, in_contact=True)        # never feels anything
     assert stuck.trim == pytest.approx(1.0)
-    off = Servo(ForceSettings())                                  # ki 0: feed forward only
+    assert ForceSettings().servo_ki == 1.0                        # on by default, 1 s
+    off = Servo(ForceSettings(servo_ki=0.0))                      # ki 0: feed forward only
     assert off.update(0.85, 0.0, 1.0, True) == 0.0

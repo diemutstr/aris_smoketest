@@ -10,6 +10,8 @@ bool starved               # the stream ran dry before its final sample (latches
 bool holding               # a latched hold: stands still, refuses streams until ~/resume
 string reason              # why it holds ("" when not holding)
 int32 error_joint          # 0-based joint that tripped the tracking limit, -1 if none
+bool pen_down              # the soft spring along the paper normal is on
+float64 d_normal           # N s/m, the damping along the normal this tick
 float64[7] q_d
 float64[7] qd_d
 float64[7] tracking_error  # q_d - q, rad

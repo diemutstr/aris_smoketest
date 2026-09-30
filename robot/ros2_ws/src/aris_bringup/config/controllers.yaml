@@ -68,9 +68,9 @@
 /**/aris_joint_impedance_controller:
   ros__parameters:
     arm_id: fr3
-    # Joint stiffness and damping.  About 170 to 200 N/m at the pen tip in its softest
-    # direction at drawing poses; along the paper normal it is 5 to 20 times stiffer (see
-    # docs/modules/robot.md, "How stiff the pen is").  Values must be floats.
+    # Joint stiffness and damping.  In the paper plane about 170 to 300 N/m at the pen tip at
+    # drawing poses; along the paper normal, while the pen is down, they are replaced by
+    # k_normal (docs/modules/robot.md, "How stiff the pen is").  Values must be floats.
     k_gains: [300.0, 300.0, 250.0, 250.0, 40.0, 40.0, 15.0]
     d_gains: [30.0, 30.0, 25.0, 20.0, 4.0, 4.0, 1.5]
     max_torques: [75.0, 75.0, 75.0, 75.0, 11.0, 11.0, 11.0]  # FR3 rated 87 / 12 Nm
@@ -81,6 +81,10 @@
     start_tolerance: 0.01           # rad, a stream must start this close to where it holds
     idle_force_timeout: 2.0         # s without a stream before the pen force is taken away
     idle_force_ramp: 1.0            # s to take it away
+    k_normal: 100.0                 # N/m, the pen's spring along the paper normal (pen down)
+    d_normal: -1.0                  # N s/m along the normal; < 0: critically damped for the
+                                    # arm's own mass along the normal (from the model)
+    mass_normal: 3.0                # kg, used for that without the model (fake hardware)
     tip_offset_flange: [0.0, 0.0, 0.0]   # written per arm from the rig's pen
     use_model: true                 # false only with fake hardware (no model there)
     status_rate: 250.0              # Hz

@@ -50,6 +50,8 @@ def test_samples_carry_the_force_into_the_paper(rig):
     assert np.allclose(s.f, -np.outer(fn(s.t), n))              # along minus the normal
     assert np.all(s.f[:, 2] >= 0.0)                             # base z points down here
     assert np.array_equal(s.q[-1], traj.q[-1])
+    assert np.allclose(s.n, n / np.linalg.norm(n))              # pen down: the normal rides along
+    assert np.all(samples(traj, fn, n, pen_down=False).n == 0.0)
 
 
 def test_pacer_sends_everything_once_in_order_ahead_of_time(rig):

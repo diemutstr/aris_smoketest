@@ -12,3 +12,6 @@ float64[] t          # N, seconds on the stream clock, increasing
 float64[] q          # 7N, rad
 float64[] qd         # 7N, rad/s
 float64[] f          # 3N, N, base frame: the force the arm applies at the pen tip
+float64[] n          # 3N, the paper normal (base frame, unit) while the pen is down, zeros
+                     # while it is up; empty = pen up throughout.  Pen down switches on the
+                     # soft spring k_normal along it in place of the joint springs' stiffness

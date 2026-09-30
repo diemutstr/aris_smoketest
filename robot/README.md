@@ -28,6 +28,9 @@ not check here, it says so.
 - The collision thresholds in force are whatever the arm was last given (the old stack raised
   them from 20 N to 40 N before every pass). Write down which are in force.
 
+`robot/generated/` (from `aris-robot bringup`) and `out/robot_jobs/` (the local copies of
+jobs) are gitignored.
+
 ## 1. Get the code
 
 ```
@@ -160,8 +163,10 @@ move. Never recover an arm in user stop (mode "user stopped") or guiding.
 
 ## Defaults worth knowing
 
-- Joint stiffness `[300 300 250 250 40 40 15]` Nm/rad: about 200 N/m at the pen tip in its
-  softest direction, but 360 to 1970 N/m along the paper normal (see the module page).
-- Pen force 0.7 to 1.0 N (graphite), cap 3.5 N, ramped in over the first 2 mm of a line.
+- Joint stiffness `[300 300 250 250 40 40 15]` Nm/rad: 170 to 300 N/m at the pen tip in the
+  paper plane. While the pen is down, the stiffness along the paper normal is replaced by a
+  soft spring, 100 N/m, critically damped (`k_normal`, `d_normal`).
+- Pen force 0.7 to 1.0 N (graphite), cap 3.5 N, ramped in over the first 2 mm of a line; the
+  force servo trims it from the force estimate with a 1 s time constant (on by default).
 - The controller holds and reports when the stream runs dry for 20 ms, when a joint is 0.05 rad
   off its reference, or on `~/hold`.

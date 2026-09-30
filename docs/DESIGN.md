@@ -258,7 +258,8 @@ the pressure by a factor of two); a paper height error becomes a small force, no
 controller is made soft along the paper normal (plain joint impedance at the gains that give
 200 N/m in the softest direction is 360 to 1 970 N/m along the normal, measured on 672 drawing
 poses: 1 mm would be the whole force band; so the controller replaces the stiffness along the
-normal by a soft spring, and the force servo closes the loop); the landing is the planned "lower" motion with the force ramping from
+normal by a soft spring, 100 N/m, measured exact at all 672 poses with the paper-plane
+stiffness unchanged, so 1 mm is 0.1 N; and the force servo closes the loop, 1 s); the landing is the planned "lower" motion with the force ramping from
 zero as the pen arrives. The force servo, the tare and the touch logic of the current executor
 stay, reduced to a force setpoint. A plane that moved is a re-plan, not a controller problem.
 

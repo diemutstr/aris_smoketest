@@ -41,7 +41,7 @@ Two controllers, one at a time, switched by the driver:
   the same cubic the planner uses. It never re-times.
 - **`aris_joint_impedance_controller`** (new, C++) for lower, draw and lift. At 1 kHz:
 
-  torque = K (q_d − q) + D (qd_d − qd) + Jᵀ f + coriolis
+  torque = K (q_d − q) + D (qd_d − qd) + Jᵀ f + coriolis − (normal spring term, pen down)
 
   The robot adds gravity itself. q_d and qd_d are the planned trajectory, sent by the driver
   as one sample per millisecond, a tenth of a second ahead. Between two samples the controller
@@ -59,6 +59,8 @@ Two controllers, one at a time, switched by the driver:
 | `starve_timeout` | 20 ms | the stream ran dry: hold |
 | `start_tolerance` | 0.01 rad | a new stream must start where the arm holds |
 | `idle_force_timeout` | 2 s | nobody streaming: the pen force is taken away over 1 s |
+| `k_normal` | 100 N/m | the pen's spring along the paper normal, pen down |
+| `d_normal` | critically damped | for the arm's own mass along the normal, from the model each tick |
 
 **Holding** means the controller stands still with zero force. A hold is started by `~/hold`,
 by a stream that ran dry, or by a tracking error. It lasts until `~/resume` or until the
@@ -66,24 +68,37 @@ controller is switched on again, and while it lasts every new stream is refused.
 (250 Hz) gives the reference, the tracking error, the fed force, the robot's own estimate of
 the outside force, and why the arm holds.
 
-**How stiff the pen is.** One stiffness per joint does not make the pen equally stiff in every
-direction. At 672 drawing poses of the six arms (pen upright, all reachable within the
-gates), with the defaults:
+**How stiff the pen is.** One stiffness per joint does not make the pen equally stiff in
+every direction. With the joint springs alone, at 672 drawing poses of the six arms (pen
+upright, inside the gates), the stiffness along the paper normal was 361 / 848 / 1968 N/m
+(min / median / max). A paper 1 mm higher than planned pressed 0.85 N harder, which is the
+whole force band. So while the pen is down (lower, draw, lift: the samples carry the paper
+normal, which may be tilted after calibration) the controller replaces the tip's stiffness
+and damping along the normal by a soft spring:
 
-| direction | stiffness at the pen tip, N/m (min / median / max) |
+  extra torque = − Jᵀ (B_k J e + B_d J ė), with B_k = K_t − P K_t P − k_n n nᵀ
+
+Here K_t = (J K⁻¹ Jᵀ)⁻¹ is the stiffness the joint springs give at the tip, n is the normal,
+P = I − n nᵀ, and B_d is the same with the damping. The stiffness at the tip then becomes
+exactly P K_t P + k_n n nᵀ. That is k_n along the normal, the paper-plane part unchanged, and
+no coupling between the two, so a paper-height error pushes the pen neither harder than
+k_n allows nor sideways. It is symmetric, and the joint stiffness stays positive definite, so
+the arm stays passive. It costs two 3×3 inverses per tick. The damping along the normal is
+critical for the arm's own mass there, from the mass matrix each tick. (This differs from
+the formula first proposed, −Jᵀ n nᵀ F_imp + k_n …, only in also removing the coupling term
+K_t n: without it the law is not symmetric, and passivity is not guaranteed.)
+
+Measured through the compiled law at the same 672 poses, k_n = 100 N/m:
+
+| | min / median / max, N/m |
 |---|---|
-| softest direction | 139 / 200 / 229 |
-| along the paper normal, pen free to slide | 361 / 848 / 1968 |
-| along the paper normal, pen held sideways | 861 / 2044 / 5154 |
+| along the normal, pen free to slide | 100.0000 / 100.0000 / 100.0000 |
+| along the normal, pen held sideways | 100.0000 / 100.0000 / 100.0000 |
+| softest direction in the paper plane, before | 169 / 218 / 306 |
+| the same, with the normal spring | 169 / 218 / 306 (in-plane block changed by at most 3e-15, relative) |
 
-So if the paper is 1 mm higher than planned, the pen presses about 0.85 N harder, between
-0.36 and 2 N depending on the pose. That is as much as the whole force band. The idea that a
-few millimetres of paper error becomes "a fraction of a newton" (DESIGN 4b) does not hold with
-these gains. Softening the joints makes the sideways direction too soft for tracking. Ways
-out, for Pete to decide: calibrate the paper plane to well under a millimetre; turn on the
-force servo (below); or subtract a spring along the normal inside the controller. The last
-changes the tip stiffness along the normal by exactly the amount subtracted and leaves the
-rest alone. It is not built.
+A paper 3 mm off now changes the press by 0.3 N, and the force servo trims that away within
+a few seconds.
 
 ## The driver verbs (`aris_robot/driver.py`)
 
@@ -117,17 +132,17 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
   (Diemut's slide-in). Back to zero over the first 0.2 s of the lift.
 - **Guard.** More than 3.5 N above the zero for 12 readings in a row: the arm holds and the
   motion fails. This is a check that the numbers make sense. It does not protect the paper.
-- **Servo.** An optional slow correction of the fed force toward the setpoint, from the
-  reading, bounded to ±1 N. It is off (`servo_ki` 0) until the drift of the reading has been
-  measured with this controller.
+- **Servo.** A slow correction of the fed force toward the setpoint, from the force
+  estimate: a 1 s time constant (`servo_ki` 1/s), bounded to ±1 N, only in contact. On by
+  default.
 - **Touch** (`aris-robot touch`). A straight descent at 5 mm/s, at most 60 mm, with zero force.
   It stops at the first contact and reports the joints, the pen tip and the air zero. This is
   the step the calibration job will use.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 41 tests, 38 in the quick set (11 s); the 3 slow ones compile the controller
-core (6 to 15 s).
+`robot/tests`: 42 tests, 38 in the quick set (11 s); the 4 slow ones compile the controller
+core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
   8.9e-16 rad and 1.1e-13 rad/s, between the samples too. Four arms, random timed trajectories.
@@ -157,6 +172,11 @@ core (6 to 15 s).
   needing an unmounted arm fails the job, with the reason posted; a stop on the server stops
   the arms, also while the runner is still waiting for the plan; a wrong rig, an unknown job
   and an unreachable server are refused.
+- **Normal spring.** For 50 random Jacobians and normals, the joint stiffness the law
+  applies is symmetric and positive definite. It gives exactly P K_t P + k_n n nᵀ at the tip,
+  and damping 2√(k_n m) along the normal, with m from a mass matrix when one is given.
+  Pen up, it is the plain joint impedance. Measured at the 672 drawing poses: see the table
+  above.
 - **C++ syntax.** The ROS controller compiles only against stub headers written here, which
   catches mistakes in its own code, not in the Jazzy API.
 
@@ -164,7 +184,8 @@ core (6 to 15 s).
 
 - Building against Jazzy's real headers: `get_optional()`, `RealtimePublisher`,
   `FrankaRobotModel`, and the `/**/node` wildcards in the controllers file.
-- Anything with an arm: gains and damping, the sign and drift of the force estimate, whether
+- Anything with an arm: gains and damping (the normal spring's damping uses the model's mass
+  matrix), the sign and drift of the force estimate, whether
   1 kHz samples reach the controller without starving it (a tenth of a second of lead), the
   switch between controllers while standing, error recovery.
 - Whether fake hardware offers a position command interface (the fake setup assumes it).
@@ -181,4 +202,4 @@ core (6 to 15 s).
 - No depth limit along the pen inside the controller (the old stack's DMAX). The tracking-error
   hold (0.05 rad) and the force guard are the only limits.
 - The force estimate is the robot's model estimate at its end effector. Its drift against the
-  0.3 N band is not known for this controller.
+  0.3 N band is not known for this controller, and the servo, on by default, follows it.

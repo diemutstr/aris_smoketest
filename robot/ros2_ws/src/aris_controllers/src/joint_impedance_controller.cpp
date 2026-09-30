@@ -71,6 +71,9 @@ CallbackReturn JointImpedanceController::on_init() {
     auto_declare<double>("start_tolerance", d.start_tolerance);
     auto_declare<double>("idle_force_timeout", d.idle_force_timeout);
     auto_declare<double>("idle_force_ramp", d.idle_force_ramp);
+    auto_declare<double>("k_normal", d.k_normal);
+    auto_declare<double>("d_normal", d.d_normal);
+    auto_declare<double>("mass_normal", d.mass_normal);
     auto_declare<std::vector<double>>("tip_offset_flange", {0.0, 0.0, 0.0});
     auto_declare<bool>("use_model", true);
     auto_declare<double>("status_rate", 250.0);
@@ -104,12 +107,17 @@ CallbackReturn JointImpedanceController::on_configure(const rclcpp_lifecycle::St
   p.start_tolerance = node->get_parameter("start_tolerance").as_double();
   p.idle_force_timeout = node->get_parameter("idle_force_timeout").as_double();
   p.idle_force_ramp = node->get_parameter("idle_force_ramp").as_double();
+  p.k_normal = node->get_parameter("k_normal").as_double();
+  p.d_normal = node->get_parameter("d_normal").as_double();
+  p.mass_normal = node->get_parameter("mass_normal").as_double();
   use_model_ = node->get_parameter("use_model").as_bool();
   status_period_ = 1.0 / std::max(1.0, node->get_parameter("status_rate").as_double());
   const int capacity = std::max(1024, static_cast<int>(node->get_parameter("queue_capacity").as_int()));
-  if ((p.k.array() < 0).any() || (p.d.array() < 0).any() || p.tau_rate <= 0 ||
-      p.tau_rate >= 1000.0 || p.f_max < 0 || p.max_error <= 0) {
-    RCLCPP_FATAL(logger, "gains must be >= 0, 0 < max_torque_rate < 1000, max_tracking_error > 0");
+  if ((p.k.array() <= 0).any() || (p.d.array() <= 0).any() || p.tau_rate <= 0 ||
+      p.tau_rate >= 1000.0 || p.f_max < 0 || p.max_error <= 0 || p.k_normal < 0 ||
+      p.mass_normal <= 0) {
+    RCLCPP_FATAL(logger, "gains must be > 0, 0 < max_torque_rate < 1000, max_tracking_error > 0, "
+                         "k_normal >= 0, mass_normal > 0");
     return CallbackReturn::FAILURE;
   }
 
@@ -190,11 +198,14 @@ void JointImpedanceController::read_joints(Vec7& q, Vec7& qd) const {
   }
 }
 
-void JointImpedanceController::read_model(Mat37& J, Vec7& coriolis, Vec3& force) const {
+void JointImpedanceController::read_model(Mat37& J, Vec7& coriolis, Vec3& force, Mat7& M) const {
   J.setZero();
   coriolis.setZero();
   force.setZero();
+  M.setZero();
   if (!use_model_ || robot_state_ == nullptr) return;
+  const std::array<double, 49> m = model_->getMassMatrix();   // column-major
+  M = Eigen::Map<const Mat7>(m.data());
   const std::array<double, 7> c = model_->getCoriolisForceVector();
   const std::array<double, 42> j = model_->getZeroJacobian(franka::Frame::kFlange);
   const std::array<double, 16> t = model_->getPoseMatrix(franka::Frame::kFlange);
@@ -209,7 +220,9 @@ void JointImpedanceController::read_model(Mat37& J, Vec7& coriolis, Vec3& force)
 
 void JointImpedanceController::on_reference(const aris_msgs::msg::Reference& msg) {
   const std::size_t n = msg.t.size();
-  if (n == 0 || msg.q.size() != 7 * n || msg.qd.size() != 7 * n || msg.f.size() != 3 * n) {
+  const bool normals = msg.n.size() == 3 * n;
+  if (n == 0 || msg.q.size() != 7 * n || msg.qd.size() != 7 * n || msg.f.size() != 3 * n ||
+      (!msg.n.empty() && !normals)) {
     RCLCPP_WARN(get_node()->get_logger(), "reference chunk with inconsistent sizes ignored");
     return;
   }
@@ -220,6 +233,7 @@ void JointImpedanceController::on_reference(const aris_msgs::msg::Reference& msg
     s.q = Eigen::Map<const Vec7>(&msg.q[7 * k]);
     s.qd = Eigen::Map<const Vec7>(&msg.qd[7 * k]);
     s.f = Eigen::Map<const Vec3>(&msg.f[3 * k]);
+    s.n = normals ? Vec3(Eigen::Map<const Vec3>(&msg.n[3 * k])) : Vec3::Zero();
     s.last = msg.last && k + 1 == n;
     if (!queue_->push(s)) {
       ++dropped_;  // the controller will starve and hold; the driver sees it in the status
@@ -243,8 +257,9 @@ controller_interface::return_type JointImpedanceController::update(
   Mat37 J;
   Vec7 coriolis;
   Vec3 force;
-  read_model(J, coriolis, force);
-  const Vec7 tau = core_->update(q, qd, J, coriolis, dt);
+  Mat7 M;
+  read_model(J, coriolis, force, M);
+  const Vec7 tau = core_->update(q, qd, J, coriolis, dt, M);
   for (int i = 0; i < kJoints; ++i) {
     (void)command_interfaces_[i].set_value(tau(i));
   }
@@ -271,6 +286,8 @@ void JointImpedanceController::publish_status(const rclcpp::Time& now, const Vec
   m.holding = s.hold != Hold::kNone;
   m.reason = hold_text(s.hold);  // short literals; the string keeps its capacity
   m.error_joint = s.error_joint;
+  m.pen_down = s.normal_spring;
+  m.d_normal = s.d_normal;
   for (int i = 0; i < kJoints; ++i) {
     m.q_d[i] = s.q_d(i);
     m.qd_d[i] = s.qd_d(i);

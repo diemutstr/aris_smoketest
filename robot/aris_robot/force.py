@@ -12,8 +12,8 @@ paper normal at every moment of a motion, and reads the arm's own force estimate
             drawing motion; back to zero over the first `lift_ramp_s` of the lift
   guard     the force above the air zero over `cap_n` for `cap_ticks` readings in a row:
             the arm holds (a plausibility check, not the paper's protection)
-  servo     optional slow correction of the fed-forward force toward the setpoint, from the
-            reading; off by default (`servo_ki` 0) until the drift is measured
+  servo     a slow correction of the fed-forward force toward the setpoint, from the reading
+            (on by default: `servo_ki` 1/s, a 1 s time constant; bounded to +-`trim_max_n`)
 
 Sign: `normal_force` is positive when the paper pushes the pen up (along the paper normal,
 which points into free space).  The force the arm applies is along minus the normal.
@@ -40,7 +40,7 @@ class ForceSettings:
     contact_n: float = 0.25
     contact_ticks: int = 3
     cap_ticks: int = 12
-    servo_ki: float = 0.0            # 1/s
+    servo_ki: float = 1.0            # 1/s: the trim closes the force error with a 1 s time constant
     trim_max_n: float = 1.0
     sign: float = 1.0
 

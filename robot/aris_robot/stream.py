@@ -6,7 +6,9 @@ ahead of time, in chunks.  The controller joins neighbouring samples with the sa
 cubic, so what it tracks is the trajectory that was checked, to rounding.
 
 Each sample also carries the pen force as a 3-vector in the base frame: the setpoint from
-`force.profile` along minus the paper normal (the arm pushes the pen into the paper).
+`force.profile` along minus the paper normal (the arm pushes the pen into the paper); and,
+while the pen is down (lower, draw, lift), the paper normal itself, which switches on the
+controller's soft spring along it.
 """
 from __future__ import annotations
 
@@ -58,20 +60,24 @@ class Samples:
     q: np.ndarray        # (n, 7)
     qd: np.ndarray       # (n, 7)
     f: np.ndarray        # (n, 3) N, base frame, the force the arm applies at the pen tip
+    n: np.ndarray        # (n, 3) the paper normal while the pen is down, zeros otherwise
 
     def __len__(self) -> int:
         return len(self.t)
 
 
-def samples(traj, force_fn, normal_base, rate: float = RATE_HZ) -> Samples:
-    """The trajectory sampled at `rate`; `force_fn(t)` (motion time) the pressing force in N."""
+def samples(traj, force_fn, normal_base, rate: float = RATE_HZ, pen_down: bool = True) -> Samples:
+    """The trajectory sampled at `rate`; `force_fn(t)` (motion time) the pressing force in N.
+    `pen_down`: the samples carry the paper normal (the controller's soft spring along it)."""
     t = grid(traj.t, rate)
     q, qd = cubic(traj.t, traj.q, traj.qd, t)
     rel = t - float(traj.t[0])
     press = np.asarray(force_fn(rel), float).reshape(-1)
     n = np.asarray(normal_base, float)
-    f = -press[:, None] * (n / np.linalg.norm(n))[None, :]
-    return Samples(rel, q, qd, f)
+    unit = n / np.linalg.norm(n)
+    f = -press[:, None] * unit[None, :]
+    normals = np.tile(unit if pen_down else np.zeros(3), (len(t), 1))
+    return Samples(rel, q, qd, f, normals)
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,7 @@ class Chunk:
     q: np.ndarray
     qd: np.ndarray
     f: np.ndarray
+    n: np.ndarray
     last: bool           # the stream ends with this chunk: hold at its final sample
 
 
@@ -108,6 +115,6 @@ class Pacer:
             k = min(end, self.sent + self.max_chunk)
             sl = slice(self.sent, k)
             out.append(Chunk(self.stream, self.s.t[sl], self.s.q[sl], self.s.qd[sl],
-                             self.s.f[sl], k >= len(self.s)))
+                             self.s.f[sl], self.s.n[sl], k >= len(self.s)))
             self.sent = k
         return out

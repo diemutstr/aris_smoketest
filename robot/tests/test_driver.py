@@ -80,11 +80,14 @@ def test_lower_draw_lift_press_only_while_drawing(monkeypatch, rig, site):
     assert r.done, r.why
     f = _forces(node, arm.last_report["stream"]) @ -rig.paper(31).normal
     assert f[0] == 0.0 and f.max() == pytest.approx(1.0)          # ramped in, to intensity 1
-    assert arm._press == pytest.approx(1.0)
+    # the fake paper reads 0.8 N + 0.8 x the fed force, 1.6 N at 1 N fed: the servo (on by
+    # default, 1 s) trims the feed down toward the 1.0 N setpoint
+    press = arm._press
+    assert 0.5 < press < 1.0
     r = arm.draw(lift)
     assert r.done, r.why
     f = _forces(node, arm.last_report["stream"]) @ -rig.paper(31).normal
-    assert f[0] == pytest.approx(1.0) and f[-1] == 0.0           # ramped out
+    assert f[0] == pytest.approx(press) and f[-1] == 0.0         # ramped out
     assert np.all(np.diff(f) <= 1e-12)
 
 

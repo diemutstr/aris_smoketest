@@ -130,7 +130,8 @@ class ArmNode:
         f = chunk.f if extra_f is None else chunk.f + extra_f[None, :]
         self.reference.publish(Reference(
             stream=int(chunk.stream), last=bool(chunk.last), t=[float(x) for x in chunk.t],
-            q=chunk.q.ravel().tolist(), qd=chunk.qd.ravel().tolist(), f=f.ravel().tolist()))
+            q=chunk.q.ravel().tolist(), qd=chunk.qd.ravel().tolist(), f=f.ravel().tolist(),
+            n=chunk.n.ravel().tolist()))
 
     def trigger(self, client, timeout: float = 2.0) -> str:
         """Calls a Trigger service; "" when done, else why not."""
