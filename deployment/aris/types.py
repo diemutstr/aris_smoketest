@@ -43,6 +43,10 @@ class Box:
     T_base_box: np.ndarray             # (4, 4) pose of the box centre
     half: np.ndarray                   # (3,) half extents
     margin: float
+    # Body groups (the part of a capsule's name before the first ".", e.g. "link1") that are
+    # not checked against this box per pose, because their clearance to it is a fact about
+    # the rig settled once: an arm's own link 1 against the steel it hangs from.
+    exempt: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,11 +94,12 @@ class Body:
     radius: np.ndarray                 # (K,)
     names: tuple[str, ...]             # K names, e.g. "forearm", "hand", "pen"
     is_pen: np.ndarray                 # (K,) bool
-    # Capsules that at most turn about the base axis: the base and link 1.  They hang inside
-    # the arm's own mount, so they are never checked against obstacles per pose; whether they
-    # clear the rig over the whole turn of joint 1 is a fact about the rig, settled once by a
-    # rig test.  They still count for the arm against itself, and they are part of what a
-    # neighbour sees of this arm.
+    # Capsules that do not move with the joints: the base and what is bolted to it.  They
+    # hang inside the arm's own mount, so they are never checked against obstacles; whether
+    # the mount fits is a fact about the rig, settled once.  They still count for the arm
+    # against itself, and they are part of what a neighbour sees of this arm.  (Link 1, which
+    # turns about the base axis, is NOT fixed: it is checked per pose like every other link,
+    # except against the arm's own mount steel, see `Box.exempt`.)
     is_fixed: np.ndarray | None = None # (K,) bool; None means no capsule is fixed
     # The tool: what is bolted to the flange (gripper, blades, pen holder), the pen excluded.
     is_tool: np.ndarray | None = None  # (K,) bool; None means no capsule is a tool capsule
