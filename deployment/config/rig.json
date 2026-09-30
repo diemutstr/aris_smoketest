@@ -66,9 +66,9 @@
     "strut_size_y_m": 0.1524,
     "wide_side_outer_face_to_axis_m": 0.240,
     "narrow_side_outer_face_to_axis_m": 0.156,
-    "strut_bottom_z_m": 0.93502,
+    "strut_bottom_z_m": 0.90502,
     "strut_top_z_m": 1.62362,
-    "strut_source": "section and x positions: Pete's tape 2026-09-16. Bottom: old system_model POST_OVER, the posts run 34.98 mm below the plate underside (0.970 - 0.03498). Top: old system_model GRID_U, the runway underside 1.62362.",
+    "strut_source": "section and x positions: Pete's tape 2026-09-16. Bottom: the old model (system_model POST_OVER) has the posts end 34.98 mm below the plate underside; nobody will measure it, so on Pete's instruction (2026-09-30) every strut is made 0.030 longer to be conservative: 64.98 mm below the plate underside (0.970 - 0.06498). Top: old system_model GRID_U, the runway underside 1.62362.",
     "plate_size_x_m": 0.22582,
     "plate_size_y_m": 0.190,
     "plate_bottom_z_m": 0.970,
@@ -130,8 +130,10 @@
     "body_to_paper_m": 0.020,
     "pen_lifted_to_paper_m": 0.003,
     "tool_to_paper_m": 0.0,
-    "tool_to_paper_note": "PROVISIONAL, set by the orchestrator 2026-09-29. The tool (gripper, blades, pen holder) must not touch the paper. The final number waits for the measured height of the holder above the paper and for Pete; it is also the limit on how far a pen may wear.",
-    "self_m": 0.020
+    "tool_to_paper_note": "Chosen by Pete, 2026-09-30: the tool (gripper, blades, pen holder) must not touch the paper, and nothing more. There will be no measured holder height; we work with the CAD and pen models as they are. It is also the limit on how far a pen may wear.",
+    "self_m": 0.020,
+    "link1_to_own_mount_m": 0.020,
+    "link1_to_own_mount_note": "link 1 against the arm's OWN hanger steel (struts, plate, clamp). Link 1 and that steel are bolted to the same plate, so the 0.050 steel gate, which pays for not knowing where separate parts stand relative to each other, does not apply between them; the self clearance does. Link 1 turns about the base axis only, so this is checked once by the rig (tests/test_rig.py) and not by the collision check. Orchestrator, 2026-09-30."
   },
 
   "planning_allowance": {

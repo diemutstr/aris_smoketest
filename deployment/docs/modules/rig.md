@@ -69,7 +69,7 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 
 | part | boxes | numbers from |
 |---|---|---|
-| hanging struts | 2 per arm, 0.0762 x 0.1524 section (long side along y) | Pete's tape, 2026-09-16: outside face to axis 0.240 on one side and 0.156 on the other. Height from the old model: 35 mm below the plate underside up to the runway underside (0.935 to 1.624). |
+| hanging struts | 2 per arm, 0.0762 x 0.1524 section (long side along y) | Pete's tape, 2026-09-16: outside face to axis 0.240 on one side and 0.156 on the other. Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
 | mounting plate | 1 per arm, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centred between Pete's struts, so 0.042 toward the wide side. |
 | clamp stack | 1 per arm, on the plate | old model (drawing) |
 | runways | 3, one double beam per row at 1.624 to 1.700 | old model (drawing) |
@@ -77,8 +77,9 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 | perimeter rails and corner legs | 4 + 4 | old model (rails from the drawing, legs assumed) |
 
 An arm's own struts, plate and clamp are obstacles for it like any other steel. Its base (the
-arm model's link0 capsules) sits among them, but those capsules are marked fixed and the
-collision check leaves them out, because they cannot move. An arm skips any box further from its shoulder than
+arm model's link0 capsules) sits among them. Link 1, which only turns about the base axis, passes
+just under the strut ends. Both are marked fixed, and the collision check leaves them out: their
+clearance to the rig does not depend on the pose, so the rig checks it once (see "Link 1"). An arm skips any box further from its shoulder than
 **1.20 m + the steel clearance**: 1.20 m is how far any part of the arm, hand, holder and pen can
 get from the shoulder. That is a bound from the link lengths, checked by sampling: 1.079 m with
 the old body model and 1.028 m with the new one. Each arm keeps 16 to 23 boxes.
@@ -102,26 +103,36 @@ Each park against its steel, the paper and itself. The first four columns come f
 body model and are plain distances (demanded: paper 0.020, pen 0.003, self 0.020, steel 0.050). The
 last column comes from the new kernel and is measured beyond each obstacle's demanded margin:
 
-| arm | paper (body) | pen tip height | self | new steel, old body model | everything, new kernel, beyond the margin |
+| arm | paper (body) | pen tip height | self | new steel, old body model (35 mm struts) | everything, new kernel, beyond the margin |
 |---|---|---|---|---|---|
-| 13 | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.018 (link 1, own narrow strut) |
-| 17 | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.018 (same) |
-| 31 | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.014 (same) |
-| 71 | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.012 (same) |
-| 2 | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.015 (same) |
-| 97 | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.015 (same) |
+| 13 | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.130 (link 2, own strut) |
+| 17 | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.131 (link 2, own strut) |
+| 31 | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.079 (link 6, seam bar W) |
+| 71 | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.135 (link 2, own strut) |
+| 2 | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.112 (link 2, own strut) |
+| 97 | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.150 (link 2, own strut) |
 
-Every park keeps the demanded clearances. What binds is link 1, the first moving link. It turns
-with joint 1 alone and passes under the bottom ends of the arm's own struts. At every angle of
-joint 1 it has 62 to 71 mm of room there, which is 12 to 21 mm beyond the 0.050 demanded. That is
-also more than the 0.003 planning allowance.
+Every park keeps the demanded clearances, links 0 and 1 not counted (see "Link 1").
 
-In `obstacles_for`, an arm sees these parked arms and walls:
+## Link 1
 
-| phase | arm: parked arms it sees; walls |
-|---|---|
-| 1 | 13: 17, 31; 13-71 · 71: 17, 31, 97; 13-71, 71-2 · 2: 31, 97; 71-2 |
-| 2 | 17: 13, 71; 17-31 · 31: 2, 13, 71; 17-31, 31-97 · 97: 2, 71; 31-97 |
+Link 1 turns about the base axis only, so a sweep over all of joint 1 is everything it can ever
+do. The collision check leaves it out, and `tests/test_rig.py` checks it once here.
+
+Against the arm's own hanger steel (struts, plate, clamp), link 1 must keep 0.020, not 0.050
+(`link1_to_own_mount_m`, orchestrator, 2026-09-30). Link 1 and that steel are bolted to the same
+plate. The 0.050 steel gate pays for not knowing where separate parts stand relative to each
+other, so it does not apply between them; the self clearance does. Against everything else,
+link 1 must keep the usual clearances.
+
+The worst clearance beyond the required margin, for every arm:
+
+| own hanger (0.020) | other steel | walls, both phases | other arms parked | paper |
+|---|---|---|---|---|
+| +0.019 | +0.257 or more | +0.204 | +0.216 or more | +0.488 |
+
+With the struts 30 mm longer, link 1 passes under their ends with 39 to 50 mm of room, so
+19 to 30 mm beyond the 0.020.
 
 ## Clearances
 
@@ -138,8 +149,9 @@ samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
 | a wall | 0.025 | 0.0015 (half, because both arms pay it) |
 | paper, arm body | 0.020 | 0 |
 | paper, lifted pen | 0.003 | 0 |
-| paper, rest of the tool (gripper, blades, holder) | 0.0, provisional | 0 |
+| paper, rest of the tool (gripper, blades, holder) | 0.0: must not touch (Pete, 2026-09-30) | 0 |
 | itself | 0.020 | 0.003 (`rig.self_margin()`, `rig.gates()`) |
+| link 1 to its own hanger steel | 0.020 (same plate; see "Link 1") | checked once, not planned |
 
 ## Calibration file
 
@@ -160,19 +172,17 @@ changes arm 31's pose and its paper plane, and nothing else (walls, steel, other
 
 ## Assumed, not measured
 
-- **The tool's clearance to the paper is 0 for now** (the orchestrator, 2026-09-29). The old
-  0.020 was measured at the joint centres. Measured at the surfaces, the holder cannot keep 0.020
-  while the pen is on the paper. The final number waits for the measured height of the holder
-  above the paper, and for Pete. It is also the limit on how far a pen may wear.
-
+- The tool's clearance to the paper is 0, which means it must not touch. Pete chose this on
+  2026-09-30. There will be no measured holder height, so the CAD and pen models are used as they
+  are. It is also the limit on how far a pen may wear.
 - **The 0.240 side of every arm's struts is toward −x.** This is not confirmed; it is one setting
   per arm, `strut_wide_side`. The old model inferred the opposite, with its wider side toward +x.
 - The strut heights, the plate, the clamp, the runways, rails and legs are the old drawing-based
   model. The seam bars are "representative", and the corner legs were assumed in the old model.
 - The plate sits centred between the struts. That is inferred from its size, not seen.
-- **How far the hanging struts reach below the mounting plate is not measured.** The old model
-  says 35 mm. With that, link 1 passes under the strut ends with 62 to 71 mm of room at every
-  angle of joint 1, against the 50 mm demanded. Pete will measure it. If the struts reach 12 mm
-  or more further down, link 1 no longer keeps the demanded clearance at some angles of joint 1.
+- **How far the hanging struts reach below the mounting plate is not measured, and will not be.**
+  The old model says 35 mm. On Pete's instruction the struts are 30 mm longer, 65 mm below the
+  plate, to be conservative. Link 1 then passes under them with 39 to 50 mm of room, against the
+  0.020 it must keep to its own mount (see "Link 1").
 - The park configurations are the old home parks. They were not searched for the new phase
   scheme.

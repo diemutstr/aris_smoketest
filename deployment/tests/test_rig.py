@@ -289,24 +289,46 @@ def test_own_hardware(rig):
         assert park >= 0.0
 
 
-def test_link1_against_own_struts_over_q1(rig):
-    """Link 1 turns with q1 alone, 35 mm under the struts' bottom ends.  It keeps the demanded
-    clearance at every q1, but not the planning allowance on part of the q1 range."""
+def _link1_sweep(rig, aid, n=721):
+    """Worst clearance of link 1 (all its capsules) over the whole q1 range, per obstacle class,
+    beyond the demanded margin: link1_to_own_mount against the arm's own hanger steel, the usual
+    margins against everything else.  Link 1 turns about the base axis only, so this is all of it."""
+    from dataclasses import replace
     from aris.kernel.collide import capsule_clearance
-    arm = rig.arm(31)
-    own, _ = _split_own(rig.obstacles(31, for_planning=False), 31)
-    q = np.zeros((721, 7))
-    q[:, 0] = np.linspace(arm.limits.q_min[0], arm.limits.q_max[0], 721)
-    body = arm.body(q)
-    k = [i for i, n in enumerate(body.names) if n.startswith("link1")]
-    v = capsule_clearance(body, own, prune=False)[:, k].min(axis=1)
-    short = float((v < rig.allowance["steel_m"]).mean())
-    print(f"\nlink1 vs own struts over q1, beyond 0.050: {v.min():+.4f} .. {v.max():+.4f}; "
-          f"short of the {rig.allowance['steel_m']} planning allowance on {100 * short:.0f} % "
-          "of the q1 range")
-    assert v.min() >= 0.0
-    # room under the strut ends, surface to steel, at every q1
-    print(f"link1 room under its own struts: {0.050 + v.min():.4f} .. {0.050 + v.max():.4f} m")
+    from aris.types import Obstacles
+    arm = rig.arm(aid)
+    q = np.zeros((n, 7))
+    q[:, 0] = np.linspace(arm.limits.q_min[0], arm.limits.q_max[0], n)
+    body = replace(arm.body(q), is_fixed=None)          # the kernel skips link 1: measure it
+    k = [i for i, name in enumerate(body.names) if name.startswith("link1")]
+    others = tuple(a for a in rig.arm_ids if a != aid)
+    walls = tuple({w.name: w for ph in (rig.phase(1), rig.phase(2)) for w in ph.walls}.values())
+    obs = rig.obstacles(aid, parked=others, walls=walls, for_planning=False)
+    own, _ = _split_own(obs, aid)
+    m_own = rig.clearance["link1_to_own_mount_m"]
+    own = Obstacles(tuple(replace(b, margin=m_own) for b in own.boxes))
+    own_names = {b.name for b in own.boxes}
+    classes = {
+        "own hanger": own,
+        "other steel": Obstacles(tuple(b for b in obs.boxes if b.name not in own_names)),
+        "walls": Obstacles(planes=tuple(p for p in obs.planes if p.kind == "wall")),
+        "parked arms": Obstacles(capsules=obs.capsules),
+        "paper": Obstacles(planes=tuple(p for p in obs.planes if p.kind == "paper")),
+    }
+    return {c: float(capsule_clearance(body, o, prune=False)[:, k].min())
+            for c, o in classes.items()}
+
+
+def test_link1_against_everything(rig):
+    """Link 1 is not checked by the collision check (it only turns about the base axis), so the
+    rig checks it once here against all it can ever meet: 0.020 to the arm's own hanger steel
+    (same plate), the demanded clearances to everything else."""
+    print("\nlink 1 over all of q1, worst clearance beyond the demanded margin")
+    print("arm   own hanger  other steel   walls   parked arms   paper")
+    for aid in rig.arm_ids:
+        w = _link1_sweep(rig, aid)
+        print(f"{aid:3d}  " + "  ".join(f"{w[c]:+.4f}" for c in w))
+        assert all(v >= 0.0 for v in w.values())
 
 
 def test_gates(rig):
