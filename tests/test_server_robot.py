@@ -38,7 +38,7 @@ SMALL = ROOT / "tests" / "data" / "server_small.json"
 @pytest.fixture(scope="module")
 def station(tmp_path_factory):
     st = open_station(CONFIG, driver="robot", uncalibrated=True, cache_dir=None,
-                      jobs_dir=tmp_path_factory.mktemp("jobs"), workers=4, check_workers=4,
+                      jobs_dir=tmp_path_factory.mktemp("jobs"), workers=4,
                       settings=Settings(grid_step=0.05))
     assert not isinstance(st, Refusal), st
     return st
@@ -118,6 +118,7 @@ def test_events_are_taken_once_in_order(station, tmp_path):
     assert c.post("/jobs/nothing/events", json=dict(rows=[])).status_code == 404
 
 
+@pytest.mark.slow
 def test_a_stop_on_the_server_reaches_the_operator_pc(station, tmp_path):
     rig = station.rig
     st = replace(station, jobs_dir=tmp_path / "jobs")
@@ -197,3 +198,53 @@ def test_a_growing_queue_is_streamed_reading_each_byte_about_once(station, tmp_p
         assert c.get(f"/jobs/{rec.id}/queues/phase%201/13?offset=1000").content == \
             q.path.read_bytes()[1000:]
         assert c.get(f"/jobs/{rec.id}/queues/phase%201/13?offset={size}").content == b""
+
+
+@pytest.mark.slow
+def test_stop_then_park_from_the_reported_positions_then_draw_again(station, tmp_path):
+    rig = station.rig
+    st = replace(station, jobs_dir=tmp_path / "jobs")
+    from aris.server.station import Positions
+    st.positions = Positions()                     # this test's own operator PC
+    arms = {a: SimArm(a, rig.park_q(a), speed=1.0) for a in rig.arm_ids}
+    work = tmp_path / "robot"
+    with Served(create_app(st)) as srv:
+        with pytest.raises(urllib.error.HTTPError) as e:        # nothing reported yet
+            _post(f"{srv.url}/park")
+        assert e.value.code == 409 and "no position reported for arm" in e.value.read().decode()
+        jid = _post(f"{srv.url}/jobs", SMALL.read_bytes())["id"]
+        out = []
+        t = threading.Thread(target=lambda: out.append(run_job(
+            Remote(srv.url), jid, rig, CONFIG, work, arms)), daemon=True)
+        t.start()
+        t0 = time.time()
+        while not any(r["current"] and r["current"]["kind"] == "draw"
+                      for r in _get_json(f"{srv.url}/jobs/{jid}")["arms"]):
+            assert time.time() - t0 < 120, "no drawing motion started"
+            time.sleep(0.05)
+        _post(f"{srv.url}/jobs/{jid}/stop")
+        t.join(timeout=60)
+        assert _wait(srv.url, jid)["state"] == "stopped"
+        seen = _get_json(f"{srv.url}/arms")
+        assert set(seen) == {str(a) for a in rig.arm_ids}
+        away = [a for a, v in seen.items() if not v["at_park"]]
+        assert away and all(v["source"] == "operator PC" for v in seen.values())
+        for a, arm in arms.items():
+            assert np.allclose(seen[str(a)]["q"], arm.state().q)
+            arm.recover()                          # the operator has looked
+        # a drawing while arms stand away from their parks outside phase 1 would be refused;
+        # park them from where the operator PC said they are
+        pid = _post(f"{srv.url}/park")["id"]
+        res = run_job(Remote(srv.url), pid, rig, CONFIG, work, arms)
+        assert res.status == "done", res.why
+        v = _wait(srv.url, pid)
+        assert v["state"] == "done", v["why"]
+        assert sorted(k for k, r in v["report"]["arms"].items() if r["result"] == "parked") == \
+            sorted(away)
+        for a, arm in arms.items():
+            assert np.max(np.abs(arm.state().q - rig.park_q(a))) <= 1e-9
+        assert all(x["at_park"] for x in _get_json(f"{srv.url}/arms").values())
+        jid2 = _post(f"{srv.url}/jobs", SMALL.read_bytes())["id"]   # accepted again
+        assert _get_json(f"{srv.url}/jobs/{jid2}")["state"] in ("fitted", "planning", "drawing")
+        _post(f"{srv.url}/jobs/{jid2}/stop")
+        assert _wait(srv.url, jid2)["state"] == "stopped"

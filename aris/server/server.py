@@ -55,6 +55,10 @@ def rig_view(st) -> dict:
 
 
 def arms_view(st) -> dict:
+    if st.remote:                      # what the operator PC last said
+        return plain({str(a): dict(p, at_park=bool(np.max(np.abs(p["q"] - st.rig.park_q(a)))
+                                                     <= st.rig.execution().start_tolerance))
+                      for a, p in sorted(st.positions.all().items())})
     out = {}
     for a, d in st.drivers.items():
         s = d.state()
@@ -126,7 +130,7 @@ def create_app(st) -> FastAPI:
     def arms():
         return arms_view(st)
 
-    remote.add_routes(app, store)
+    remote.add_routes(app, st, store)
     return app
 
 

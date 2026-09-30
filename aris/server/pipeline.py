@@ -1,23 +1,18 @@
-"""From the system planner's stream, through the independent checker, into the job's queues.
+"""From the system planner's stream into the job's queues.
 
-The planner runs in its own thread and hands over (phase, arm, Motion) as they come.  Each
-motion is sent to the checker at once, in a pool of processes (one check takes 0.1 to 0.6 s),
-from where that arm's previous motion ends.  The verdicts come back in any order; the motions
-are queued strictly in the order the planner produced them.  A phase is written to the job's
-phase list when its first motion arrives, and its queues are closed when the next phase
-begins or the planner is done, so the arms can start while the planner still works.
+The system planner checks every motion itself, inside each arm planner's loop, with the
+`verify` the server hands it (verify.py): a piece is drawn only if every motion of its group
+passes, else it is left over as "failed_check" and the arm plans on.  So every motion that
+arrives here carries the checker's word (`Motion.checked`) and is queued at once, in the order
+it came (the queue refuses anything unchecked; that would be a bug, and ends the job).
 
-A motion the checker refuses is not queued; the rest of that arm's motions in the phase are
-dropped and its queue is closed as cut short (the coordinator then ends the job after the
-phase).  What they would have drawn is left over as "failed_check".
-
-The phase the arms run in (the one written to the job) lists every arm that may move in it:
-in a leader phase, the leaders and their row partners (the followers, which draw against
-their leader's footprint).  A follower with nothing to do gets an empty queue and holds.  Each
-motion is checked in the phase its planner planned it in: a leader's or a fill arm's own
-phase; a follower's view of the leader phase with its leader's footprint.  That context is
-saved next to the queue (`<queue>.check.npz`) whenever it is not simply the named phase, so
-`aris check` can check the queue again.
+The planner runs in its own thread.  A phase is written to the job's phase list when its first
+motion arrives, and its queues are closed when the next phase begins or the planner is done,
+so the arms can start while the planner still works.  The phase the arms run in lists every
+arm that may move in it (`aris.system.execution_phase`: in a leader phase, the followers too;
+a follower with nothing to do gets an empty queue and holds).  A follower is checked in its
+own view of the phase with its leader's footprint (`aris.system.check_view`); that view is
+saved next to its queue (`<queue>.check.npz`) so `aris check` can check the queue again.
 """
 from __future__ import annotations
 
@@ -26,61 +21,30 @@ import json
 import queue as queue_mod
 import threading
 import time
-from collections import deque
-from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass, field
-from multiprocessing import get_context
 from pathlib import Path
 
 import numpy as np
 
-from aris.check import check
+from aris.server.verify import CheckVerify
 from aris.system import Report as SystemReport
-from aris.system import phase_named
+from aris.system import check_view, execution_phase, phase_named
 from aris.system import plan as system_plan
-from aris.system.phases import follower_phase, is_fill
 from aris.types import Field, Phase, Refusal, Wall
 
 
 @dataclass
 class Outcome:
-    """What planning and checking did."""
+    """What planning did."""
     leftovers: list = field(default_factory=list)    # the planner's Leftover list
     refusal: Refusal | None = None                   # the planner refused the drawing
-    error: str = ""                                  # the planner raised (a bug)
-    checked: int = 0
-    passed: int = 0
-    tightest: float = float("inf")                   # m beyond the demanded clearance
-    tightest_at: str = ""
-    cut_pieces: list = field(default_factory=list)   # (Piece, why): refused or dropped draws
+    error: str = ""                                  # the planner raised, or a queue refused
     stopped: bool = False
     planning_s: float = 0.0                          # wall, until the planner was done
     motions: int = 0                                 # handed over by the planner
 
 
 # --------------------------------------------------------------------------- phases
-
-
-def execution_phase(rig, name: str, named: Phase | None = None) -> Phase:
-    """The phase as the arms run it: in a leader phase the followers may move too."""
-    ph = named or phase_named(rig, name)
-    if is_fill(ph):
-        return ph
-    partners = tuple(rig.row_partner(a) for a in ph.active if rig.row_partner(a) in ph.parked)
-    return Phase(ph.name, ph.active + partners,
-                 tuple(a for a in ph.parked if a not in partners), ph.walls)
-
-
-def check_context(rig, name: str, arm: int, system_report,
-                  named: Phase | None = None) -> tuple[Phase, tuple]:
-    """The Phase and footprints one arm's motion is checked in.  `named`: the phase called
-    `name`, if already known (`phase_named` takes about 50 ms: it works out the fill groups
-    from the arm models, which is too slow to repeat for every motion)."""
-    ph = named or phase_named(rig, name)
-    if arm in ph.active:
-        return ph, ()
-    fld = (system_report.fields if system_report is not None else {}).get((name, arm))
-    return follower_phase(rig, ph, arm), (() if fld is None else (fld,))
 
 
 def phase_json(p: Phase) -> dict:
@@ -121,43 +85,14 @@ def context_path(queue) -> Path:
 # --------------------------------------------------------------------------- checking
 
 
-def check_one(args):
-    """One motion through the checker; runs in a worker process."""
-    config_dir, arm, motion, phase, q_before, fields = args
-    return check(config_dir, arm, motion, phase, q_before, fields=fields)
-
-
-def check_pool(workers: int):
-    """A pool of checker processes, or None for checking in this thread."""
-    if workers <= 1:
-        return None
-    return ProcessPoolExecutor(workers, mp_context=get_context("spawn"))
-
-
-def submit(pool, args) -> Future:
-    if pool is not None:
-        return pool.submit(check_one, args)
-    f = Future()
-    f.set_result(check_one(args))
-    return f
-
-
-def note_verdict(out: Outcome, v, where: str) -> None:
-    out.checked += 1
-    out.passed += bool(v.passed)
-    mc = float(v.min_clearance)
-    if np.isfinite(mc) and mc < out.tightest:
-        out.tightest, out.tightest_at = mc, f"{where}: {v.min_clearance_at}"
-
-
 # --------------------------------------------------------------------------- the stream
 
 
-def _pump(st, lines, arm_configs, rep, stop, box) -> None:
+def _pump(st, lines, arm_configs, rep, stop, box, verify) -> None:
     """The planner, in its own thread: every item goes into `box`, then ("end", value)."""
     try:
         gen = system_plan(st.rig, lines, st.rules, arm_configs, st.cache_dir, st.workers,
-                          st.settings, rep)
+                          st.settings, rep, verify)
         while True:
             if stop.is_set():
                 gen.close()
@@ -173,74 +108,28 @@ def _pump(st, lines, arm_configs, rep, stop, box) -> None:
         box.put(("error", f"{type(e).__name__}: {e}"))
 
 
-class _Queuer:
-    """Verdicts in, motions queued in the planner's order."""
-
-    def __init__(self, job, rec, out: Outcome, on_first):
-        self.job, self.rec, self.out, self.on_first = job, rec, out, on_first
-        self.pending, self.queues, self.cut, self.index = deque(), {}, {}, {}
-        self.first = False
-
-    def add(self, name, arm, motion, fut) -> None:
-        self.pending.append((name, arm, motion, fut))
-
-    def drain(self, wait: bool) -> None:
-        while self.pending and (wait or self.pending[0][3].done()):
-            name, arm, motion, fut = self.pending.popleft()
-            self._queue(name, arm, motion, fut.result())
-
-    def _queue(self, name, arm, motion, v) -> None:
-        key = (name, arm)
-        i = self.index.get(key, 0)
-        self.index[key] = i + 1
-        note_verdict(self.out, v, f"{name}, arm {arm}, motion {i}")
-        if key in self.cut:
-            if motion.piece is not None:
-                self.out.cut_pieces.append((motion.piece, f"{name}, arm {arm}: {self.cut[key]}"))
-            return
-        q = self.queues.get(key)
-        if q is None:
-            q = self.queues[key] = self.job.queue(name, arm)
-        res = q.append(motion, v)
-        if isinstance(res, Refusal):
-            why = f"motion {i} refused ({res.reason}: {res.detail})"
-            self.cut[key] = why
-            with self.rec.lock:
-                self.rec.refused.append((name, arm, i, why))
-            self.rec.log.write("motion refused", phase=name, arm=arm, index=i, why=why,
-                               failed=list(v.failed))
-            if motion.piece is not None:
-                self.out.cut_pieces.append((motion.piece, f"{name}, arm {arm}: {why}"))
-            return
-        self.rec.count_queued(name, arm)
-        if not self.first:
-            self.first = True
-            self.on_first()
-
-    def close_phase(self, phase: Phase | None, note: str = "") -> None:
-        if phase is None:
-            return
+def _close(job, queues: dict, phase: Phase | None, note: str = "") -> None:
+    """End markers for every queue of the phase (the open Queue objects, so a long queue is
+    not read back to find its end)."""
+    if phase is not None:
         for a in phase.active:
-            q = self.queues.get((phase.name, a)) or self.job.queue(phase.name, a)
-            why = self.cut.get((phase.name, a), note)
-            q.close(complete=not why, note=why)
+            q = queues.get((phase.name, a)) or job.queue(phase.name, a)
+            q.close(complete=not note, note=note)
 
 
 def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcome:
-    """Plans `lines`, checks every motion and queues it in `job`.  Returns when the planner
-    is done or `rec.stop` is set; the job's phase list is ended either way."""
+    """Plans `lines` (checked inside the planner) and queues every motion in `job`.  Returns
+    when the planner is done or `rec.stop` is set; the job's phase list is ended either way."""
     out, rep = Outcome(), SystemReport()
     rec.system = rep
     box: queue_mod.Queue = queue_mod.Queue()
     stop = threading.Event()
     t0 = time.perf_counter()
-    pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box),
+    verify = CheckVerify(Path(st.config_dir), job.dir / "refused")
+    pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box, verify),
                             daemon=True, name=f"planner {rec.id}")
     pump.start()
-    pool = check_pool(st.check_workers)
-    qr = _Queuer(job, rec, out, on_first)
-    where = {a: np.asarray(q, float) for a, q in (arm_configs or {}).items()}
-    phase, named, saved = None, None, set()
+    phase, named, saved, queues = None, None, set(), {}
     try:
         while True:
             if rec.stop.is_set():
@@ -249,7 +138,6 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
             try:
                 kind, x = box.get(timeout=0.05)
             except queue_mod.Empty:
-                qr.drain(wait=False)
                 continue
             if kind == "error":
                 out.error = x
@@ -263,30 +151,27 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
             name, arm, motion = x
             out.motions += 1
             if phase is None or name != phase.name:
-                qr.drain(wait=True)
-                qr.close_phase(phase)
+                _close(job, queues, phase)
                 named = phase_named(st.rig, name)
-                phase = execution_phase(st.rig, name, named)
+                phase = execution_phase(st.rig, named)
                 job.add_phase(phase)
-            q_before = where.get(arm, st.rig.park_q(arm))
-            ph, fields = check_context(st.rig, name, arm, rep, named)
+            q = queues.get((name, arm)) or queues.setdefault((name, arm), job.queue(name, arm))
             if (name, arm) not in saved and arm not in named.active:
-                save_context(context_path(job.queue(name, arm)), ph, fields)
+                save_context(context_path(q), *check_view(st.rig, named, arm, rep))
                 saved.add((name, arm))
-            qr.add(name, arm, motion, submit(pool, (st.config_dir, arm, motion, ph, q_before,
-                                                    fields)))
-            where[arm] = motion.q_end
-            qr.drain(wait=False)
+            res = q.append(motion)
+            if isinstance(res, Refusal):
+                out.error = f"{name}, arm {arm}: the queue refused a motion ({res.reason}: " \
+                    f"{res.detail})"
+                rec.log.write("motion refused", phase=name, arm=arm, why=out.error)
+                break
+            rec.count_queued(name, arm)
+            if out.motions == 1:
+                on_first()
         out.planning_s = time.perf_counter() - t0
-        if out.stopped:
-            qr.pending.clear()
-        else:
-            qr.drain(wait=True)
-        note = "stopped" if out.stopped else ("planner failed" if out.error else "")
-        qr.close_phase(phase, note)
+        _close(job, queues, phase, "stopped" if out.stopped else
+               ("the planner failed" if out.error else ""))
     finally:
         stop.set()
-        if pool is not None:
-            pool.shutdown(wait=not out.stopped, cancel_futures=True)
         job.end_phases("stopped" if out.stopped else "the planner is done")
     return out

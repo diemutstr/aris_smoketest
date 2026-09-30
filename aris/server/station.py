@@ -8,6 +8,8 @@ driver asked for is not built.  Uncalibrated, every job report says so.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,10 +39,11 @@ class Station:
     cache_dir: Path | None
     jobs_dir: Path
     workers: int                       # processes for the system planner
-    check_workers: int                 # processes for the checker
     settings: Settings = field(default_factory=Settings)
     drawing_area: tuple = ()           # (x, y) full widths, m, centred on the table: rig.json's
     maps_area: tuple = ()              # the same worked out from the drawable maps
+    # --driver robot: where the operator PC last said each arm stands (Positions)
+    positions: object = None
 
     @property
     def remote(self) -> bool:
@@ -68,13 +71,47 @@ class Station:
                           if self.uncalibrated else "calibrated"))
 
 
+class Positions:
+    """The newest joints the operator PC reported per arm, with when (its clock) and when the
+    server heard it.  Only `--driver robot` fills it."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._q: dict = {}
+
+    def note(self, arm: int, q, at: float, job: str) -> None:
+        q = np.asarray(q, float).reshape(-1)
+        if q.shape != (7,) or not np.all(np.isfinite(q)):
+            return
+        with self._lock:
+            old = self._q.get(arm)
+            if old is None or at >= old["reported_at"]:
+                self._q[arm] = dict(q=q, reported_at=float(at), received_at=time.time(),
+                                    job=job, source="operator PC")
+
+    def from_row(self, row: dict, job: str) -> None:
+        """Every joint position an event row carries: `q` of its arm, `where` of every arm."""
+        at = float(row.get("time", time.time()))
+        if "arm" in row and isinstance(row.get("q"), list) and len(row["q"]) == 7:
+            self.note(int(row["arm"]), row["q"], at, job)
+        where = row.get("where")
+        if isinstance(where, dict):
+            for a, q in where.items():
+                if isinstance(q, list) and len(q) == 7:
+                    self.note(int(a), q, at, job)
+
+    def all(self) -> dict:
+        with self._lock:
+            return {a: dict(v) for a, v in self._q.items()}
+
+
 def default_workers() -> int:
     return max(1, min(8, (os.cpu_count() or 2) // 2))
 
 
 def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  uncalibrated: bool = False, cache_dir="out/cache", jobs_dir="out/jobs",
-                 workers: int | None = None, check_workers: int | None = None,
+                 workers: int | None = None,
                  settings: Settings | None = None, drivers: dict | None = None,
                  with_arms: bool = True, with_area: bool = True) -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
@@ -105,9 +142,10 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         drivers = {}
     st = Station(rig, config_dir, dict(drivers or {}), kind, float(speed), bool(missing),
                  None if cache_dir is None else Path(cache_dir), Path(jobs_dir), w,
-                 check_workers or w, cfg)
+                 cfg)
     if st.cache_dir is not None:
         st.cache_dir.mkdir(parents=True, exist_ok=True)
+    st.positions = Positions()
     if with_area:
         st.maps_area = drawing_area(st)
         fa = file_area(rig)

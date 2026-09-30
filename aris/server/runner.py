@@ -96,11 +96,27 @@ def submit_draw(st, store: JobStore, lines, name: str = "") -> JobRecord | Refus
     return rec
 
 
+def reported_where(st, need_all: bool) -> dict | Refusal:
+    """--driver robot: where the operator PC last said each arm stands.  `need_all`: an arm
+    that never reported refuses (park); otherwise it is taken to stand at its park (the
+    runner refuses to move an arm that is not at a motion's start)."""
+    pos = st.positions.all()
+    missing = [a for a in st.rig.arm_ids if a not in pos]
+    if need_all and missing:
+        return Refusal("no_position", "no position reported for arm "
+                       + ", ".join(str(a) for a in missing))
+    return {a: (pos[a]["q"] if a in pos else st.rig.park_q(a)) for a in st.rig.arm_ids}
+
+
 def _arm_configs(st, where) -> dict | Refusal:
     """Arms away from their park, which the planner starts from where they stand.  Only the
-    arms of the first phase may be away (every later phase assumes the others parked)."""
+    arms of the first phase may be away (every later phase assumes the others parked).  With
+    the robot, an arm within the executor's start tolerance of its park counts as parked."""
     first = st.rig.phase(1).active
-    away = {a: q for a, q in where.items() if not at_park(st.rig, a, q)}
+    tol = st.rig.execution().start_tolerance if st.remote else None
+    near = (lambda a, q: float(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))) <= tol) \
+        if tol is not None else (lambda a, q: at_park(st.rig, a, q))
+    away = {a: q for a, q in where.items() if not near(a, q)}
     bad = [a for a in away if a not in first]
     if bad:
         return Refusal("not_parked", f"arms {bad} are not at their park; park all arms first")
@@ -154,14 +170,16 @@ def _run_draw_remote(st, rec: JobRecord, job: Job) -> None:
     after a stop, when the runner confirms it (at most ROBOT_STOP_WAIT; at once if no runner
     ever reported)."""
     try:
+        configs = _arm_configs(st, reported_where(st, need_all=False))
+        if isinstance(configs, Refusal):
+            job.end_phases(configs.reason)
+            _finish(rec, job.dir, dict(state="failed", why=configs.detail,
+                                       assumptions=st.assumptions()), "failed", configs.detail)
+            return
         rec.set_state("planning")
-        out = pipeline.plan_into(st, job, rec.lines, None, rec,
+        out = pipeline.plan_into(st, job, rec.lines, configs, rec,
                                  on_first=lambda: rec.set_state("drawing"))
-        while not rec.robot_end.wait(0.1):
-            if rec.stop.is_set() and (rec.robot_rows == 0 or time.time() - (
-                    rec.stop_time or time.time()) > ROBOT_STOP_WAIT):
-                break
-        run = _robot_run(rec)
+        run = _wait_robot(rec)
         state, why = _end_state(rec, out, run)
         rows, first = arm_progress(rec.log.read())
         done = {k: r["done"] for k, r in rows.items()}
@@ -173,6 +191,15 @@ def _run_draw_remote(st, rec: JobRecord, job: Job) -> None:
         _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
                                    assumptions=st.assumptions()), "failed",
                 f"internal error: {e!r}")
+
+
+def _wait_robot(rec: JobRecord):
+    """Until the operator PC reports the job's end (or a stop it does not confirm)."""
+    while not rec.robot_end.wait(0.1):
+        if rec.stop.is_set() and (rec.robot_rows == 0 or time.time() - (
+                rec.stop_time or time.time()) > ROBOT_STOP_WAIT):
+            break
+    return _robot_run(rec)
 
 
 def _robot_run(rec: JobRecord):
@@ -207,8 +234,9 @@ def _end_state(rec, out, run) -> tuple[str, str]:
 
 def submit_park(st, store: JobStore) -> JobRecord | Refusal:
     if st.remote:
-        return Refusal("not_built", "park all arms needs where the arms stand; with --driver "
-                       "robot that is on the operator PC, and park is not built there yet")
+        where = reported_where(st, need_all=True)
+        if isinstance(where, Refusal):
+            return where
     rec = store.admit("park", "park all arms")
     if isinstance(rec, Refusal):
         return rec
@@ -223,7 +251,7 @@ def submit_park(st, store: JobStore) -> JobRecord | Refusal:
 def _run_park(st, rec: JobRecord, job: Job) -> None:
     coord = None
     try:
-        where = prepare_arms(st)
+        where = reported_where(st, need_all=True) if st.remote else prepare_arms(st)
         if isinstance(where, Refusal):
             job.end_phases(where.reason)
             _finish(rec, job.dir, dict(state="failed", why=where.detail, kind="park",
@@ -233,23 +261,32 @@ def _run_park(st, rec: JobRecord, job: Job) -> None:
         t0 = time.perf_counter()
         steps = plan_park(st, where)
         planning_s = time.perf_counter() - t0
-        moving = [s for s in steps if s.motion is not None and not s.why]
-        for s in moving:
-            job.add_phase(s.phase)
-            q = job.queue(s.phase.name, s.arm)
-            q.append(s.motion, s.verdict)
-            q.close()
-            if s.fields:
-                pipeline.save_context(pipeline.context_path(q), s.phase, s.fields)
-            rec.count_queued(s.phase.name, s.arm)
+        moving = [s for s in steps if s.motions and not s.why]
+        for name in dict.fromkeys(s.phase.name for s in moving):     # phases in order
+            these = [s for s in moving if s.phase.name == name]
+            job.add_phase(these[0].phase)
+            for s in these:
+                q = job.queue(name, s.arm)
+                for m, v in zip(s.motions, s.verdicts):
+                    q.append(m, v)
+                    rec.count_queued(name, s.arm)
+                q.close()
+                if s.fields:
+                    pipeline.save_context(pipeline.context_path(q), s.phase, s.fields)
         job.end_phases("park planned")
-        coord = Coordinator(job, st.drivers, st.config_dir, st.rig)
-        rec.coordinator = coord
-        if rec.stop.is_set():
-            coord.stop()
         if moving:
             rec.set_state("moving")
-        run = coord.run()
+        if st.remote:                        # the operator PC runs it and reports
+            run = _wait_robot(rec) if moving else _robot_run(rec)
+            if not moving:
+                run.status, run.why = "done", ""
+            run.where = {**where, **run.where}
+        else:
+            coord = Coordinator(job, st.drivers, st.config_dir, st.rig)
+            rec.coordinator = coord
+            if rec.stop.is_set():
+                coord.stop()
+            run = coord.run()
         _finish(rec, job.dir, _park_report(st, rec, steps, run, planning_s), *_park_end(
             st, rec, steps, run))
     except Exception as e:
@@ -264,25 +301,38 @@ def _run_park(st, rec: JobRecord, job: Job) -> None:
 def _park_end(st, rec, steps, run) -> tuple[str, str]:
     if rec.stop.is_set():
         return "stopped", "stop requested"
-    left = [f"arm {a}" for a, q in run.where.items() if not at_park(st.rig, a, q)]
+    tol = st.rig.execution().start_tolerance if st.remote else 1e-6
+    left = [f"arm {a}" for a, q in run.where.items()
+            if float(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))) > tol]
     if run.status != "done":
         return "failed", run.why
     if left:
         return "failed", "not parked: " + ", ".join(left) + "; " + "; ".join(
-            f"arm {s.arm}: {s.why}" for s in steps if s.why and s.phase is not None)
+            f"arm {s.arm}: {s.why}" for s in steps
+            if s.why and s.why != "already at its park")
     return "done", ""
+
+
+def _park_arms(st, steps, run) -> dict:
+    """Per arm: parked, already at its park, or why not; its motions and how long they take."""
+    out = {}
+    for a in st.rig.arm_ids:
+        mine = [s for s in steps if s.arm == a]
+        why = next((s.why for s in mine if s.why), "")
+        ms = [m for s in mine if not s.why for m in s.motions]
+        out[str(a)] = dict(result=why or ("parked" if ms else "already at its park"),
+                           motions=[m.kind for m in ms],
+                           motion_s=sum(float(m.traj.t[-1] - m.traj.t[0]) for m in ms),
+                           at_park=a in run.where and bool(at_park(st.rig, a, run.where[a])))
+    return out
 
 
 def _park_report(st, rec, steps, run, planning_s) -> dict:
     state, why = _park_end(st, rec, steps, run)
-    checked = [s.verdict for s in steps if s.verdict is not None]
+    checked = [v for s in steps for v in s.verdicts]
     rows, first = arm_progress(rec.log.read())
     return dict(state=state, why=why, kind="park",
-                arms={str(s.arm): dict(
-                    result=s.why or "parked",
-                    motion_s=None if s.motion is None else float(s.motion.traj.t[-1]),
-                    at_park=bool(at_park(st.rig, s.arm, run.where[s.arm])))
-                    for s in steps},
+                arms=_park_arms(st, steps, run),
                 checker=dict(checked=len(checked), passed=sum(bool(v.passed) for v in checked),
                              tightest_clearance_m=min((float(v.min_clearance) for v in checked),
                                                       default=None)),

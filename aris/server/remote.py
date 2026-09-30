@@ -132,7 +132,7 @@ async def _tail(path: Path, offset: int, follower, job_over):
         await asyncio.sleep(POLL)
 
 
-def add_routes(app, store) -> None:
+def add_routes(app, st, store) -> None:
     def job_of(jid: str) -> Job:
         d = store.root / jid
         if "/" in jid or ".." in jid or not (d / "job.json").exists():
@@ -168,4 +168,5 @@ def add_routes(app, store) -> None:
         if rec is None:
             raise HTTPException(409, f"job {jid} is not a job of this server run")
         body = await request.json()
-        return accept_rows(rec, list(body.get("rows", [])))
+        return accept_rows(rec, list(body.get("rows", [])),
+                           lambda row: st.positions.from_row(row, jid))

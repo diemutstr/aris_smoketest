@@ -33,8 +33,7 @@ DATA = ROOT / "tests" / "data"
 SMALL, WIDE, WORD = DATA / "server_small.json", DATA / "server_wide.json", \
     DATA / "server_word.json"
 COARSE = Settings(grid_step=0.05)
-QUICK = ["--uncalibrated", "--cache", "none", "--map-grid", "0.05", "--workers", "4",
-         "--check-workers", "4"]
+QUICK = ["--uncalibrated", "--cache", "none", "--map-grid", "0.05", "--workers", "4"]
 
 
 class ClientHttp:
@@ -55,7 +54,7 @@ class ClientHttp:
 @pytest.fixture(scope="module")
 def station(tmp_path_factory):
     st = open_station(CONFIG, speed=math.inf, uncalibrated=True, cache_dir=None,
-                      jobs_dir=tmp_path_factory.mktemp("jobs"), workers=4, check_workers=4,
+                      jobs_dir=tmp_path_factory.mktemp("jobs"), workers=4,
                       settings=COARSE)
     assert not isinstance(st, Refusal), st
     return st
@@ -181,7 +180,11 @@ def test_small_drawing_runs_to_done_and_a_second_job_is_refused(station, tmp_pat
     assert v["state"] == "done", v["why"]
     assert rep["drawn_m"] == pytest.approx(rep["length_m"]) and rep["left_m"] == 0.0
     assert rep["length_m"] == pytest.approx(2 * np.hypot(0.15, 0.05))
-    assert rep["checker"]["passed"] == rep["checker"]["checked"] == rep["queued"] == 10
+    assert rep["checker"]["checked"] == rep["queued"] == 10 and rep["checker"]["refused"] == 0
+    assert rep["checker"]["all_queued_checked"] and rep["passed"]
+    assert all(e.verdict["passed"] for e in
+               __import__("aris.execute", fromlist=["Job"]).Job(tmp_path / jid)
+               .queue("phase 1", 13).read())
     assert rep["drawing"]["scale"] == 1.0 and all(rep["at_park"].values())
     assert rep["assumptions"]["uncalibrated"] is True
     assert all(p["end_check_passed"] for p in rep["phases"])
@@ -194,6 +197,12 @@ def test_small_drawing_runs_to_done_and_a_second_job_is_refused(station, tmp_pat
     assert {"job.json", "phases.jsonl", "events.jsonl", "report.json"} <= \
         {p.name for p in job_dir.iterdir()}
     assert cli.main(["status"], http=ClientHttp(c)) == 0
+
+
+def test_leftovers_are_a_report_not_a_failure():
+    done = dict(state="done", passed=True, left_m=0.008, left_by_reason={"unreachable": 0.008})
+    assert cli.job_passed(done) and "unreachable 0.008 m" in cli._summary(done)
+    assert not cli.job_passed(dict(done, state="stopped", passed=False))
 
 
 def test_plan_and_check_commands(tmp_path, capsys):
@@ -232,6 +241,10 @@ def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_pat
         s = d.state()
         assert "moving" not in s.flags and not s.ok and np.all(s.qd == 0.0), (a, s.flags)
     assert c.post(f"/jobs/{jid}/stop").status_code == 409      # already finished
+    # park from where the stop left them (a pen at the paper rises first)
+    assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-9, a
     # a drawing that would shrink below half is a failed job, and `aris draw` says FAIL
     huge = tmp_path / "huge.json"
     huge.write_text('{"units": "m", "lines": [{"id": "x", "points": [[0, 0], [3, 0]]}]}')
@@ -278,7 +291,7 @@ def test_word_through_aris_draw_against_a_live_server(tmp_path):
     serve = subprocess.Popen(
         [sys.executable, "-m", "aris.cli", "serve", "--port", str(port), "--speed", "20",
          "--uncalibrated", "--cache", str(tmp_path / "cache"), "--jobs", str(jobs),
-         "--workers", "8", "--check-workers", "8"],
+         "--workers", "8"],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         t0 = time.time()
@@ -310,3 +323,32 @@ def _up(url) -> bool:
     except OSError:
         return False
 
+
+
+def test_the_verify_keeps_a_refused_motion_and_pickles(station, tmp_path):
+    import pickle
+    from aris.kernel.retime import retime
+    from aris.server.verify import CheckVerify
+    from aris.types import JointPath, Motion, Piece
+    rig = station.rig
+    p, arm = rig.park_q(13), rig.arm(13)
+    traj = retime(JointPath(np.array([p, p + 0.05])), arm.limits, rig.rules())
+    motion = Motion("free", traj, Piece("x", 0.0, 0.1))
+    verify = pickle.loads(pickle.dumps(CheckVerify(CONFIG, tmp_path / "refused")))
+    ok = verify(13, rig.phase(1), (), motion, p)
+    assert ok["passed"] and "refused_file" not in ok and not (tmp_path / "refused").exists()
+    for n in range(2):                             # q_before is not where it starts: refused
+        bad = verify(13, rig.phase(1), (), motion, p + 0.01)
+        assert not bad["passed"] and bad["refused_file"] == f"phase_1__arm13__{n}.npz"
+    with np.load(tmp_path / "refused" / "phase_1__arm13__1.npz") as z:
+        assert np.array_equal(z["q"], traj.q) and np.array_equal(z["t"], traj.t)
+        assert np.array_equal(z["qd"], traj.qd) and np.allclose(z["q_before"], p + 0.01)
+        assert str(z["kind"]) == "free" and json.loads(str(z["piece"])) == ["x", 0.0, 0.1]
+        assert "starts at q_before" in str(z["failed"]) and float(z["intensity"]) == 1.0
+    # the queue takes the checker's word the motion carries, and nothing unchecked
+    from aris.execute.queue import Queue
+    q = Queue(tmp_path / "a.queue", "phase 1", 13)
+    assert q.append(motion).reason == "unchecked"
+    assert q.append(replace(motion, checked=bad)).reason == "failed_check"
+    assert q.append(replace(motion, checked=ok)) == 0
+    assert q.read()[0].verdict == ok and q.read()[0].motion.checked == ok

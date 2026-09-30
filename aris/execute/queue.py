@@ -148,12 +148,13 @@ def _entry(meta: dict, a: dict) -> Entry:
     p = meta["piece"]
     m = Motion(meta["kind"], Trajectory(a["t"], a["q"], a["qd"]),
                None if p is None else Piece(p[0], float(p[1]), float(p[2])),
-               a.get("tip_base"), meta["intensity"])
+               a.get("tip_base"), meta["intensity"], checked=meta["verdict"])
     return Entry(meta["index"], m, meta["verdict"])
 
 
 def verdict_numbers(v) -> dict:
-    """The checker's key numbers, kept with the motion (`aris.check.Verdict`)."""
+    """The checker's key numbers, kept with the motion (`aris.check.Verdict`).  Plain data:
+    this is also what `Motion.checked` carries."""
     out = dict(passed=bool(v.passed), tightest=str(v.tightest),
                min_clearance=float(v.min_clearance), min_clearance_at=str(v.min_clearance_at))
     try:
@@ -194,19 +195,30 @@ class Queue:
             f.flush()
             os.fsync(f.fileno())
 
-    def append(self, motion: Motion, verdict) -> int | Refusal:
-        """Queue a motion the checker passed.  Returns its index, or a Refusal."""
+    def append(self, motion: Motion, verdict=None) -> int | Refusal:
+        """Queue a motion the checker passed.  Returns its index, or a Refusal.  `verdict`: the
+        checker's Verdict; None takes the checker's word the motion carries (`Motion.checked`,
+        which the planners fill when they plan with `verify`).  Nothing unchecked is queued."""
         self._open_for_writing()
         if self._closed:
             return Refusal("closed", f"{self.path.name} has its end marker")
-        if not getattr(verdict, "passed", False):
+        if verdict is None:
+            numbers = motion.checked
+            if numbers is None:
+                return Refusal("unchecked", "the motion carries no checker verdict")
+        elif not getattr(verdict, "passed", False):
             return Refusal("failed_check", f"the checker did not pass it: {verdict.tightest}")
+        else:
+            numbers = verdict_numbers(verdict)
+        if not numbers.get("passed", False):
+            return Refusal("failed_check",
+                           f"the checker did not pass it: {numbers.get('tightest', '')}")
         if self._last_q is not None:
             gap = float(np.max(np.abs(motion.q_start - self._last_q)))
             if gap > CONTINUITY:
                 return Refusal("not_continuous",
                                f"starts {gap:.3g} rad from where motion {self._count - 1} ended")
-        self._write(_motion_record(self._count, motion, verdict_numbers(verdict)))
+        self._write(_motion_record(self._count, motion, numbers))
         self._count += 1
         self._last_q = motion.q_end
         return self._count - 1
@@ -282,8 +294,12 @@ class Cursor:
 # --------------------------------------------------------------------------- the job
 
 
-def _slug(name: str) -> str:
+def slug(name: str) -> str:
+    """A phase name as it appears in file names ("phase 1" -> "phase_1")."""
     return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
+
+
+_slug = slug
 
 
 def _phase_json(p: Phase) -> dict:

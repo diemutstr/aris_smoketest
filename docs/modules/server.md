@@ -25,9 +25,9 @@ executors: it plans, checks and writes the queues, and the operator PC's runner 
 (the last four endpoints below), runs them and posts its event log back. The job's state
 follows those events: it ends with the runner's own "job done / failed / stopped". A stop
 here is passed on in the answer to the runner's next post; the server waits up to 30 s for
-the runner to confirm it (not at all if no runner ever reported). Park is refused in this
-mode (where the arms stand is only known on the operator PC). Times in the report then come
-from the operator PC's clock.
+the runner to confirm it (not at all if no runner ever reported). The server keeps the newest
+joints the runner reported per arm (`GET /arms`); park plans from them. Times in the report
+then come from the operator PC's clock.
 
 ## A job
 
@@ -65,7 +65,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `POST /jobs/{id}/stop` | stop (409 if already finished) |
 | `POST /park` | park all arms |
 | `GET /rig` | arms (pose, park configuration, calibration state), the drawing area, the rig and calibration digests, driver and speed |
-| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park (empty with `--driver robot`) |
+| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, the joints the operator PC last reported, when (its clock), when the server heard it, and the job |
 | `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
 | `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
 | `GET /jobs/{id}/queues/{phase}/{arm}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
@@ -76,15 +76,17 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | command | what it does |
 |---|---|
 | `aris serve [--host --port --driver sim --speed --uncalibrated --cache --jobs]` | start the server (default `127.0.0.1:8420`) |
-| `aris draw <drawing> [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 only if everything was drawn |
+| `aris draw <drawing> [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
 | `aris plan <drawing> [--out dir]` | plan and check only, no server, no arms; writes the job directory and prints the report |
 | `aris check <job dir>` | the checker again on every queued motion, one line per motion |
 
 Every command prints its assumptions once (rig digest, calibration digest and state, driver,
-speed) and ends with one PASS or FAIL line. `--cache` (default `out/cache`) keeps the drawable
-maps and the kinematic table; `--map-grid` (default 2 cm) is the maps' grid; `--workers` and
-`--check-workers` the processes for planning and checking.
+speed) and ends with one PASS or FAIL line. For `draw` and `plan`, PASS means the job ran to
+its end and every queued motion carries a passing check; the line then gives the drawn and
+left-over lengths by reason. Leftovers are a report, not a failure. `--cache` (default `out/cache`) keeps the drawable
+maps and the kinematic table; `--map-grid` (default 2 cm) is the maps' grid; `--workers` the planner's processes (the checker runs inside them); `aris check` takes
+`--check-workers`.
 
 ## The drawing file
 
@@ -115,20 +117,42 @@ moved, only scaled: a small drawing near an edge shrinks toward the centre.
 
 ## Planning, checking, queueing
 
-The planner runs in its own thread and hands over motions as they come. Each is checked at
-once in a pool of processes, from where that arm's previous motion ended, and queued strictly
-in the planner's order. A phase is written when its first motion arrives, so the arms start
-while the planner still works. A leader phase lists the leaders' row partners as moving too:
-a follower draws against its leader's footprint and is checked in its own view of the phase
-with that footprint (saved next to its queue so `aris check` can repeat it); a follower with
-nothing to do holds. A motion the checker refuses is not queued; the rest of that arm's phase
-is dropped, and the job fails after that phase.
+The checker runs inside the planning loop. The server hands the system planner a `verify`
+(`aris/server/verify.py`): it runs the independent checker on a motion, in whichever planner
+process calls it, and answers the checker's numbers. The arm planner checks every motion of a
+piece's group (the move to it, lower, draw, lift) before it builds on them; a piece whose
+group does not all pass is left over as `failed_check` with the checker's word, and the arm
+plans on from where it was. A refused motion is saved in the job directory (below).
 
-**Park all arms.** One arm at a time in rig order, each in its own phase, so no two arms move
-at once: a free motion from where it stands to its park, planned around the others (parked
-ones at their parks; ones not yet parked as their bodies where they stand, and for the checker
-as their footprints), checked, queued, run. An arm already at its park is left alone. An arm
-the planner or checker refuses stays; the job then fails and says which.
+So every motion the planner hands over already carries a passing check (`Motion.checked`),
+and the server queues it at once, in the order it came; the queue itself refuses a motion
+without one ("nothing unchecked is ever queued"). A phase is written when its first motion
+arrives, so the arms start while the planner still works. A leader phase lists the leaders'
+row partners as moving too: a follower draws against its leader's footprint and is checked in
+its own view of the phase with that footprint (saved next to its queue so `aris check` can
+repeat it); a follower with nothing to do holds. `aris check` re-checks every queued motion
+offline (it keeps its own `--check-workers`).
+
+**Park all arms.** From where every arm stands: with the simulated arms, as they report it;
+with `--driver robot`, as the operator PC last reported it (every event row about an arm
+carries its joints, the runner's first and last rows carry every arm's). An arm that never
+reported refuses the park job by name ("no position reported for arm 71"); the runner itself
+refuses to move an arm that is not at the start of its first motion, so a stale position
+cannot move an arm the wrong way.
+1. An arm whose pen stopped within its clearance of the paper (rig.json's lifted-pen clearance,
+   plus 5 mm; as after a stop mid-drawing) first raises it straight up by that clearance plus
+   5 mm (the sequencer's lift-off
+   rule). All such arms rise together in one phase, "lift pens", behind the walls they were
+   drawing behind (every phase-end check fails while any pen is down).
+2. Then one arm at a time in rig order, each in its own phase ("park 13", ...): a free motion
+   to its park, planned around the others (parked ones at their parks; ones not yet parked as
+   their bodies where they stand, and for the checker as their footprints), checked, queued,
+   run. An arm already at its park is left alone. An arm the planners or the checker refuse
+   stays; the job then fails and says which.
+
+The drawing job's "park all arms first" check uses the same positions (with the robot, an arm
+within the start tolerance, 5 mrad, of its park counts as parked; one that never reported is
+taken to be at its park, and the runner refuses to move it if it is not).
 
 ## Where things end up
 
@@ -140,6 +164,7 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 | `phases.jsonl` | the phases in the order they run, then an end line |
 | `<phase>__arm<id>.queue` | the checked motions of one arm in one phase (format: execute.md) |
 | `<phase>__arm<id>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
+| `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning: `t`, `q`, `qd`, `tip_base` (drawing), `kind`, `piece` (line id and arc lengths, JSON), `intensity`, `q_before`, the failed measurements and the whole verdict as text |
 | `events.jsonl` | every state change: the job's, the coordinator's, each arm's (with `--driver robot`, the operator PC's rows, marked `source: robot`) |
 | `report.json` | the report below |
 
@@ -151,7 +176,8 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 | `drawing` | lines, scale, bounding box before and after the fit |
 | `length_m`, `drawn_m` | the fitted drawing's length; what motions that ran to the end drew |
 | `left_m`, `left_by_reason`, `leftovers` | everything not drawn, as stretches of lines with a reason: the planner's (unreachable, blocked, too short, ...), `failed_check`, `stopped` or `failed` (queued and not run, or not planned yet). Drawn plus left over is the whole drawing; on a done job anything else would show as `unaccounted` |
-| `checker` | motions checked and passed, the tightest clearance beyond the demanded one and where |
+| `checker` | motions checked inside the planners, how many were refused (and their files in `refused/`), whether every queued motion carries a passing check, the tightest clearance beyond the demanded one and where |
+| `passed` | the verdict: the job ran to its end and every queued motion was checked |
 | `phases` | each phase-end check, passed, and its tightest clearance |
 | `first_motion_s`, `planning_s`, `total_s` | from the job arriving to the first motion starting; planning; the whole job |
 | `where`, `at_park` | where every arm ended |
@@ -181,14 +207,21 @@ A park job's report says per arm "parked", "already at its park" or why not.
   (3 500 to 4 500 s). `aris check` on the 2 000 lines: 12 min. Peak memory of all processes
   together: 10 to 13.5 GB (the 30 checker processes all along, plus 30 local-planner processes
   at the start of each leader phase).
-- Quick tests: 13 in 52 s (with the operator-PC endpoints).
+- **The checker inside the planners** (same 10 000 lines, `aris plan`, 30 processes, arm
+  planner in batches of 32 nearest first): 29.7 min wall, 6 700 s CPU in all (half the
+  earlier 14 600), 36 processes, 10.3 GB peak; first motion after 4 to 11 s in every phase;
+  42 304 motions all checked and queued, 1 refused (its piece drawn in a later phase), 1 911.95
+  of 1 912.01 m drawn, 65 mm out of reach; tightest 0.2 mm. Through `aris serve` at speed
+  inf: 27.2 min, the same drawn length, first motion 10 s. Each arm now checks its own motions
+  one after another, so a leader phase takes twice as long on the wall clock as before.
+- Quick tests (server, operator PC): 14 in 41 s; slow: 3 in 48 s.
 
 ## What is not built
 
 - Resume after a stop or a failure; re-planning after a failure.
 - SVG drawings.
 - Calibration jobs (only "park all arms" is built of the other kinds of job).
-- The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them, and park is not built for that mode.
+- The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them.
 - Pause.
 - Clearing an arm's fault from the server.
 - Only the arms of phase 1 may start a drawing away from their parks.

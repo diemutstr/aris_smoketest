@@ -81,7 +81,7 @@ Then a drawing, from the planning PC or any machine that reaches the server
 aris draw drawings/today.json         # submits, prints a line whenever something changes, then the report
 aris status                           # the current or last job, any time
 aris stop                             # every arm stops at once and holds; the job is finished
-aris park                             # every arm back to its park, one at a time
+aris park                             # every arm back to its park, one at a time (pens lifted first)
 aris rig                              # what the server runs: arms, drawing area, calibration state
 ```
 
@@ -129,6 +129,7 @@ Everything a job produces is in one directory, `out/jobs/<job id>/` on the plann
 | `queues/<phase>/<arm>` | the motions of that arm in that phase, in order, each one checked |
 | `events.jsonl` | the log: job states, every motion started and ended, every stop and fault, from both machines |
 | `report.json` | drawn and left over, by line and by reason; the same thing `aris draw` prints |
+| `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning, with where the arm stood and what the checker said (the piece is then left over or drawn by a later phase) |
 
 The operator PC keeps a copy of each job it ran under `out/robot_jobs/<id>/`. `out/cache/`
 holds the drawable maps and the kinematic table (built on first use, minutes; reused as long
@@ -147,10 +148,6 @@ directory.
 - **First run on the operator PC**: nothing under `robot/` has been built against the real
   ROS headers or run on an arm yet. The order is fake hardware first, then one real arm, then
   the touch, then a drawing in the air.
-- **Park from the operator PC**: with real arms the server does not yet know where the arms
-  stand, so `aris park` is refused and an arm that stopped away from its park can only be
-  parked by `aris-robot park <id>` from within 0.05 rad. The runner will report the arms'
-  positions and the server will park from those.
 - **Followers**: only the three leaders of each phase draw; the followers stay parked.
 - **A GUI**, and playing a job directory in the Meshcat viewer.
 - **SVG input**: drawings are JSON polylines; the converter from SVG is not written.

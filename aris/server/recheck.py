@@ -8,12 +8,35 @@ first of a queue from its own start (the queue itself guaranteed that the motion
 from __future__ import annotations
 
 import json
+from concurrent.futures import Future, ProcessPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
 
+from aris.check import check
 from aris.execute.queue import Job
-from aris.server.pipeline import check_one, check_pool, context_path, load_context, submit
+from aris.server.pipeline import context_path, load_context
 from aris.server.report import job_phases
 from aris.system import phase_named
+
+
+def check_one(args):
+    """One motion through the checker; runs in a worker process."""
+    config_dir, arm, motion, phase, q_before, fields = args
+    return check(config_dir, arm, motion, phase, q_before, fields=fields)
+
+
+def check_pool(workers: int):
+    """A pool of checker processes, or None for checking in this thread."""
+    return None if workers <= 1 else ProcessPoolExecutor(workers,
+                                                         mp_context=get_context("spawn"))
+
+
+def submit(pool, args) -> Future:
+    if pool is not None:
+        return pool.submit(check_one, args)
+    f = Future()
+    f.set_result(check_one(args))
+    return f
 
 
 def contexts(rig, job: Job):
@@ -39,7 +62,7 @@ def recheck(job_dir: Path, config_dir: Path, workers: int, say, verdict, assumpt
     from aris.server import open_station
     head = json.loads((job_dir / "job.json").read_text())
     st = open_station(config_dir, uncalibrated=True, cache_dir=None, with_arms=False,
-                      with_area=False, workers=1, check_workers=workers)
+                      with_area=False, workers=1)
     if not hasattr(st, "rig"):
         return verdict(False, f"{st.reason}: {st.detail}")
     a = st.assumptions()

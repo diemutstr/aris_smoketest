@@ -116,7 +116,6 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
     ran, not_run = split_run(entries, done)
     rest = "unaccounted" if state == "done" or run is None else state
     left = [(x.piece, x.reason, x.detail) for x in out.leftovers]
-    left += [(p, "failed_check", d) for p, d in out.cut_pieces]
     left += [(p, rest, "queued, not run") for p in not_run]
     acc = account(rec.lines, ran, left, rest)
     rep = dict(state=state, why=why, kind="draw", name=rec.name,
@@ -124,9 +123,7 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
                             bbox_in=rec.fit.bbox_in if rec.fit else None,
                             bbox=rec.fit.bbox_out if rec.fit else None),
                **acc,
-               checker=dict(checked=out.checked, passed=out.passed,
-                            tightest_clearance_m=None if out.checked == 0 else out.tightest,
-                            tightest_at=out.tightest_at),
+               checker=checker_numbers(rec.system, entries, job.dir / "refused"),
                queued=sum(len(v) for v in entries.values()),
                planner_refusal=None if out.refusal is None else
                f"{out.refusal.reason}: {out.refusal.detail}",
@@ -134,6 +131,9 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
                first_motion_s=first_s,
                assumptions=st.assumptions())
     rep["planner"] = planner_numbers(rec.system)
+    # The verdict on the job: every queued motion carries a passing check, and the job ran to
+    # its end.  What was left over is reported, not a failure.
+    rep["passed"] = bool(state == "done" and rep["checker"]["all_queued_checked"])
     if run is not None:
         rep["phases"] = [dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
                          for n, p, t, c in run.phase_ends]
@@ -156,3 +156,18 @@ def planner_numbers(sr) -> dict | None:
                                                 drawn_m=r.drawn, offered_m=r.offered)
                                    for a, r in list(p.arms.items())})
                         for p in list(sr.phases)])
+
+
+def checker_numbers(sr, entries: dict, refused_dir) -> dict:
+    """The checker's part: motions checked inside the planners (the system planner's counts),
+    refused (files in `refused/`), every queued motion's verdict, and the tightest clearance."""
+    checked = 0
+    if sr is not None:
+        checked = sum(r.checked for p in list(sr.phases)
+                      for r in list(p.arms.values()) + list(p.idle.values()))
+    refused = sorted(p.name for p in refused_dir.glob("*.npz")) if refused_dir.exists() else []
+    queued = [e for es in entries.values() for e in es]
+    tight = None if sr is None or not np.isfinite(sr.tightest) else float(sr.tightest)
+    return dict(checked=checked, refused=len(refused), refused_files=refused,
+                all_queued_checked=all(bool(e.verdict.get("passed")) for e in queued),
+                tightest_clearance_m=tight, tightest_at="" if sr is None else sr.tightest_at)

@@ -70,10 +70,11 @@ class JobRecord:
 ROBOT_END = ("job done", "job failed", "job stopped")
 
 
-def accept_rows(rec: JobRecord, rows: list) -> dict:
+def accept_rows(rec: JobRecord, rows: list, on_row=None) -> dict:
     """Event rows from the operator PC: each appended to the job's log once, in `seq` order
-    (a row the server already has, or one after a gap, is not taken).  The answer tells the
-    runner how far the server is and whether the job was stopped here."""
+    (a row the server already has, or one after a gap, is not taken).  `on_row(row)` sees each
+    row taken.  The answer tells the runner how far the server is and whether the job was
+    stopped here."""
     taken = 0
     with rec.lock:
         for r in rows:
@@ -83,6 +84,8 @@ def accept_rows(rec: JobRecord, rows: list) -> dict:
             rec.log.write(str(r.get("event", "")), **fields, source="robot")
             rec.robot_rows += 1
             taken += 1
+            if on_row is not None:
+                on_row(r)
             if r.get("event") in ROBOT_END:
                 rec.robot_final = dict(r)
                 rec.robot_end.set()

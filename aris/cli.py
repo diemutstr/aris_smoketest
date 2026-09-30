@@ -1,7 +1,7 @@
 """The one command: `aris ...`.
 
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
-    aris draw   <drawing.json|.npz> [--server URL]   submit, follow, report; exit 0 if all drawn
+    aris draw   <drawing.json|.npz> [--server URL]   submit, follow, report; exit 0 on PASS
     aris status | stop | park | rig   [--server URL]
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
@@ -22,7 +22,6 @@ from pathlib import Path
 
 DEFAULT_SERVER = "http://127.0.0.1:8420"
 CONFIG = Path(__file__).resolve().parents[1] / "config"
-TINY = 1e-6
 
 
 class Http:
@@ -86,9 +85,15 @@ def report_lines(rep: dict) -> list[str]:
             out.append(f"  {reason:<11}{m:.3f} m")
     c = rep.get("checker")
     if c:
-        out.append(f"checker      {c['passed']} of {c['checked']} motions passed, tightest "
-                   f"clearance {_mm(c.get('tightest_clearance_m'))}"
-                   + (f" ({c['tightest_at']})" if c.get("tightest_at") else ""))
+        if "all_queued_checked" in c:
+            out.append(f"checker      {c['checked']} motions checked in the planners, "
+                       f"{c['refused']} refused (their pieces are left over as failed_check); "
+                       f"every queued motion checked: {'yes' if c['all_queued_checked'] else 'NO'}")
+            out.append(f"tightest     {_mm(c.get('tightest_clearance_m'))}"
+                       + (f" ({c['tightest_at']})" if c.get("tightest_at") else ""))
+        else:
+            out.append(f"checker      {c['passed']} of {c['checked']} motions passed, tightest "
+                       f"clearance {_mm(c.get('tightest_clearance_m'))}")
     for p in rep.get("phases", []):
         out.append(f"phase end    {p['name']}: {'passed' if p['end_check_passed'] else 'FAILED'}"
                    f", {p['tightest']} {_mm(p['clearance_m'])}")
@@ -99,8 +104,17 @@ def report_lines(rep: dict) -> list[str]:
     return out
 
 
-def all_drawn(rep: dict) -> bool:
-    return rep.get("state") == "done" and float(rep.get("left_m", 0.0)) <= TINY
+def job_passed(rep: dict) -> bool:
+    """PASS: the job ran to its end and every queued motion carries a passing check.
+    Leftovers are reported, not a failure."""
+    return bool(rep.get("passed", rep.get("state") == "done"))
+
+
+def _summary(rep: dict) -> str:
+    left = ", ".join(f"{r} {m:.3f} m" for r, m in sorted(rep.get("left_by_reason", {}).items()))
+    return (f"{rep.get('state')}, drawn {rep.get('drawn_m', 0):.3f} m of "
+            f"{rep.get('length_m', 0):.3f} m, left over {rep.get('left_m', 0):.3f} m"
+            + (f" ({left})" if left else ""))
 
 
 # --------------------------------------------------------------------------- server commands
@@ -161,8 +175,7 @@ def cmd_draw(a, http) -> int:
     for line in report_lines(v["report"]):
         say(line)
     rep = v["report"]
-    return verdict(all_drawn(rep), f"{rep.get('state')}, drawn {rep.get('drawn_m', 0):.3f} m, "
-                   f"left over {rep.get('left_m', 0):.3f} m")
+    return verdict(job_passed(rep), _summary(rep))
 
 
 def cmd_park(a, http) -> int:
@@ -236,7 +249,6 @@ def _station(a, with_arms: bool):
                         speed=getattr(a, "speed", 1.0), uncalibrated=a.uncalibrated,
                         cache_dir=None if a.cache in ("", "none") else a.cache,
                         jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
-                        check_workers=a.check_workers,
                         settings=Settings(grid_step=a.map_grid), with_arms=with_arms)
 
 
@@ -281,9 +293,7 @@ def cmd_plan(a, _http=None) -> int:
     say(f"queues in {out_dir}")
     for line in report_lines(rep):
         say(line)
-    ok = all_drawn(rep) and out.passed == out.checked
-    return verdict(ok, f"planned {rep['drawn_m']:.3f} m of {rep['length_m']:.3f} m, "
-                   f"{out.passed} of {out.checked} motions passed the checker")
+    return verdict(job_passed(rep), "planned: " + _summary(rep))
 
 
 def cmd_check(a, _http=None) -> int:
@@ -306,7 +316,6 @@ def parser() -> argparse.ArgumentParser:
         s.add_argument("--cache", default="out/cache",
                        help="drawable maps and kinematic table ('none': build every time)")
         s.add_argument("--workers", type=int, default=None, help="planner processes")
-        s.add_argument("--check-workers", type=int, default=None, help="checker processes")
         s.add_argument("--map-grid", type=float, default=0.02,
                        help="m between the drawable maps' grid points")
 
