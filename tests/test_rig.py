@@ -64,7 +64,7 @@ def test_paper_round_trip_and_plane(rig):
         pl = rig.paper(aid)
         worst_plane = max(worst_plane, np.abs(line.points @ pl.normal - pl.offset).max())
         # the arm's base origin is on the free side, 0.970 above the paper
-        assert pl.kind == "paper" and pl.margin == 0.020 and pl.pen_margin == 0.003
+        assert pl.kind == "paper" and pl.margin == 0.020 and pl.pen_margin == 0.020
         assert pl.tool_margin == rig.clearance["tool_to_paper_m"]
         assert abs((0.0 - pl.offset) - 0.970) < 1e-12
     print(f"\nround trip table->base->table worst {worst_rt:.2e}; paper points off the "
@@ -237,7 +237,7 @@ def test_park_clearances_old_model(rig):
               f"{REF['park_new_steel'][i]:.4f} ({REF['park_new_steel_box'][i]})  "
               f"{REF['park_own_struts'][i]:.4f}")
     assert np.all(REF["park_caps_paper"] >= 0.020)
-    assert np.all(REF["park_tip_z"] >= 0.003)
+    assert np.all(REF["park_tip_z"] >= rig.clearance["pen_lifted_to_paper_m"])
     assert np.all(REF["park_self"] >= 0.020)
     assert np.all(REF["park_new_steel"] >= 0.050)
     assert np.all(REF["park_own_struts"] >= 0.050)

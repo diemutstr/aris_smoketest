@@ -104,7 +104,7 @@ configuration, as capsules in `a`'s base frame. The park configurations are the 
 parks (`Q_PARK_PROPOSED`, h = 0.970, lateral holder).
 
 Each park against its steel, the paper and itself. The first four columns come from the old code's
-body model and are plain distances (demanded: paper 0.020, pen 0.003, self 0.020, steel 0.050). The
+body model and are plain distances (demanded: paper 0.020, lifted pen 0.020, self 0.020, steel 0.050). The
 last column comes from the new kernel and is measured beyond each obstacle's demanded margin:
 
 | arm | paper (body) | pen tip height | self | steel, old body model (tape struts, 35 mm) | everything, new kernel, beyond the margin |
@@ -175,7 +175,7 @@ samples to better than 1 mm, so 0.003 is enough (orchestrator, 2026-09-29).
 | another arm (parked) | 0.050 | 0.003 (a parked arm is as still as steel) |
 | a wall | 0.025 | 0.0015 (half, because both arms pay it) |
 | paper, arm body | 0.020 | 0 |
-| paper, lifted pen | 0.003 | 0 |
+| paper, lifted pen | 0.020: 20 mm until the calibration routine is proven on the rig, then 3 mm (Pete, 2026-09-30). The sequencer lifts 2 mm more than this | 0 |
 | paper, rest of the tool (gripper, blades, holder) | 0.0: must not touch (Pete, 2026-09-30) | 0 |
 | itself | 0.020 | 0.003 (`rig.self_margin()`, `rig.gates()`) |
 | link 1 to its own hanger steel | 0.020 (same plate; see "Link 1") | checked once, not planned |
