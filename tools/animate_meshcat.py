@@ -103,6 +103,12 @@ def ink_chunks(tips):
 # --------------------------------------------------------------------------- scene
 
 
+def arm_colours(rig):
+    """The arm colours of the system figures."""
+    return {a: Rgba(*(int(sc.ARM_COLOUR[i][k:k + 2], 16) / 255 for k in (1, 3, 5)), 1.0)
+            for i, a in enumerate(rig.arm_ids)}
+
+
 def build(meshcat, colours):
     """The URDF's arms and table; a ball in the arm's colour on each hand (the meshes keep
     their own materials)."""
@@ -132,7 +138,7 @@ def check_bases(rig, plant, ctx, T_world_table):
     return worst
 
 
-def static_scene(meshcat, rig):
+def static_scene(meshcat, rig, steel=Rgba(0.45, 0.47, 0.5, 0.55)):
     """The paper and the rig's steel boxes, under /table (the table frame)."""
     meshcat.SetTransform("/table", RigidTransform([*(0.5 * rig.canvas_size), 0.0]))
     sx, sy = rig.canvas_size
@@ -140,7 +146,7 @@ def static_scene(meshcat, rig):
     meshcat.SetTransform("/table/paper", RigidTransform([0, 0, rig.paper_z - 0.00025]))
     for b in rig.steel:
         p = f"/table/steel/{b.name}"
-        meshcat.SetObject(p, Box(*(b.hi_table - b.lo_table)), Rgba(0.45, 0.47, 0.5, 0.55))
+        meshcat.SetObject(p, Box(*(b.hi_table - b.lo_table)), steel)
         meshcat.SetTransform(p, RigidTransform(0.5 * (b.lo_table + b.hi_table)))
 
 
@@ -233,6 +239,24 @@ def looks(rig, phases, T, pts, tips):
         f"{ph} arm {a} {n} by {-d * 1e3:.0f} mm" for (ph, a, n), d in behind.items()) or "none"))
 
 
+def still(rig, port):
+    """All six arms at park, every steel box opaque light grey, the paper; no walls."""
+    meshcat = Meshcat(MeshcatParams(port=port))
+    colours = arm_colours(rig)
+    diagram, plant, _ = build(meshcat, colours)
+    ctx = diagram.CreateDefaultContext()
+    pctx = plant.GetMyMutableContextFromRoot(ctx)
+    for a in rig.arm_ids:
+        for j in range(7):
+            plant.GetJointByName(f"arm{a}_panda_joint{j + 1}").set_angle(pctx, rig.park_q(a)[j])
+    diagram.ForcedPublish(ctx)
+    hide_urdf_duplicates(meshcat, plant)
+    static_scene(meshcat, rig, Rgba(0.82, 0.82, 0.82, 1.0))
+    c = np.array([*(0.5 * rig.canvas_size), 0.3])
+    meshcat.SetCameraPose(c + [3.2, -2.6, 2.2], c)
+    return meshcat
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--case", default="spiral", choices=sc.CASES)
@@ -240,8 +264,15 @@ def main():
     ap.add_argument("--port", type=int, default=7010)
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--once", action="store_true", help="exit after building")
+    ap.add_argument("--still", action="store_true", help="no plan: arms parked, steel opaque")
     args = ap.parse_args()
     rig = Rig.load(ROOT / "config")
+    if args.still:
+        meshcat = still(rig, args.port)
+        print(URL.format(port=args.port), flush=True)
+        while not args.once:
+            time.sleep(3600)
+        return
 
     t = time.perf_counter()
     tagged, left, _ = plan_detailed(rig, sc.drawing(args.case), rig.rules(),
@@ -255,8 +286,7 @@ def main():
     T = np.arange(0.0, total + PAUSE, 1.0 / HZ)
     Q, tips = samples(rig, phases, T)
     meshcat = Meshcat(MeshcatParams(port=args.port))
-    colours = {a: Rgba(*(int(sc.ARM_COLOUR[i][k:k + 2], 16) / 255 for k in (1, 3, 5)), 1.0)
-               for i, a in enumerate(rig.arm_ids)}
+    colours = arm_colours(rig)
     diagram, plant, vis = build(meshcat, colours)
     T_world_table = np.eye(4)
     T_world_table[:2, 3] = 0.5 * rig.canvas_size
