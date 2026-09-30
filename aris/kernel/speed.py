@@ -3,8 +3,9 @@
 Along the rounded path, the fastest speed at every point that keeps each joint inside its
 velocity and acceleration limit: one forward sweep (accelerate as hard as allowed) and one
 backward sweep (brake as hard as allowed) over a few hundred points along the path, plus a dozen
-across every sharp corner.  The speed is also capped where the path bends so sharply that jerk
-would bind; wherever the path turns, so that the turn lasts at least TURN_TIME (a 1 kHz
+across every sharp corner (and, on a smooth curve, two per piece between samples).  The speed is
+also capped where the path bends so sharply that jerk would bind; wherever the path turns (on a
+smooth curve: only at its rounded corners), so that the turn lasts at least TURN_TIME (a 1 kHz
 measurement then sees the whole turn); and, for drawing, at the draw speed.  Around every slow
 spot the cap is lowered by the distance travelled in one softening window, so that the softening
 of step 3 cannot carry a fast speed into a slow spot.
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from aris.kernel.spline import Rounded, evaluate
+from aris.kernel.spline import Rounded, _pairs, evaluate
 
 try:
     from aris_retime_native import sweeps as _native_sweeps
@@ -43,6 +44,9 @@ def backend() -> str:
     return "native" if _native_sweeps is not None else "numpy"
 
 
+SMOOTH_SPLIT = 2       # cells per piece between two samples of a smooth curve
+
+
 def _nodes(r: Rounded):
     """Where the speed is chosen: evenly along the path, plus densely across narrow corners."""
     L = float(r.u_knots[-1])
@@ -52,7 +56,14 @@ def _nodes(r: Rounded):
     sharp = (3.0 * r.w < 2.0 * L / N_UNIFORM) & (angle > CORNER_ANGLE)
     across = (r.u_c[sharp, None]
               + np.outer(r.w[sharp], np.linspace(-1.5, 1.5, N_CORNER))).ravel()
-    nodes = np.unique(np.concatenate([np.linspace(0.0, L, N_UNIFORM + 1), across]))
+    extra = [across]
+    if r.smooth:
+        # Every sample and SMOOTH_SPLIT cells per piece: a cell then never straddles a sample,
+        # and within one piece of a cubic the second derivative is linear and the third
+        # constant, so the cell's ends see their extremes exactly.
+        f = np.arange(SMOOTH_SPLIT) / SMOOTH_SPLIT
+        extra += [(r.u_knots[:-1, None] + np.diff(r.u_knots)[:, None] * f).ravel(), [L]]
+    nodes = np.unique(np.concatenate([np.linspace(0.0, L, N_UNIFORM + 1), *extra]))
     return nodes[np.concatenate([[True], np.diff(nodes) > 1e-12 * L])]
 
 
@@ -83,10 +94,14 @@ def profile(r: Rounded, v_max, a_max, j_max, cap, blend_time, tip_of=None):
         return np.maximum.reduce([a[0:-2:2], a[1::2], a[2::2]])
 
     c1, c2, c3 = (cell(np.abs(d)) for d in (d1, d2, d3))
-    with np.errstate(divide="ignore", invalid="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         minor = np.minimum(np.min(TURN_MINOR * a_max / c2, axis=1),
                            np.min((TURN_MINOR * j_max / c3) ** (2.0 / 3.0), axis=1))
         turn = np.where(cell(n3) > 0, (cell(n2) / (cell(n3) * TURN_TIME)) ** 2, np.inf)
+        if r.smooth:            # a smooth curve's bends are limited by their derivatives only;
+            inside = np.zeros(len(turn), dtype=bool)          # the floor is for its corners
+            inside[_pairs(r.u_c, r.w, 0.5 * (nodes[1:] + nodes[:-1]))[0]] = True
+            turn = np.where(inside, turn, np.inf)
         x_cell = np.minimum.reduce([np.min((v_max / c1) ** 2, axis=1),
                                     np.min(PLAN_CURVE * a_max / c2, axis=1),
                                     np.min((PLAN_JERK * j_max / c3) ** (2.0 / 3.0), axis=1),

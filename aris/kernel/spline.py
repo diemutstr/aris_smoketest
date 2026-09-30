@@ -1,8 +1,11 @@
-"""Curves for the timing step: rounding the corners of a joint polyline, and the cubic that a
+"""Curves for the timing step: the path through the input samples, and the cubic that a
 Trajectory means.
 
-A path made of straight pieces has corners, and at a corner the acceleration is an impulse
-however slowly the corner is flown (lesson L44).  So before any timing each corner is rounded:
+Two readings of the input samples.
+
+**Corners of a polyline** (`round_corners`; free-space paths).  A path made of straight pieces
+has corners, and at a corner the acceleration is an impulse however slowly the corner is flown
+(lesson L44).  So before any timing each corner is rounded:
 
     near a corner, each point is replaced by an average of its neighbours along the path
     (three box averages in a row, over a window of width w).
@@ -19,13 +22,21 @@ and nowhere more; the window is the widest that keeps every point within the dev
 (and the pen tip within its budget, if one is given), found by narrowing only the corners that
 break it.  Each window also stays 1.5 w clear of the path's ends, so the ends are exact.
 
-Deviation is measured at equal path parameter u, as a Euclidean distance in joint space.
+**Samples of a smooth curve** (`smooth_curve`; drawing, lowers, lifts).  The base is the cubic
+spline through the samples (twice differentiable), and there are no corners, except where the
+drawn line itself has one: where the spline's pen strays from the pen polyline, the spline is
+cut at the sample where the pen turns most, and that corner is rounded as above.  The spline
+pieces meet a cut with zero second derivative, so the bump keeps the path twice differentiable.
+
+Deviation is measured at equal path parameter u, as a Euclidean distance in joint space, from
+the polyline (corners) or from the spline (smooth).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
+from scipy.interpolate import CubicSpline
 from scipy.linalg import solve_banded
 
 BUMP_AT_CORNER = 0.203125   # bump(0, w) / w: the deviation of a lone corner per unit turn and width
@@ -33,6 +44,8 @@ NARROW_TRIES = 40           # rounds of narrowing the corners that break a budge
 DENSE_WIDTH = 4.0           # a window never spans more than this many sample spacings: wider
                             # averaging gains nothing on a densely sampled curve, and costs time
 _C = np.array([1.0, -3.0, 3.0, -1.0])   # truncated-power weights of three box averages
+TIP_PROBES = 3              # smooth curve: pen measured at this many points inside each piece
+CUT_SHARE = 0.5             # smooth curve: of the pen budget, what the spline alone may use
 
 
 # --------------------------------------------------------------------------- the rounded path
@@ -40,15 +53,21 @@ _C = np.array([1.0, -3.0, 3.0, -1.0])   # truncated-power weights of three box a
 
 @dataclass(frozen=True)
 class Rounded:
-    """A polyline with rounded corners.  Evaluate it with `evaluate`."""
+    """A polyline, or a spline (`coef`), with rounded corners.  Evaluate it with `evaluate`."""
     u_knots: np.ndarray    # (N,) path parameter of the samples, 0 .. L
     q_knots: np.ndarray    # (N, 7)
-    slope: np.ndarray      # (N-1, 7) dq/du of each straight piece
+    slope: np.ndarray      # (N-1, 7) dq/du of each straight piece (chord slopes for a spline)
     u_c: np.ndarray        # (C,) where the corners are
     dm: np.ndarray         # (C, 7) change of slope at each corner
     w: np.ndarray          # (C,) window width at each corner
-    deviation: float       # largest joint-space distance found from the polyline, rad
-    tip_deviation: float | None   # largest pen-tip distance found from the polyline's pen path
+    deviation: float       # largest joint-space distance found from the base (polyline, spline)
+    tip_deviation: float | None   # largest pen-tip distance found from the input's pen path
+    coef: np.ndarray | None = None       # (4, N-1, 7) the spline's cubic pieces; None: polyline
+    tip_knots: np.ndarray | None = None  # (N, 3) spline: the input's pen positions, if asked
+
+    @property
+    def smooth(self) -> bool:
+        return self.coef is not None
 
 
 def polyline_at(u_knots: np.ndarray, q_knots: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -85,13 +104,33 @@ def _pairs(u_c, w, u):
     return point, corner, (u[point] - u_c[corner]) / w[corner] + 1.5
 
 
+def spline_at(u_knots, coef, u, order=0):
+    """d^order q / du^order of the piecewise cubic `coef` at u (clamped to its pieces)."""
+    k = np.clip(np.searchsorted(u_knots, u, side="right") - 1, 0, len(u_knots) - 2)
+    x = (u - u_knots[k])[:, None]
+    c0, c1, c2, c3 = coef[0][k], coef[1][k], coef[2][k], coef[3][k]
+    if order == 0:
+        return ((c0 * x + c1) * x + c2) * x + c3
+    if order == 1:
+        return (3.0 * c0 * x + 2.0 * c1) * x + c2
+    return 6.0 * c0 * x + 2.0 * c1 if order == 2 else 6.0 * c0 + 0.0 * x
+
+
+def base_at(r: Rounded, u: np.ndarray) -> np.ndarray:
+    """The path before rounding (the polyline or the spline) at sorted points u."""
+    u = np.asarray(u, dtype=float)
+    return spline_at(r.u_knots, r.coef, u) if r.smooth else polyline_at(r.u_knots, r.q_knots, u)
+
+
 def evaluate(r: Rounded, u: np.ndarray, orders=(0,)) -> list[np.ndarray]:
     """The rounded path (order 0) and its derivatives d^k q / du^k at sorted points u."""
     u = np.asarray(u, dtype=float)
     point, corner, t = _pairs(r.u_c, r.w, u)
     out = []
     for k in orders:
-        if k == 0:
+        if r.smooth:
+            base = spline_at(r.u_knots, r.coef, u, k)
+        elif k == 0:
             base = polyline_at(r.u_knots, r.q_knots, u)
         elif k == 1:
             seg = np.clip(np.searchsorted(r.u_knots, u, side="right") - 1, 0, len(r.slope) - 1)
@@ -135,11 +174,19 @@ def round_corners(u_knots: np.ndarray, q_knots: np.ndarray, deviation: float,
     probe = np.unique(np.concatenate([u_knots, 0.5 * (u_knots[1:] + u_knots[:-1])[long_piece]]))
     lin = polyline_at(u_knots, q_knots, probe)
     tip_lin = tip_of(lin) if tip_budget is not None else None
+    r = Rounded(u_knots, q_knots, slope, u_c, dm, w, 0.0, None)
+    return _fit_windows(r, probe, lin, tip_lin, deviation, tip_of, tip_budget)
+
+
+def _fit_windows(r: Rounded, probe, lin, tip_lin, deviation, tip_of, tip_budget):
+    """Narrow the windows of `r` until every probe is within both budgets of its reference
+    (`lin` in joint space, `tip_lin` for the pen)."""
+    u_c, w = r.u_c, r.w
     over = np.zeros(len(probe))
     tip_over = np.zeros(len(probe))
     redo = np.arange(len(probe))              # the points whose rounded position may have moved
     for _ in range(NARROW_TRIES):
-        r = Rounded(u_knots, q_knots, slope, u_c, dm, w, 0.0, None)
+        r = replace(r, w=w)
         q = evaluate(r, probe[redo])[0]
         over[redo] = np.linalg.norm(q - lin[redo], axis=1) / deviation
         if tip_lin is not None:
@@ -147,10 +194,11 @@ def round_corners(u_knots: np.ndarray, q_knots: np.ndarray, deviation: float,
         worst = np.maximum(over, tip_over)
         if worst.max() <= 1.0:
             tip_dev = float(tip_over.max()) * tip_budget if tip_lin is not None else None
-            return Rounded(u_knots, q_knots, slope, u_c, dm, w, float(over.max()) * deviation,
-                           tip_dev)
+            return replace(r, deviation=float(over.max()) * deviation, tip_deviation=tip_dev)
         narrowed = _narrow(u_c, w, probe, worst)
         moved = narrowed < w
+        if not moved.any():                   # over budget where no window reaches
+            break
         redo = np.unique(_pairs(u_c[moved], w[moved], probe)[0])
         w = narrowed
     return f"corners could not be rounded within the budget in {NARROW_TRIES} rounds"
@@ -163,6 +211,78 @@ def _narrow(u_c, w, probe, over):
     factor = np.ones(len(w))
     np.minimum.at(factor, corner, 0.95 / over[bad][point])
     return w * factor
+
+
+# --------------------------------------------------------------------------- samples of a smooth curve
+
+
+def smooth_curve(u_knots: np.ndarray, q_knots: np.ndarray, deviation: float, tip_of=None,
+                 tip_budget: float | None = None) -> Rounded | str:
+    """The spline through the samples, cut and rounded where the drawn line has a corner (the
+    spline's pen more than CUT_SHARE of the budget from the pen polyline); a reason if the
+    budgets can't be met.  Without a pen budget there are no cuts."""
+    f = np.arange(1, TIP_PROBES + 1) / (TIP_PROBES + 1)
+    probe = np.concatenate([u_knots, (u_knots[:-1, None] + np.diff(u_knots)[:, None] * f).ravel()])
+    order = np.argsort(probe, kind="stable")
+    piece = np.concatenate([np.full(len(u_knots), -1),              # a sample is on the line
+                            np.repeat(np.arange(len(u_knots) - 1), TIP_PROBES)])
+    probe, piece = probe[order], piece[order]
+    tips = tip_of(q_knots) if tip_budget is not None else None
+    tip_lin = polyline_at(u_knots, tips, probe) if tips is not None else None
+    cuts = np.zeros(len(u_knots), dtype=bool)
+    turn = _pen_turn(tips) if tips is not None else None
+    for _ in range(len(u_knots)):
+        coef = _spline(u_knots, q_knots, cuts)
+        if tips is None:
+            break
+        lin = spline_at(u_knots, coef, probe)
+        off = np.linalg.norm(tip_of(lin) - tip_lin, axis=1) > CUT_SHARE * tip_budget
+        bad = np.unique(piece[off & (piece >= 0)])
+        if not len(bad):
+            break
+        if len(u_knots) < 3:
+            return "the curve through the two samples leaves the pen polyline"
+        # Cut each bad piece where the pen turns most, among its two samples and their outer
+        # neighbours (a corner makes the spline ring on the pieces next to it too).
+        near = np.clip(bad[:, None] + np.arange(-1, 3), 1, len(u_knots) - 2)
+        score = np.where(cuts[near], -1.0, turn[near])
+        pick = np.argmax(score, axis=1)
+        new = near[np.arange(len(bad)), pick][score[np.arange(len(bad)), pick] >= 0.0]
+        new = np.unique(new)
+        if not len(new):
+            return "the curve through the samples leaves the pen polyline between two corners"
+        cuts[new] = True
+    lin = spline_at(u_knots, coef, probe)
+    k = np.flatnonzero(cuts)
+    h = (u_knots[k] - u_knots[k - 1])[:, None]
+    dm = coef[2][k] - ((3.0 * coef[0][k - 1] * h + 2.0 * coef[1][k - 1]) * h + coef[2][k - 1])
+    u_c, L = u_knots[k], float(u_knots[-1])
+    w = np.minimum(deviation / (BUMP_AT_CORNER * np.maximum(np.linalg.norm(dm, axis=1), 1e-300)),
+                   np.minimum(u_c, L - u_c) / 1.5)
+    slope = np.diff(q_knots, axis=0) / np.diff(u_knots)[:, None]
+    r = Rounded(u_knots, q_knots, slope, u_c, dm, w, 0.0, None, coef, tips)
+    return _fit_windows(r, probe, lin, tip_lin, deviation, tip_of, tip_budget)
+
+
+def _pen_turn(tips):
+    """How far the pen polyline turns at each sample, radians (0 at the ends)."""
+    d = np.diff(tips, axis=0)
+    d = d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-300)
+    cos = np.clip(np.sum(d[1:] * d[:-1], axis=1), -1.0, 1.0)
+    return np.concatenate([[0.0], np.arccos(cos), [0.0]])
+
+
+def _spline(u_knots, q_knots, cuts):
+    """The cubic spline through the samples, in pieces between the cuts.  Not-a-knot at the two
+    ends of the path (no condition is invented there), zero second derivative at a cut."""
+    edges = np.concatenate([[0], np.flatnonzero(cuts), [len(u_knots) - 1]])
+    zero = np.zeros(q_knots.shape[1])
+    parts = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        bc = ("not-a-knot" if a == 0 else (2, zero), "not-a-knot" if b == len(u_knots) - 1
+              else (2, zero))
+        parts.append(CubicSpline(u_knots[a:b + 1], q_knots[a:b + 1], axis=0, bc_type=bc).c)
+    return np.concatenate(parts, axis=1)
 
 
 # --------------------------------------------------------------------------- the cubic between samples

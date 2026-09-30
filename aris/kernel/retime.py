@@ -2,13 +2,17 @@
 
 Four steps, each small:
 
-1. Round the corners (`spline.round_corners`).  The path handed in is made of straight pieces;
-   at every corner the acceleration would be an impulse however slowly it is flown (lesson L44),
-   so no choice of speed can fix it.  Each corner is rounded, within the deviation budget.
-2. Choose the speed along the rounded path (`speed.profile`): the fastest speed at every point
+1. Make the path through the samples.  By default (`spline.round_corners`, free-space paths)
+   the path handed in is made of straight pieces; at every corner the acceleration would be an
+   impulse however slowly it is flown (lesson L44), so no choice of speed can fix it.  Each
+   corner is rounded, within the deviation budget.  With `smooth=True` (`spline.smooth_curve`:
+   drawing, lowers, lifts, whose samples are IK solutions along a smooth line) the path is the
+   cubic spline through the samples; it is cut and rounded only at a real corner of the drawn
+   line.  Densely sampled curves then have no micro-corners to crawl through.
+2. Choose the speed along the path (`speed.profile`): the fastest speed at every point
    that keeps each joint inside its velocity and acceleration limit, found by one forward and one
    backward sweep over the path (a time-optimal path parameterisation).  The speed is also capped
-   where the path bends so sharply that jerk would bind; wherever the path turns, so that the
+   where the path bends so sharply that jerk would bind; at every rounded corner, so that the
    turn lasts at least TURN_TIME (a 1 kHz measurement then sees the whole turn, whatever the
    phase of its samples); and, for drawing, at the draw speed.
 3. Soften the speed changes (`_time_law`).  The sweeps switch between full acceleration and full
@@ -33,8 +37,8 @@ from scipy.ndimage import uniform_filter1d
 
 from aris.kernel import speed
 from aris.kernel.speed import sweeps_numpy  # noqa: F401  (public, re-exported)
-from aris.kernel.spline import (Rounded, evaluate, hermite, peaks, polyline_at,
-                                rest_to_rest_velocities, round_corners)
+from aris.kernel.spline import (Rounded, base_at, evaluate, hermite, peaks, polyline_at,
+                                rest_to_rest_velocities, round_corners, smooth_curve)
 from aris.types import DrawRules, JointPath, Limits, Refusal, Trajectory
 
 
@@ -78,20 +82,24 @@ class RetimeResult:
     s: np.ndarray | None     # drawing: arc length along the line at each sample; else None
     deviation: float         # rad, largest joint-space distance from the input at equal path position
     tip_deviation: float | None  # m, largest pen-tip distance from the input's pen path, if asked
-    width: float             # the narrowest corner-rounding window used, in path units (rad, or m)
+    width: float             # the narrowest corner-rounding window used, in path units (rad, or
+                             # m); with smooth=True the shortest gap between two input
+                             # samples, or the narrowest window at a corner of the line
     stretch: float           # the final clock slow-down of step 4; 1.0 means none was needed
     report: CheckReport      # exact extremes, against the full limits
 
 
 def retime(path: JointPath, limits: Limits, rules: DrawRules, s: np.ndarray | None = None,
-           tip_budget_m: float | None = None, tip_of=None, **options) -> Trajectory | Refusal:
+           tip_budget_m: float | None = None, tip_of=None, smooth: bool = False,
+           **options) -> Trajectory | Refusal:
     """Timed trajectory for `path`; with `s` (arc length per sample, m) a drawing motion.
 
     With `tip_of` (Q -> pen tips), the pen tip stays within `tip_budget_m` of the input's pen
-    path (default 0.1 mm for drawing).  Other options: see `retime_detailed`.
+    path (default 0.1 mm for drawing).  `smooth`: the samples lie on a smooth curve (see
+    `retime_detailed`).  Other options: see `retime_detailed`.
     """
     result = retime_detailed(path, limits, rules, s, tip_budget_m=tip_budget_m, tip_of=tip_of,
-                             **options)
+                             smooth=smooth, **options)
     return result if isinstance(result, Refusal) else result.traj
 
 
@@ -99,7 +107,7 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     s: np.ndarray | None = None, *, deviation: float = 1.5e-4,
                     tip_budget_m: float | None = None, tip_of=None,
                     accel_fraction: float = 0.9, jerk_fraction: float = 0.9,
-                    blend_time: float = 0.025, knot_dt: float = 0.05
+                    blend_time: float = 0.025, knot_dt: float = 0.05, smooth: bool = False
                     ) -> RetimeResult | Refusal:
     """`retime`, plus what it did.
 
@@ -116,6 +124,14 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
     jerk_fraction   of the jerk limit, likewise.  Velocity uses rules.speed_fraction.
     blend_time      s, length of each of the three box averages that soften speed changes.
     knot_dt         s, the longest gap between output samples.
+    smooth          the samples lie on a smooth curve (drawing, lowers and lifts: IK solved
+                    along a smooth line): the path is the twice-differentiable cubic spline
+                    through them, and no turn has a minimum duration.  With a pen budget, the
+                    spline is cut where its pen strays from the pen polyline by more than half
+                    the budget (a real corner of the drawn line), and that corner is rounded.
+                    `deviation` is then measured from the spline, the pen from the polyline
+                    through the input's pen positions.  False (default): the samples are the
+                    corners of a polyline (free-space paths); the numbers are those of before.
     """
     prepared = _prepare(path, limits, rules, s)
     if isinstance(prepared, Refusal):
@@ -128,8 +144,11 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
     targets = (rules.speed_fraction * limits.qd_max, accel_fraction * limits.qdd_max,
                jerk_fraction * limits.qddd_max)
     # The written-out samples add a little to the rounding; leave them a tenth of each budget.
-    rounded = round_corners(u_knots, q_knots, 0.9 * deviation, tip_of,
-                            None if tip_budget_m is None else 0.9 * tip_budget_m)
+    tip_share = None if tip_budget_m is None else 0.9 * tip_budget_m
+    if smooth:
+        rounded = smooth_curve(u_knots, q_knots, 0.9 * deviation, tip_of, tip_share)
+    else:
+        rounded = round_corners(u_knots, q_knots, 0.9 * deviation, tip_of, tip_share)
     if isinstance(rounded, str):
         return Refusal("cannot_smooth", rounded)
     cap = rules.draw_speed if s is not None else None
@@ -152,7 +171,10 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
     else:
         return why
     s_out = (u_fine[knots] + float(s[0])) if s is not None else None
-    width = float(rounded.w.min()) if len(rounded.w) else float(u_knots[-1])
+    if smooth:
+        width = float(min(np.diff(u_knots).min(), rounded.w.min(initial=np.inf)))
+    else:
+        width = float(rounded.w.min()) if len(rounded.w) else float(u_knots[-1])
     return RetimeResult(traj, s_out, dev, tip_dev, width, stretch, report)
 
 
@@ -275,9 +297,16 @@ def _to_trajectory(r: Rounded, t_fine, u_fine, nodes, rates, knot_dt, v_max, a_m
     # still follow the braking without overshooting the draw speed.
     v_scale = max(min(v_max.max(), joint_speed.max()), 1e-12)
     a_scale = max(min(a_max.max(), np.abs(joint_accel).max()), 1e-12)
-    cost = np.maximum.reduce([np.full(len(du), FINE_DT / knot_dt), du * turn / KNOT_TURN,
-                              np.abs(np.diff(joint_speed, prepend=0.0)) / (KNOT_DV * v_scale),
-                              np.abs(np.diff(joint_accel, prepend=0.0)) / (KNOT_DA * a_scale)])
+    terms = [np.full(len(du), FINE_DT / knot_dt), du * turn / KNOT_TURN,
+             np.abs(np.diff(joint_speed, prepend=0.0)) / (KNOT_DV * v_scale),
+             np.abs(np.diff(joint_accel, prepend=0.0)) / (KNOT_DA * a_scale)]
+    if r.smooth:
+        # Along a bending curve the joints' own acceleration can dwarf that of speeding up or
+        # slowing down, and the ramps then get too few samples: the cubic overshoots the draw
+        # speed where a ramp ends.  So the ramps of the path speed are sampled on their own.
+        terms.append(np.abs(np.diff(accel, prepend=0.0)) / (KNOT_DA * max(np.abs(accel).max(),
+                                                                           1e-12)))
+    cost = np.maximum.reduce(terms)
     # Every derivative starts and ends at zero; dense samples there keep the spline's end
     # acceleration near zero too (it cannot be pinned: a cubic spline has one condition per end).
     ends = int(round(END_DENSE / FINE_DT))
@@ -301,14 +330,16 @@ def _to_trajectory(r: Rounded, t_fine, u_fine, nodes, rates, knot_dt, v_max, a_m
 def _flown_deviation(r: Rounded, traj, mid, q_mid, u_fine, tip_of, tip_budget):
     """Deviation of the written-out cubic halfway between samples, where it strays most.
 
-    The pen is first bounded without forward kinematics: the cubic's pen can be no further from
-    the rounded path's pen than TIP_GAIN times their joint-space distance.  The pen is measured
-    only at the points where that bound is over the budget.
+    The reference is the input polyline, or for a smooth curve the spline through the samples
+    (its pen: the polyline through the input's pen positions).  The pen is first
+    bounded without forward kinematics: the cubic's pen can be no further from the path's pen
+    than TIP_GAIN times their joint-space distance.  The pen is measured only at the points
+    where that bound is over the budget.
     """
     u = u_fine[mid]
     q = hermite(traj.t, traj.q, traj.qd, mid * FINE_DT)[0]
-    dev = max(r.deviation, float(np.max(np.linalg.norm(q - polyline_at(r.u_knots, r.q_knots, u),
-                                                       axis=1))))
+    ref = base_at(r, u) if r.smooth else polyline_at(r.u_knots, r.q_knots, u)
+    dev = max(r.deviation, float(np.max(np.linalg.norm(q - ref, axis=1))))
     if tip_budget is None:
         return dev, None
     spline_err = np.linalg.norm(q - q_mid, axis=1)
@@ -316,8 +347,11 @@ def _flown_deviation(r: Rounded, traj, mid, q_mid, u_fine, tip_of, tip_budget):
     unsure = bound > tip_budget                       # measure the pen only where it could be over
     if not unsure.any():
         return dev, float(bound.max())
-    lin = polyline_at(r.u_knots, r.q_knots, u[unsure])
-    measured = np.linalg.norm(tip_of(q[unsure]) - tip_of(lin), axis=1)
+    if r.smooth:
+        want = polyline_at(r.u_knots, r.tip_knots, u[unsure])
+    else:
+        want = tip_of(polyline_at(r.u_knots, r.q_knots, u[unsure]))
+    measured = np.linalg.norm(tip_of(q[unsure]) - want, axis=1)
     return dev, float(max(bound[~unsure].max(initial=r.tip_deviation), measured.max()))
 
 
