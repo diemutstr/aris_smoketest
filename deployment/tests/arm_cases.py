@@ -60,17 +60,8 @@ def plan_case(rig: Rig, arm_id: int, lines_table, cache_dir=None, workers: int =
 
 def roles(motions) -> list[str]:
     """What each motion is in the tour: move, set-down, draw, lift-off."""
-    out = []
-    for i, m in enumerate(motions):
-        if m.kind == "draw":
-            out.append("draw")
-        elif i + 1 < len(motions) and motions[i + 1].kind == "draw":
-            out.append("set-down")
-        elif i > 0 and motions[i - 1].kind == "draw":
-            out.append("lift-off")
-        else:
-            out.append("move")
-    return out
+    names = {"draw": "draw", "lower": "set-down", "lift": "lift-off", "free": "move"}
+    return [names[m.kind] for m in motions]
 
 
 def _check_one(job):
@@ -85,34 +76,15 @@ def _check_one(job):
     return v.passed, failed, row, v.min_clearance
 
 
-# Two places where the checker (as of 2026-09-30, 09:40) and the planners disagree by design;
-# see docs/modules/sequencer.md, "What the checker says".
-LINK1_OWN_STEEL = 0.020   # m: link 1 against its own hanger steel (commit f371483; the checker
-                          # still asks the 0.050 of all steel)
-PEN_DIP = 0.005           # m: the pen capsule's round end dips below the tip it touches the paper
-                          # with by at most its radius (5 mm; 0.3 to 1.3 mm at the pen's lean)
-
-
-def known_disagreement(arm_id: int, role: str, check) -> bool:
-    """True if every failed row of a verdict is one of the two known disagreements:
-    - link 1 near its own struts, plate or clamp, at 0.020 m or more (the checker asks 0.050)
-    - a set-down or lift-off whose pen touches the paper at its drawing end (the checker asks
-      the lifted pen's 0.003 m of every free motion)."""
-    own = (f"strut{arm_id}_", f"plate{arm_id}", f"clamp{arm_id}")
-    for name, value, limit, detail in check[1]:
-        link1 = "link1." in detail and any(o in detail for o in own)
-        pen = role in ("set-down", "lift-off") and "pen / paper" in detail
-        if name == "clearance steel" and link1 and value >= LINK1_OWN_STEEL:
-            continue
-        if name.startswith("hold") and link1 and value + 0.050 >= LINK1_OWN_STEEL:
-            continue
-        if name == "clearance paper (pen)" and pen and value >= -PEN_DIP:
-            continue
-        if name.startswith("hold") and role == "set-down" and "clearance paper (pen)" in detail \
-                and value >= -0.003 - PEN_DIP:
-            continue
-        return False
-    return True
+def save_motion(path, arm_id: int, motion, q_before, note: str = "") -> None:
+    """One motion as an npz, for the checker's tests (trajectory, tips, piece, q_before)."""
+    p = motion.piece
+    np.savez_compressed(path, arm_id=arm_id, kind=motion.kind, t=motion.traj.t,
+                        q=motion.traj.q, qd=motion.traj.qd, q_before=q_before,
+                        tip_base=np.zeros((0, 3)) if motion.tip_base is None else motion.tip_base,
+                        line_id="" if p is None else p.line_id,
+                        s0=np.nan if p is None else p.s0, s1=np.nan if p is None else p.s1,
+                        intensity=motion.intensity, note=note)
 
 
 def check_all(rig: Rig, arm_id: int, motions, workers: int = 16, draw_speed=None) -> list:
@@ -149,19 +121,15 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
     if checks is not None:
         rl = roles(motions)
         passed = sum(c[0] for c in checks)
-        known = sum(not c[0] and known_disagreement(arm_id, r, c) for r, c in zip(rl, checks))
         tight = min(c[3] for c in checks) if checks else float("nan")
-        out.append(f"  checker: {passed} of {len(checks)} motions pass; {known} more fail only on "
-                   f"the two known disagreements; smallest clearance beyond demanded "
-                   f"{tight * 1e3:.1f} mm")
+        out.append(f"  checker: {passed} of {len(checks)} motions pass; smallest clearance "
+                   f"beyond demanded {tight * 1e3:.1f} mm")
         fails = {}
         for r, c in zip(rl, checks):
             if not c[0]:
-                key = (r, tuple(f[0] for f in c[1]), known_disagreement(arm_id, r, c))
-                fails.setdefault(key, []).append(c[2])
-        for (r, names, k), rows in sorted(fails.items()):
-            out.append(f"    {len(rows)} {r} fail on {', '.join(names)}"
-                       f"{' (known)' if k else ''}; tightest e.g. {rows[0]}")
+                fails.setdefault((r, tuple(f[0] for f in c[1])), []).append(c[2])
+        for (r, names), rows in sorted(fails.items()):
+            out.append(f"    {len(rows)} {r} fail on {', '.join(names)}; tightest e.g. {rows[0]}")
     return out
 
 
@@ -228,5 +196,11 @@ if __name__ == "__main__":
             checks = check_all(rig, arm_id, ms, a.check_workers, a.draw_speed)
             print("\n".join(summary(f"arm {arm_id} {name}", ms, left, st, load, checks, arm_id)))
             print(f"  (checking took {time.perf_counter() - t:.0f} s wall)", flush=True)
+            q_before = [rig.park_q(arm_id)] + [m.q_end for m in ms[:-1]]
+            stops = [i for i, c in enumerate(checks) if any(f[0] == "never stops" for f in c[1])]
+            for k, i in enumerate(stops):
+                path = DEPLOY / "tests" / "data" / f"arm_stop_{arm_id}_{name.replace(':', '_')}_{k}.npz"
+                save_motion(path, arm_id, ms[i], q_before[i], checks[i][2])
+                print(f"  saved the motion that fails 'never stops' to {path}")
             if a.figure and arm_id == 31 and name == "word":
                 figure(rig, arm_id, ms)

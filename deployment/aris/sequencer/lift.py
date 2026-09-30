@@ -29,8 +29,8 @@ class Lift:
     """A lift-off from a drawing configuration: `up` goes from it to `q_up`."""
     q_draw: np.ndarray
     q_up: np.ndarray
-    up: Motion                        # q_draw -> q_up
-    down: Motion                      # q_up -> q_draw, the same motion backwards
+    up: Motion                        # kind "lift": q_draw -> q_up
+    down: Motion                      # kind "lower": q_up -> q_draw, the same motion backwards
 
 
 def lift_path(arm, q: np.ndarray, paper: Plane, height: float, step: float,
@@ -112,5 +112,6 @@ def _lift(arm, guard, paper, q_draw, rules, step, max_jump, turn7, spin) -> Lift
     why = guard.hold(path[-1], touching=False)
     if why is not None:
         return f"cannot hold the lifted pen: {why}"
-    up = Motion("free", res.traj)
-    return Lift(q_draw=path[0], q_up=res.traj.q[-1], up=up, down=Motion("free", reverse(res.traj)))
+    up = Motion("lift", res.traj)
+    return Lift(q_draw=path[0], q_up=res.traj.q[-1], up=up,
+                down=Motion("lower", reverse(res.traj)))

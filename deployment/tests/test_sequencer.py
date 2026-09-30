@@ -18,7 +18,7 @@ from test_arm_planner import RIG, assert_tour, two_lines  # noqa: E402
 from aris import local  # noqa: E402
 from aris.kernel.retime import sample  # noqa: E402
 from aris.sequencer import TourOptions, TourReport, price, tour, tour_all  # noqa: E402
-from aris.sequencer.draw import corners, draw_motions  # noqa: E402
+from aris.sequencer.draw import draw_motions  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
 from aris.sequencer.lift import lift, reverse  # noqa: E402
 
@@ -50,6 +50,7 @@ def test_lift_off_goes_straight_up_and_the_set_down_is_the_same_backwards(proble
     up = lift(arm, guard, paper, q, rules, 0.002, 0.05, TourOptions().lift_turns)
     assert not isinstance(up, str), up
     assert np.array_equal(up.up.q_start, q) and np.array_equal(up.down.q_end, q)
+    assert up.up.kind == "lift" and up.down.kind == "lower"
     assert np.max(np.abs(up.down.q_start - up.q_up)) == 0.0
     n = paper.normal / np.linalg.norm(paper.normal)
     t = np.linspace(0, up.up.traj.t[-1], 200)
@@ -72,12 +73,10 @@ def test_reverse_of_a_trajectory():
     assert np.allclose(r.qd[1], -1.0)
 
 
-def test_drawing_is_cut_at_sharp_corners_only(problem):
-    tip = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [1.9, 0.05, 0], [1.9, 1, 0]], float)
-    assert corners(tip, np.deg2rad(120)).tolist() == [2]
+def test_one_piece_is_one_drawing_motion(problem):
     arm, obs, rules, bunches = problem
     plan = bunches[0].plans[0]
-    ms = draw_motions(arm, Guard(arm, obs, rules.gates), plan, rules, 1.5e-4, np.deg2rad(120))
+    ms = draw_motions(arm, Guard(arm, obs, rules.gates), plan, rules, 1.5e-4)
     assert len(ms) == 1 and ms[0].kind == "draw"                  # a straight line: one motion
     assert np.max(np.linalg.norm(arm.tip(ms[0].traj.q) - ms[0].tip_base, axis=1)) < 1.2e-4
 

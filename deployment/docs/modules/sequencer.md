@@ -22,14 +22,14 @@ Files: `aris/sequencer/tour.py` (the loop and the report), `lift.py` (lift-off a
   share, longest free motion, joint travel of the moves, free-space calls and refusals, time
   to the first motion, CPU and wall time).
 
-Per piece it hands out four motions (more where a drawing is cut, below):
+Per piece it hands out four motions:
 
 | motion | kind | what |
 |---|---|---|
 | move | free | from where the arm is to the piece's first lift-off configuration (free-space planner) |
-| set-down | free | the pen straight down onto the paper: the lift-off flown backwards |
+| set-down | lower | the pen straight down onto the paper: the lift-off flown backwards |
 | drawing | draw | the piece, pen on the paper |
-| lift-off | free | the pen straight up 25 mm at the end of the piece |
+| lift-off | lift | the pen straight up 25 mm at the end of the piece |
 
 and at the end one move to `q_end`. Every motion starts exactly where the one before ended
 (to 1e-9 rad), starts and ends at rest, and ends in a configuration the arm can hold: before a
@@ -71,17 +71,13 @@ leftover `no_free_path`, "no lift-off at its start/end", with the reason of the 
 ## The drawing motion
 
 The local planner's joint path is timed here in one call (`kernel.retime`, pen within 0.1 mm of
-the planned pen path) and checked as flown against every obstacle. Two corrections, both
-because of what the checker measures:
-- **Sharp corners.** At a corner sharper than 120 degrees the drawing is cut into two motions
-  that stop there with the pen down. The timing slows the pen a lot at such a corner anyway; the
-  checker reads the speed along the line from the nearest point of the line, which at a rounded
-  sharp corner falls back for an instant and fails "never stops".
-- **Pen speed.** Between its samples the flown curve can run up to 3 % faster than the draw
-  speed where the pen speeds up or slows down (the timing holds the speed along the path, not
-  the pen's). The pen speed is read at 1 kHz; if it is over by more than 1 %, the draw speed asked
-  of the timing is lowered by that much and the path is timed again. (Better fixed in
-  `kernel.retime`.)
+the planned pen path) and checked as flown against every obstacle: one piece, one drawing
+motion. The timing step keeps the pen within 0.5 % of the draw speed (on two of 1 409
+drawings it read 3.6 to 3.8 % over at 1 kHz; see "What the checker says").
+
+The local planner times each plan only to report its duration (corner to corner) and hands
+over no trajectory, so the sequencer times it again; the local planner's `draw_time` is not the
+flown duration (left as is, orchestrator 2026-09-30).
 
 A drawing that cannot be timed or flown makes the candidate unusable; if no alternative works
 the piece is a leftover `unreachable`, "drawing: ...".
@@ -97,22 +93,21 @@ report says so (`end_refusal`); the last motion still ends holdable.
 
 ## What the checker says
 
-Every motion of every case was given to the independent checker. None passes outright, and
-every failure is one of two disagreements that are not the sequencer's to settle:
+Every motion of every case below went through the independent checker (branch aris3,
+2026-09-30, the checker that knows `lower` and `lift`): **1 407 of 1 409 motions pass**; the
+tightest clearance beyond the demanded one is 0.6 mm (arm 31, scatter). The two that fail are
+drawings of arm 31 (random lines along the rim, `line:rim:190` and `line:rim:176`), on "tip
+speed": 20.75 and 20.73 mm/s against the checker's 20.6 (3 % over 20). Saved for the timing
+step's owner: `tests/data/arm_speed_31_lines_0.npz`, `_1.npz`.
 
-1. **Link 1 and its own struts.** Since commit f371483 (struts 30 mm longer) the planners treat
-   link 1 like the base: it keeps 0.020 m to its own hanger steel, checked once over the turn of
-   joint 1. The checker still asks 0.050 m of it on every motion: link 1 reads about 39 mm from
-   its narrow strut (38.9 mm at the closest), whatever the arm does. Needs the checker brought in step.
-2. **The pen at the drawing end of a set-down or lift-off.** Those are free motions, and the
-   checker asks every free motion to keep the lifted pen 3 mm off the paper. One end of these
-   two is the drawing configuration, pen on the paper: the pen's round end reads 0.3 to 1.3 mm
-   into the paper there (its 5 mm radius at the pen's lean). Needs a contract decision: a motion
-   kind for pen-down/pen-up, or the checker exempting the pen along the lift.
+The word at the old drawing speed (80 mm/s, arm 31): 52 of 53 pass. One drawing fails "never
+stops": 1.03 mm/s at its slowest mid-way, against 4 mm/s (5 % of 80), at a sharp corner.
+Saved for the checker's owner: `tests/data/arm_stop_31_word_0.npz` (trajectory, planned tips,
+piece, q_before). At 20 mm/s the same corner passes.
 
-`tests/arm_cases.py` (`known_disagreement`) sorts every failed row: a failure counts as known
-only if it is one of these two, within the numbers given. All 1 507 motions of the fixed cases
-fail only on these.
+The first round (2026-09-30, morning) failed every motion on two disagreements, since settled:
+link 1 against its own struts, and the pen at the paper end of a set-down or lift-off (now the
+kinds `lower` and `lift`).
 
 ## What it cannot do
 
@@ -126,43 +121,43 @@ fail only on these.
 - A piece refused from where the arm is may be reachable from elsewhere; it is not offered
   again later.
 
-## Measured (2026-09-30, machine load 6 to 11 on 32 cores, one process)
+## Measured (2026-09-30, branch aris3, machine load 4 to 15 on 32 cores, one process)
 
 From park back to park; obstacles of the arm's leading phase (arm 31 phase 2, arm 13 phase 1);
 kinematic table on; drawing speed 20 mm/s. Planning time includes the local planner. "Moves" is
-the joint-space path length of the moves between pieces. Pen-up time is every free motion
-(moves, set-downs, lift-offs). No hatch lines lie within 0.80 m of arm 31.
+the joint-space path length of the moves between pieces. Pen-up time is every motion that is not
+drawing (moves, set-downs, lift-offs). No hatch lines lie within 0.80 m of arm 31.
 
-| arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | moves rad | leftovers (m) |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 31 word | 13 | 13 | 2.5 / 2.5 | 1.6 | 122.8 | 43.1 | 0.260 | 7.6 | 49.6 | unreachable 0.198 |
-| 31 scatter | 27 | 22 | 4.5 / 4.6 | 3.2 | 140.9 | 83.0 | 0.371 | 13.2 | 94.9 | blocked 0.320, no path 0.177, unreachable 0.111, too short 0.002 |
-| 31 starburst | 24 | 25 | 12.3 / 12.5 | 9.7 | 706.9 | 66.2 | 0.086 | 8.3 | 68.0 | blocked 0.908, no path 0.417, unreachable 0.429 |
-| 31 spiral | 3 | 7 | 10.9 / 10.9 | 8.9 | 455.7 | 28.9 | 0.060 | 6.0 | 36.7 | blocked 1.135, unreachable 0.278 |
-| 31 duotone | 5 | 5 | 4.2 / 4.2 | 2.7 | 207.0 | 35.3 | 0.146 | 9.4 | 41.1 | blocked 0.411, unreachable 0.208 |
-| 31 lines | 100 | 103 | 38.2 / 38.4 | 28.5 | 2240.3 | 178.7 | 0.074 | 7.5 | 138.7 | blocked 2.325, no path 0.198, unreachable 0.015 |
-| 13 word | 13 | 12 | 2.1 / 2.1 | 1.4 | 121.3 | 31.9 | 0.208 | 4.9 | 36.6 | unreachable 0.199, blocked 0.014 |
-| 13 hatch | 43 | 43 | 19.7 / 19.7 | 13.6 | 1515.5 | 60.0 | 0.038 | 4.7 | 42.0 | none |
-| 13 scatter | 24 | 23 | 2.7 / 2.9 | 1.9 | 142.3 | 57.6 | 0.288 | 5.9 | 61.3 | blocked 0.164, unreachable 0.011 |
-| 13 starburst | 5 | 6 | 2.0 / 2.0 | 1.7 | 53.1 | 24.0 | 0.312 | 9.2 | 23.8 | blocked 0.489, unreachable 0.163 |
-| 13 spiral | 3 | 2 | 1.7 / 1.8 | 1.6 | 73.8 | 6.5 | 0.081 | 2.9 | 5.7 | blocked 0.523, unreachable 0.147 |
-| 13 duotone | 5 | 4 | 4.1 / 4.3 | 3.2 | 176.0 | 19.3 | 0.099 | 5.8 | 23.6 | blocked 0.286, unreachable 0.606 |
-| 13 lines | 100 | 104 | 33.5 / 33.8 | 24.1 | 2213.2 | 172.2 | 0.072 | 5.5 | 130.1 | blocked 1.652, no path 0.250, unreachable 0.014 |
+| arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | moves rad | leftovers (m) | checker |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 31 word | 13 | 13 | 2.3 / 2.3 | 1.6 | 122.9 | 43.1 | 0.259 | 7.6 | 49.6 | unreachable 0.198 | 53 / 53 |
+| 31 scatter | 27 | 22 | 4.1 / 4.1 | 2.8 | 140.8 | 83.0 | 0.371 | 13.2 | 94.9 | blocked 0.320, no path 0.177, unreachable 0.111, too short 0.002 | 89 / 89 |
+| 31 starburst | 24 | 25 | 11.6 / 11.7 | 10.1 | 706.6 | 66.2 | 0.086 | 8.3 | 68.0 | blocked 0.908, no path 0.417, unreachable 0.429 | 101 / 101 |
+| 31 spiral | 3 | 7 | 9.1 / 9.1 | 8.6 | 454.9 | 28.9 | 0.060 | 6.0 | 36.7 | blocked 1.135, unreachable 0.278 | 29 / 29 |
+| 31 duotone | 5 | 5 | 3.2 / 3.2 | 2.5 | 207.5 | 35.3 | 0.145 | 9.4 | 41.1 | blocked 0.411, unreachable 0.208 | 21 / 21 |
+| 31 lines | 100 | 103 | 37.9 / 38.3 | 31.5 | 2242.0 | 178.7 | 0.074 | 7.5 | 138.7 | blocked 2.325, no path 0.198, unreachable 0.015 | 411 / 413 |
+| 13 word | 13 | 12 | 2.0 / 2.0 | 1.5 | 121.3 | 31.9 | 0.208 | 4.9 | 36.6 | unreachable 0.199, blocked 0.014 | 49 / 49 |
+| 13 hatch | 43 | 43 | 17.9 / 18.2 | 14.8 | 1518.7 | 60.0 | 0.038 | 4.7 | 42.0 | none | 173 / 173 |
+| 13 scatter | 24 | 23 | 2.8 / 2.8 | 2.1 | 142.6 | 57.6 | 0.288 | 5.9 | 61.3 | blocked 0.164, unreachable 0.011 | 93 / 93 |
+| 13 starburst | 5 | 6 | 1.9 / 1.9 | 1.7 | 53.3 | 24.0 | 0.311 | 9.2 | 23.8 | blocked 0.489, unreachable 0.163 | 25 / 25 |
+| 13 spiral | 3 | 2 | 1.6 / 1.6 | 1.6 | 73.7 | 6.5 | 0.081 | 2.9 | 5.7 | blocked 0.523, unreachable 0.147 | 9 / 9 |
+| 13 duotone | 5 | 4 | 3.5 / 3.5 | 3.1 | 175.0 | 19.3 | 0.099 | 5.8 | 23.6 | blocked 0.286, unreachable 0.606 | 17 / 17 |
+| 13 lines | 100 | 104 | 30.7 / 30.8 | 25.2 | 2214.7 | 172.2 | 0.072 | 5.5 | 130.1 | blocked 1.652, no path 0.250, unreachable 0.014 | 417 / 417 |
 
 - Every lift and set-down takes 0.25 to 0.35 s; the moves between pieces 34 s of the word's 43 s
   pen-up time for arm 31.
-- The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 0.8 to
-  1.0 s for the word, 9.6 to 9.8 s for 100 lines; the rest is the local planner.
+- The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 0.5 to
+  0.7 s for the word, 5.6 to 6.4 s for 100 lines; the rest is the local planner.
 - Free-space planner: 382 calls, 0 refusals. The leftovers "no path" (6 pieces, 1.04 m) are all
   pieces without a lift-off at one end: a joint-limit margin, a change of shape 2 mm up, or
   within 0.15 mm of the clearance.
 - **Against the old planner, word, arm 31.** Old: planned in 66.8 s, its motion took 67.8 s (it
-  drew at 80 mm/s). New: planned in 2.5 s of CPU (first motion after 1.6 s); at 20 mm/s the
-  motion takes 165.9 s (122.8 drawing, 43.1 pen up); at the old 80 mm/s 82.3 s (39.2 drawing,
+  drew at 80 mm/s). New: planned in 2.3 s of CPU (first motion after 1.6 s); at 20 mm/s the
+  motion takes 166.0 s (122.9 drawing, 43.1 pen up); at the old 80 mm/s 82.7 s (39.6 drawing,
   43.1 pen up, 13 pieces, 0.198 m of the last "n" beyond the reach).
 
 ![the tour of the word for arm 31](figures/arm_word_31.png)
 
 Tests: `tests/test_sequencer.py` (the price, the lift-off going straight up and the set-down
-being the same backwards, cutting at corners, an empty drawing, a start nothing can leave, a
+being the same backwards, one piece being one drawing motion, an empty drawing, a start nothing can leave, a
 piece under a box that is left over while the rest is drawn).

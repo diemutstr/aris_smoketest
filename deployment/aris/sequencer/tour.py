@@ -11,9 +11,9 @@ cheapest is tried.  Nothing is priced by running the free-space planner (lesson 
 
 Per piece, four motions, each timed and ending where the arm can stand:
     free   the move from where the arm is to the piece's first lift-off configuration
-    free   the set-down: the lift-off flown backwards, the pen onto the paper
-    draw   the piece (two or more motions where the pen stops at a sharp corner anyway)
-    free   the lift-off at its end
+    lower  the set-down: the lift-off flown backwards, the pen onto the paper
+    draw   the piece, one motion
+    lift   the lift-off at its end
 and at the end one free move to `q_end` (default `q_start`).  See docs/modules/sequencer.md.
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ class TourOptions:
     lift_step: float = 0.002       # m of tip rise between IK samples of a lift-off
     lift_jump: float = 0.05        # rad; a larger joint change between two of them is a new shape
     draw_deviation: float = 1.5e-4  # rad, how far timing may round the drawing path's corners
-    cut_angle: float = np.deg2rad(120.0)  # a drawing stops at a corner of the line sharper than this
     # (joint 7, hand about the paper normal) turns during a lift-off, rad, tried smallest first
     lift_turns: tuple = tuple(sorted(
         ((a, b) for a in (0.0, 0.1, -0.1, 0.2, -0.2, 0.35, -0.35, 0.5, -0.5)
@@ -49,7 +48,7 @@ class TourReport:
     pieces: int = 0                # pieces drawn
     lifts: int = 0                 # pen lifts (one lift-off per piece drawn)
     draw_time: float = 0.0         # s, pen on the paper
-    penup_time: float = 0.0        # s, every free motion: moves, set-downs, lift-offs
+    penup_time: float = 0.0        # s, every other motion: moves, set-downs, lift-offs
     move_time: float = 0.0         # s, of which the moves between lift-offs (and home)
     longest_free: float = 0.0      # s, the longest free motion
     free_length: float = 0.0       # rad, joint-space length of the moves between lift-offs
@@ -247,7 +246,7 @@ class _State:
         if key not in self.draws:
             plan = oriented(self.bunches[b].plans[p], bool(d))
             self.draws[key] = draw_motions(self.arm, self.guard, plan, self.rules,
-                                          self.opt.draw_deviation, self.opt.cut_angle,
+                                          self.opt.draw_deviation,
                                           self.intensity.get(plan.piece.line_id, 1.0))
         draw = self.draws[key]
         if isinstance(draw, str):

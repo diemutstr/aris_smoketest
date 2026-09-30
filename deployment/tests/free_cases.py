@@ -1,19 +1,20 @@
 """The fixed test set of the free-space planner: 1 000 pairs of lift-off configurations for arm
 31 (phase 2) and 1 000 for arm 13 (phase 1).
 
-Run `../.venv/bin/python tests/free_cases.py` from deployment/ to (re)build
-`tests/data/free_cases_<arm>.npz`.  Everything is seeded, so a rebuild gives the same file.
-`tests/free_cases.py --local [cache_dir]` builds the same kind of set from the lift-off
-configurations of the local planner's alternatives instead (`pool_local`), into
-`tests/data/free_cases_local_<arm>.npz`.
+Run `../.venv/bin/python tests/free_cases.py [cache_dir]` from deployment/ to (re)build
+`tests/data/free_cases_<arm>.npz` (cache_dir: the local planner's kinematic table).  Everything
+is seeded, so a rebuild gives the same file.
 
-How a case is made
-- tips: uniform on the paper within 1.0 m of the arm's axis (table frame, clipped to the canvas),
-  `rules.lift_height` above the paper, random spin, no lean, joint 7 uniform inside its margin
-- configurations: every IK answer (slot = IK branch) that passes the gates: joint-limit margin,
-  sigma_min, free of the obstacles of the arm's phase and of itself
+How a case is made (default, `pool_local`, since 2026-09-30)
+- the local planner plans its fixed set (tests/local_cases.py: the word, the corpus, the random
+  lines) for the arm in its phase; at both ends of every alternative plan the sequencer's
+  lift-off is made; its top configuration (tip `rules.lift_height` above the paper) joins the
+  pool, with the IK slot that reproduces it as its branch
 - four groups of 250 pairs: near (tips under 0.15 m apart), far (over 0.6 m), same IK branch,
   different IK branch (the last two at any distance)
+
+`--random` builds the first version instead (`pool`: tips uniform within 1.0 m of the axis,
+random spin, no lean, every gated and free IK answer) into free_cases_random_<arm>.npz.
 """
 from __future__ import annotations
 
@@ -128,15 +129,14 @@ def pairs(q, tip, branch, seed: int):
     return np.array(out), np.array(group)
 
 
-def build(arm_id: int, seed: int = 20260929, source: str = "random", cache_dir=None) -> Path:
-    """`source` "random" (the pool above) or "local" (`pool_local`, written to
-    free_cases_local_<arm>.npz so the default set is not replaced unasked)."""
+def build(arm_id: int, seed: int = 20260929, source: str = "local", cache_dir=None) -> Path:
+    """`source` "local" (`pool_local`, the default set free_cases_<arm>.npz) or "random" (the
+    random poses of `pool`, written to free_cases_random_<arm>.npz)."""
     rig = Rig.load(CONFIG)
     q, tip, branch = pool(rig, arm_id, seed + arm_id) if source == "random" else \
         pool_local(rig, arm_id, cache_dir)
     ij, group = pairs(q, tip, branch, seed + 1000 + arm_id)
-    path = DATA / (f"free_cases_{arm_id}.npz" if source == "random" else
-                   f"free_cases_local_{arm_id}.npz")
+    path = DATA / _name(arm_id, source)
     np.savez_compressed(
         path, arm_id=arm_id, phase=ARMS[arm_id], groups=np.array(GROUPS),
         q_start=q[ij[:, 0]], q_goal=q[ij[:, 1]], group=group,
@@ -145,20 +145,23 @@ def build(arm_id: int, seed: int = 20260929, source: str = "random", cache_dir=N
     return path
 
 
-def load(arm_id: int, source: str = "random") -> dict:
-    name = f"free_cases_{arm_id}.npz" if source == "random" else f"free_cases_local_{arm_id}.npz"
-    with np.load(DATA / name) as f:
+def _name(arm_id: int, source: str) -> str:
+    return f"free_cases_{arm_id}.npz" if source == "local" else f"free_cases_random_{arm_id}.npz"
+
+
+def load(arm_id: int, source: str = "local") -> dict:
+    with np.load(DATA / _name(arm_id, source)) as f:
         return {k: f[k] for k in f.files}
 
 
 if __name__ == "__main__":
-    # --local [cache_dir]: the pool from the local planner's alternatives (pool_local)
+    # [--random] [cache_dir] [arm ...]: the default pool is the local planner's alternatives
     args = sys.argv[1:]
-    source, cache = "random", None
-    if args and args[0] == "--local":
-        source, args = "local", args[1:]
-        if args and not args[0].isdigit():
-            cache, args = args[0], args[1:]
+    source, cache = "local", None
+    if args and args[0] == "--random":
+        source, args = "random", args[1:]
+    if args and not args[0].isdigit():
+        cache, args = args[0], args[1:]
     for aid in (ARMS if not args else [int(a) for a in args]):
         p = build(aid, source=source, cache_dir=cache)
         d = load(aid, source)

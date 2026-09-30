@@ -46,7 +46,7 @@ def assert_tour(arm, obs, rules, motions, q_start, q_end):
         assert len(t.t) >= 2 and np.all(np.diff(t.t) > 0), i
         assert np.max(np.abs(t.q[0] - q)) <= 1e-9, i
         assert np.max(np.abs(t.qd[0])) <= 1e-12 and np.max(np.abs(t.qd[-1])) <= 1e-12, i
-        touching = m.kind == "draw" or (i + 1 < len(motions) and motions[i + 1].kind == "draw")
+        touching = m.kind in ("draw", "lower")
         assert guard.hold(m.q_end, touching) is None, (i, guard.hold(m.q_end, touching))
         if m.kind == "draw":
             assert m.tip_base.shape == (len(t.t), 3) and m.piece is not None
@@ -80,6 +80,7 @@ def test_two_lines_end_to_end_and_the_same_in_a_fresh_process(tmp_path):
     assert leftovers == []
     kinds = [m.kind for m in motions]
     assert kinds.count("draw") >= 2 and kinds[0] == "free" and kinds[-1] == "free"
+    assert kinds[:4] == ["free", "lower", "draw", "lift"]
     assert st.tour.pieces == 2 and st.tour.lifts == 2
     assert {m.piece.line_id for m in motions if m.kind == "draw"} == {"a", "b"}
     assert_tour(arm, obs, rules, motions, q0, q0)
@@ -109,13 +110,10 @@ def test_the_first_motion_comes_before_the_tour_is_decided():
 
 # --------------------------------------------------------------------------- slow: the word
 
-# Measured 2026-09-30 at machine load 6-11 (docs/modules/sequencer.md).  `checked`: motions the
-# checker passes outright.  It was 0 of 58 and 0 of 52: every motion failed only on the two known
-# disagreements between the checker and the planners (link 1 against its own struts; the pen
-# on the paper at the drawing end of a set-down or lift-off; see `arm_cases.known_disagreement`).
-# Raise the floors when the checker follows commit f371483 and the set-down question is settled.
-WORD = {31: dict(checked=0, motions=58, share=0.30, cpu=2.5),
-        13: dict(checked=0, motions=52, share=0.25, cpu=2.1)}
+# Measured 2026-09-30 on branch aris3 at machine load 4-13 (docs/modules/sequencer.md), with
+# the checker that knows the lower and lift kinds: every motion of the word passes.
+WORD = {31: dict(checked=53, motions=53, share=0.30, cpu=2.3),
+        13: dict(checked=49, motions=49, share=0.25, cpu=2.0)}
 
 
 @pytest.mark.slow
@@ -133,8 +131,5 @@ def test_word_every_motion_through_the_checker(arm_id, tmp_path_factory):
     assert st.tour.penup_share <= want["share"]
     assert st.cpu <= 10 * want["cpu"]
     passed = sum(c[0] for c in checks)
-    explained = sum(c[0] or ac.known_disagreement(arm_id, r, c) for r, c in
-                    zip(ac.roles(ms), checks))
-    assert explained == len(ms)
-    assert passed >= want["checked"]
+    assert passed == len(ms) and passed >= want["checked"]
     assert len(ms) >= want["motions"] - 8                        # about the same tour
