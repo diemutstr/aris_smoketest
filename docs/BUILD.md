@@ -30,6 +30,8 @@ aris/
   gui/
   cli.py                the one command: `aris ...`
 native/                 compiled code: fr3_ik (the IK), collide (the collision check), retime
+robot/                  the operator PC side: the controller (C++, ros2_control), the driver, the
+                        launch files from rig.json, the runner; the only place ROS is imported
 tests/                  mirrors the folders above
 docs/                   design, build plan, status, one page per module
 assets/                 the installation model and meshes, the vendor arm description, drawings

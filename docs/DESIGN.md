@@ -239,8 +239,25 @@ It is the only part that touches both planning and hardware; the planners stay p
 One job at a time. Calibration and "park all arms" are other kinds of job run by the same server
 through the same executors.
 
-**Where it runs.** The server and the planners run on the planning machine. The executors run on
-the operator PC next to the arms. Only motions and status messages cross between the two.
+**Where it runs.** One repository, two roles, the same commit on both machines. The planning PC
+runs the server and the planners and writes the queues; it never imports ROS. The operator PC
+runs `robot/`: it fetches the queue records from the server as they are written, runs the
+executors and the coordinator next to the arm drivers, and posts events back. A lost link stops
+nothing that is already queued; an arm whose queue runs dry holds.
+
+## 4b. How the arm follows a motion (decided with Pete, 2026-09-30)
+
+The arm follows the certified joint trajectory itself, with compliance around it, and the pen
+force is added as a force, not as a depth. A joint impedance controller holds every joint to
+q(t), qd(t) with a moderate joint stiffness and adds J^T F, about 1 N along the pen axis while
+drawing and zero otherwise. Free moves go through the same controller with zero force, or the
+position controller. Why: what is flown stays within millimetres of what was checked (all seven
+joints track the plan; no arm shape chosen by the controller); the press is a force wherever the
+paper actually is (Diemut's tuning showed the depth was the fragile part: one millimetre changed
+the pressure by a factor of two); a paper height error of a few millimetres becomes a fraction of
+a newton, not a torn sheet; the landing is the planned "lower" motion with the force ramping from
+zero as the pen arrives. The force servo, the tare and the touch logic of the current executor
+stay, reduced to a force setpoint. A plane that moved is a re-plan, not a controller problem.
 
 ## 6. Calibration
 
