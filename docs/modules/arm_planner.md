@@ -74,12 +74,34 @@ call. Planning CPU counts the workers.
 
 - The first motion no longer grows with the drawing: 1.0 to 3.2 s for any size here (with the
   kinematic table already on disk; building it the first time adds about 5 s).
-- Planning CPU is 8 to 20 % higher with batches on 100 and 1 000 lines: each line is its own job
-  in the pool (the table and the arm are handed over per line), and more free-space moves are
-  planned. Wall time is lower, because the tour runs while the pool plans.
+- Planning CPU with batches (measured at first, one job per line with the arm and obstacles
+  sent every time) was 8 to 20 % higher. The pool is now `local.LinePool`: the arm, obstacles,
+  rules, gates, settings and kinematic table go to each worker once, when it starts, and a job
+  is only the line; it gives the same bunches as `local.plan` (digest test). What is left:
+  1 000 lines, arm 13, load 12 to 13: 234.7 s all at once, 256.3 s in batches; of that, the
+  tour 53.7 against 67.4 s (its free-space moves are longer: 1 090 against 841 s of moves) and
+  the local planner 181 against 189 s. Between runs of the same case the CPU moves by up to
+  25 % with the machine's load.
 - Pen-up time: more than 5 % over all-at-once on arm 31's 100 lines (+6.7 %) and on both 1 000
   line sets (+16 to 19 %); the drawing time is the same, so the time on the rig grows 0.7 to
   2.8 %.
+
+
+### When to take the next batch (`refill`), batches of 32 (2026-09-30, 8 workers, load 6 to 32)
+
+Pen-up time and time on the rig against all at once; first motion wall time.
+
+| arm, case | all at once: first motion | refill 32 | refill 64 | refill 128 |
+|---|---|---|---|---|
+| 13 100 lines | 5.5 s | 2.8 s; pen up +1.5 %, rig +0.1 % | 4.7 s; +0.6 %, 0.0 % | 5.0 s; +0.1 %, 0.0 % |
+| 13 1 000 lines | 19.5 s | 1.8 s; +18.8 %, +2.8 % | 3.0 s; +12.2 %, +1.7 % | 4.2 s; +5.5 %, +0.8 % |
+| 31 100 lines | 7.1 s | 4.1 s; +6.7 %, +0.7 % | 5.0 s; -0.5 %, +0.5 % | 6.6 s; 0.0 %, 0.0 % |
+| 31 1 000 lines | 24.1 s | 1.0 s; +15.9 %, +2.2 % | 2.1 s; +20.2 %, +2.9 % | 3.9 s; +4.9 %, +0.5 % |
+
+Refill 128 keeps the first motion under 5 s on 1 000 lines and the pen-up cost at 5.5 % or less
+(under 1 % of the time on the rig). It is the default (chosen by the orchestrator 2026-09-30:
+the time on the rig is what counts, and 4 s to the first motion is fine); 32 starts in 1 to 2 s
+but costs up to 19 % of pen-up time.
 
 ## Measured (2026-09-30, branch aris3, one process, machine load 4 to 15)
 

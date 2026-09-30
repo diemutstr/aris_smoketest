@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
-from multiprocessing import get_context
 
 import numpy as np
 
@@ -54,10 +52,15 @@ def _cpu() -> float:
 
 def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None,
          workers: int = 1, cache_dir=None, *, stats: PlanStats | None = None,
-         free_options=None, tour_options=None, verify=None, batch: int | None = 32):
+         free_options=None, tour_options=None, verify=None, batch: int | None = 32,
+         refill: int | None = 128):
     """Yields the arm's motions in order; returns every leftover (local planner's first).
     `verify(motion, q_before) -> dict`: the independent checker, see `sequencer.tour`.
-    `batch`: lines per batch (nearest first), None for all at once."""
+    `batch`: lines per batch (nearest first), None for all at once.  `refill`: the sequencer
+    takes the next batch when fewer pieces than this are alive (None: `batch`).  128 was
+    chosen on 1 000-line sets (2026-09-30): first motion 4 to 5 s, pen-up moves at most 5.5 %
+    longer than all at once (under 1 % of the time on the rig); 32 starts in 1 to 2 s but
+    costs up to 19 % of pen-up time."""
     st = stats if stats is not None else PlanStats()
     c0, w0 = _cpu(), time.perf_counter()
     st.lines = len(lines)
@@ -69,7 +72,7 @@ def plan(arm, lines, obstacles: Obstacles, q_start, rules: DrawRules, q_end=None
         st.bunches, st.local_leftovers = len(bunches), list(left_local)
         batches, refill = None, 0
     else:
-        bunches, refill = [], batch
+        bunches, refill = [], batch if refill is None else refill
         batches = _collect(_batches(arm, lines, obstacles, rules, q_start, workers, cache_dir,
                                     batch), st, left_local, w0)
     gen = tour(arm, bunches, q_start, obstacles, rules, q_end, free_options, report=st.tour,
@@ -107,31 +110,25 @@ def nearest_first(arm, lines, q_start) -> list[int]:
     return sorted(range(len(lines)), key=lambda i: (dist[i], i))
 
 
-def _one(job):
-    arm, line, obstacles, rules, cache_dir = job
-    return local.plan(arm, [line], obstacles, rules, cache_dir=cache_dir)
-
-
 def _batches(arm, lines, obstacles, rules, q_start, workers, cache_dir, size):
     """Yields (bunches, leftovers) per batch of `size` lines, nearest first.  With workers > 1
-    every line is handed to one pool at once, in that order, so later batches are planned
-    while the tour draws from the earlier ones; each batch is yielded when all its lines are
-    done, in order.  With one worker a batch is planned when it is asked for."""
+    every line is handed to one pool (`local.LinePool`) at once, in that order, so later
+    batches are planned while the tour draws from the earlier ones; each batch is yielded when
+    all its lines are done, in order.  With one worker a batch is planned when it is asked for."""
     order = nearest_first(arm, lines, q_start)
     chunks = [order[i:i + size] for i in range(0, len(order), size)]
     if workers <= 1 or len(lines) <= 1:
         for c in chunks:
             yield local.plan(arm, [lines[i] for i in c], obstacles, rules, cache_dir=cache_dir)
         return
-    pool = ProcessPoolExecutor(workers, mp_context=get_context("spawn"))
+    pool = local.LinePool(arm, obstacles, rules, workers=workers, cache_dir=cache_dir)
     try:
-        futures = [[pool.submit(_one, (arm, lines[i], obstacles, rules, cache_dir)) for i in c]
-                   for c in chunks]
+        futures = [[pool.submit([lines[i]]) for i in c] for c in chunks]
         for fs in futures:
             got = [f.result() for f in fs]
             yield [b for r in got for b in r[0]], [x for r in got for x in r[1]]
     finally:
-        pool.shutdown(wait=True, cancel_futures=True)
+        pool.close(cancel=True)
 
 
 def _collect(batches, st: PlanStats, left_local: list, w0: float):

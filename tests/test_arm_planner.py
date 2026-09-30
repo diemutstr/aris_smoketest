@@ -233,3 +233,20 @@ def test_first_motion_of_1000_lines_comes_within_seconds(tmp_path_factory):
     assert st.tour.penup_share <= 0.20
     drawn = {m.piece.line_id for m in ms if m.kind == "draw"} | {x.piece.line_id for x in left}
     assert drawn == {x.id for x in lines}
+
+
+def test_the_line_pool_gives_the_same_bunches_as_the_local_planner():
+    from aris import local
+    from test_local import _digest as local_digest
+    arm, obs, rules, _ = lc.problem(RIG, 31)
+    lines = _lines_near(31, 6)
+    want = local_digest(local.plan(arm, lines, obs, rules))
+    pool = local.LinePool(arm, obs, rules, workers=3)
+    try:
+        got = [pool.submit([x]).result() for x in lines]
+        together = pool.submit(lines).result()
+    finally:
+        pool.close()
+    one_by_one = ([b for r in got for b in r[0]], [x for r in got for x in r[1]])
+    assert local_digest(one_by_one) == want
+    assert local_digest(together[:2]) == want

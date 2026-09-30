@@ -166,22 +166,20 @@ def big_lines(rig: Rig, arm_id: int, n: int = 1000) -> list:
 
 
 def compare_batches(rig: Rig, arm_id: int, name: str, lines, cache=None, workers=8,
-                    batch=32) -> list[str]:
-    """The same case planned all at once and in batches (8 workers)."""
+                    batch=32, refills=(32,)) -> list[str]:
+    """The same case planned all at once and in batches (8 workers), for each refill."""
     rows = []
-    for b in (None, batch):
-        ms, left, st, load = plan_case(rig, arm_id, lines, cache, workers, batch=b)
-        t = st.tour
-        rows.append((b, st, t, load, len(ms), sum(float(m.traj.t[-1]) for m in ms)))
+    for b, r in [(None, None)] + [(batch, r) for r in refills]:
+        ms, left, st, load = plan_case(rig, arm_id, lines, cache, workers, batch=b, refill=r)
+        rows.append((b, r, st, st.tour, load, len(ms), sum(float(m.traj.t[-1]) for m in ms)))
     out = [f"arm {arm_id} {name}: {len(lines)} lines, {workers} workers"]
-    for b, st, t, load, n, total in rows:
-        out.append(f"  {'all at once' if b is None else f'batches of {b}'} (load {load:.0f}): "
-                   f"first motion after {st.first_wall:.2f} s wall; planning CPU {st.cpu:.1f} s, "
-                   f"wall {st.wall:.1f} s; {n} motions, {total:.1f} s on the rig, pen up "
-                   f"{t.penup_time:.1f} s, share {t.penup_share:.3f}; pieces {t.pieces}")
-    (_, _, t0, _, _, T0), (_, _, t1, _, _, T1) = rows
-    out.append(f"  batches against all at once: pen-up time {t1.penup_time / t0.penup_time - 1:+.1%},"
-               f" motion time {T1 / T0 - 1:+.1%}")
+    t0, T0 = rows[0][3], rows[0][6]
+    for b, r, st, t, load, n, total in rows:
+        what = "all at once" if b is None else f"batches of {b}, refill {r}"
+        out.append(f"  {what} (load {load:.0f}): first motion after {st.first_wall:.2f} s wall; "
+                   f"planning CPU {st.cpu:.1f} s, wall {st.wall:.1f} s; {n} motions, {total:.1f} s "
+                   f"on the rig ({total / T0 - 1:+.1%}), pen up {t.penup_time:.1f} s "
+                   f"({t.penup_time / t0.penup_time - 1:+.1%}), share {t.penup_share:.3f}")
     return out
 
 
@@ -255,6 +253,7 @@ if __name__ == "__main__":
     ap.add_argument("--draw-speed", type=float, default=None, help="m/s, instead of the rules'")
     ap.add_argument("--batches", action="store_true",
                     help="plan each case all at once and in batches (8 workers), compare")
+    ap.add_argument("--refills", default="32", help="refills to compare with --batches")
     ap.add_argument("--big", type=int, default=0, help="add a case of this many big_cases lines")
     ap.add_argument("--verify", action="store_true",
                     help="plan each case with and without the checker in the loop, compare")
@@ -269,7 +268,8 @@ if __name__ == "__main__":
             if a.cases and name not in a.cases.split(","):
                 continue
             if a.batches:
-                print("\n".join(compare_batches(rig, arm_id, name, lines, cache)), flush=True)
+                print("\n".join(compare_batches(rig, arm_id, name, lines, cache, refills=tuple(
+                    int(x) for x in a.refills.split(",")))), flush=True)
                 continue
             if a.verify:
                 print("\n".join(compare_verify(rig, arm_id, name, lines, cache)), flush=True)

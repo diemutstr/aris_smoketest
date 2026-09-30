@@ -108,6 +108,57 @@ def _plan_job(job):
     return plan_line(arm, line, judge, rules, cfg, table)
 
 
+class LinePool:
+    """A pool of `workers` processes that keeps everything but the lines: the arm, the
+    obstacles, the rules, the gates, the settings and the kinematic table are handed to each
+    worker once, when it starts; a job is then a list of lines, by value.  For callers that
+    plan many small groups of lines over time (the arm planner's batches).
+
+        pool = LinePool(arm, obstacles, rules, gates, workers, settings, cache_dir)
+        fut = pool.submit(lines)          # -> Future of (bunches, leftovers, stats)
+        pool.close()
+
+    The answer for a list of lines is the same as `plan_detailed` gives for it."""
+
+    def __init__(self, arm, obstacles, rules, gates=None, workers: int = 1, settings=None,
+                 cache_dir=None):
+        gates = rules.gates if gates is None else gates
+        cfg = Settings() if settings is None else settings
+        self._pool = ProcessPoolExecutor(
+            workers, mp_context=get_context("spawn"), initializer=_pool_start,
+            initargs=(arm, obstacles, rules, gates, cfg, cache_dir))
+
+    def submit(self, lines):
+        for line in lines:
+            if line.frame != "base":
+                raise ValueError(f"line {line.id} is in the {line.frame} frame; the local "
+                                 "planner takes base-frame lines")
+        return self._pool.submit(_pool_job, list(lines))
+
+    def close(self, cancel: bool = False) -> None:
+        self._pool.shutdown(wait=True, cancel_futures=cancel)
+
+
+# The one thing a pool worker keeps between jobs: what LinePool handed it when it started.
+# It lives only in that worker process, is set once and never changes.
+_WORKER: tuple | None = None
+
+
+def _pool_start(arm, obstacles, rules, gates, cfg, cache_dir) -> None:
+    global _WORKER
+    judge = Judge(arm, obstacles, gates)
+    table = None if cache_dir is None else \
+        load_or_build(arm, judge.paper, gates, rules.lean_max, cfg, cache_dir)
+    _WORKER = (arm, judge, rules, cfg, table)
+
+
+def _pool_job(lines):
+    arm, judge, rules, cfg, table = _WORKER
+    results = [plan_line(arm, line, judge, rules, cfg, table) for line in lines]
+    return ([b for r in results for b in r[0]], [x for r in results for x in r[1]],
+            [r[2] for r in results])
+
+
 # --------------------------------------------------------------------------- one line
 
 
