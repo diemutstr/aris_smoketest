@@ -6,7 +6,7 @@ Read at the driver's rate (1 kHz) on the flown curve:
              polyline through the planned tips), and how far each sample's tip is from its
              own planned point
   backwards  how far the tip ever falls back along the line, measured from the furthest point
-             it had reached
+             it had reached (progress along the line: see `_progress`)
   slowest    the slowest speed along the line between the moment the pen first gets going and
              the moment it starts its final stop (a stop halfway reads near zero)
   fastest    the fastest tip speed, against the drawing speed
@@ -40,6 +40,22 @@ def _project(p, a, b):
     return np.linalg.norm(a + u[..., None] * d - p[:, None], axis=-1), u
 
 
+def _progress(knots, s_at, i, x):
+    """How far along the line the pen is, as arc length of the planned line.
+
+    Between samples i and i+1 of the motion the flown tip goes from knots[i] to knots[i+1],
+    which stand for arc lengths s_at[i] and s_at[i+1]; the tip's position along that chord
+    gives the fraction in between.  The parameter is continuous (it is exactly s_at at the
+    samples) and does not jump between the two legs of a sharp corner, as the nearest point on
+    the line does.
+    """
+    a, b = knots[i], knots[i + 1]
+    d = b - a
+    dd = np.einsum("mi,mi->m", d, d)
+    u = np.clip(np.einsum("mi,mi->m", x - a, d) / np.where(dd > 0, dd, 1.0), 0.0, 1.0)
+    return s_at[i] + u * (s_at[i + 1] - s_at[i])
+
+
 def pen_report(model: ArmModel, T_table_base, paper_z, traj, tip_base, t_rate, q_rate,
                window: int = 2) -> PenReport:
     """`t_rate`, `q_rate`: the flown curve sampled at the driver's rate (holding samples at the
@@ -59,9 +75,10 @@ def pen_report(model: ArmModel, T_table_base, paper_z, traj, tip_base, t_rate, q
     best = np.argmin(dist, axis=1)
     rows = np.arange(len(idx))
     off = dist[rows, best]
-    s = s_at[idx[rows, best]] + u[rows, best] * seg[idx[rows, best]]
-    at_knots = np.linalg.norm(tip(model, traj.q, np.eye(4)) - P, axis=1)
+    knots = tip(model, traj.q, np.eye(4))
+    at_knots = np.linalg.norm(knots - P, axis=1)
     off_line = float(max(off.max(), at_knots.max()))
+    s = _progress(knots, s_at, i, tip_base_now)
 
     backwards = float(np.max(np.maximum.accumulate(s) - s))
     dt = np.diff(t_rate)

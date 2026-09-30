@@ -61,7 +61,10 @@ class Clearance:
         return self.label[cls](p) if p >= 0 else ""
 
 
-def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool) -> Scene:
+def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
+                pen_floor: float | None = None) -> Scene:
+    """`pen_floor` replaces the pen's lifted clearance to the paper (a negative number lets the
+    pen touch the paper, for setting it down and taking it up)."""
     mount = rig.mounts[arm_id]
     model = load_model(mount.tip_hand)
     base = mount.T_table_base[:3, 3]
@@ -84,7 +87,8 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool) -> Scen
         o_a.append(a[0]), o_b.append(b[0]), o_r.append(m.radius)
     c = rig.clearance
     margin = dict(steel=c["steel_m"], links=c["body_to_paper_m"], tool=c["tool_to_paper_m"],
-                  pen=c["pen_lifted_to_paper_m"], walls=c["wall_m"],
+                  pen=c["pen_lifted_to_paper_m"] if pen_floor is None else pen_floor,
+                  walls=c["wall_m"],
                   parked=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
     own = np.array([o == arm_id for o in rig.box_owner], bool)

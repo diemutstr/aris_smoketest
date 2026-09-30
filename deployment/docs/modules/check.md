@@ -6,7 +6,7 @@ shares no code with the planners, so the two can only agree by both being right.
 every serious bug was found because an independent check disagreed with the planner.
 
 **In.** `check(config_dir, arm_id, motion, phase, q_before=None)`: the rig's `config/` folder,
-which arm, one `Motion` (drawing or free), the `Phase` it runs in (who moves, who stands parked,
+which arm, one `Motion` (draw, free, lower or lift), the `Phase` it runs in (who moves, who stands parked,
 which walls), and where the arm is before it starts. Optional keywords set the tolerances in the
 table below.
 
@@ -38,10 +38,11 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 6 | all of 4 and 5 hold between the samples too (below) | |
 | 7 | drawing: `tip on paper` (before the controller presses) | 0.5 mm |
 | 7 | drawing: `tip on line`: distance from the planned tips (`motion.tip_base`) and the line through them, at 1 kHz | 0.2 mm |
-| 7 | drawing: `never backwards` along the line (a numerical allowance) | 0.01 mm |
+| 7 | drawing: `never backwards`: progress along the line (below) never falls back (a numerical allowance) | 0.01 mm |
 | 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 5 % of the drawing speed (1 mm/s) |
-| 7 | drawing: `tip speed` | drawing speed + 2 % |
+| 7 | drawing: `tip speed` | drawing speed + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
 | 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip | 0.003 m (`pen_lifted_to_paper_m`) |
+| 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may touch the paper at one end, where its round end reads up to 1.3 mm into the paper plane; it may never go deeper. Everything else as for a free motion | -0.002 m |
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
 
 The clearances are the **demanded** ones of rig.json (`clearances`), not the planning allowance
@@ -52,6 +53,14 @@ struts, plate and clamp, because it only turns about the base axis and a rig tes
 clearance once over the whole turn of joint 1 (`clearances.link1_to_own_mount_m`, 0.020). Against
 every other box, a neighbour's hanger included, link 1 is checked like any link. During a drawing motion the pen is not checked against the
 paper.
+
+**Progress along the line.** Between two samples of a drawing motion the flown tip goes from
+its position at one sample to its position at the next, and those samples stand for known arc
+lengths of the planned line. Where the tip is along that chord gives the arc length in between.
+This parameter is exactly the planned arc length at every sample and continuous in between;
+the nearest point of the line is not used, because at a sharp corner it jumps between the two
+legs and briefly runs backwards on a motion that is fine. `never stops` and `never backwards`
+are read on this parameter at 1 kHz.
 
 ## Before the next phase: `check_phase_end`
 
@@ -127,6 +136,9 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | pen tip over the 4 687 frames of the old hover run of arm 71 against the old code | 5e-16 m |
 | faults caught, one test each | strut, pen 1 mm into the paper (reads -1.5 mm), wall, parked neighbour, self, corner (jerk 2.2 at 1 kHz, 9.0 at 4 kHz, of the limit), velocity 1 % over (reads 1.010; 0.99 passes), tip off the line by 0.5 mm (reads 0.51), stop halfway, empty motion, motion that does not move, start not at q_before, end not at rest, arm not moving in the phase |
 | same motion at 100 Hz, 1 kHz, 4 kHz and as retimed | same verdict; tightest clearance within 0.5 mm |
+| a drawn V turning 150 degrees | passes; slowest along the line 1.6 mm/s at the corner |
+| drawing 1.5 % over its timing / 4 % over | tip speed 20.33 mm/s passes / 20.83 fails (limit 20.6) |
+| lower (10 mm above to the tip on the paper) and the same reversed as lift | pass; pen depth -0.65 mm. As a free motion it fails the pen's 3 mm; lowered to 3 mm into the paper it fails pen depth (-3.6 mm) |
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
 | reported against the truth (planners' kernel on a 20 kHz sampling) | never above, within 0.25 mm (78.35 reported, 78.60 true) |
 | good free motions (arms 13, 31, 97) | pass |

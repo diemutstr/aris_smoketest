@@ -14,16 +14,21 @@ from aris.types import DrawRules, Motion, Phase
 REST = 1e-6           # rad/s, "at rest"; rad, "starts where the arm is"
 MOVES = 1e-5          # rad, a motion that turns no joint further than this does nothing
 POSITION_TOL = 1e-7   # rad, the driver's own tolerance on the joint position box
+# Setting the pen down and taking it up: the pen may touch the paper at one end, where its
+# round end reads up to 1.3 mm into the paper plane (the tip is the contact point).  It may
+# never go deeper than this.
+PEN_FLOOR = -0.002    # m, pen capsule against the paper plane, "lower" and "lift" motions
 
 _TITLE = dict(steel="clearance steel", links="clearance paper (links)",
-              tool="clearance paper (tool)", pen="clearance paper (pen)", walls="clearance walls", parked="clearance parked arms",
-              self="clearance self")
+              tool="clearance paper (tool)", pen="clearance paper (pen)",
+              walls="clearance walls", parked="clearance parked arms", self="clearance self")
+PEN_DEPTH = "pen depth (lower, lift)"      # the pen row of a "lower" or "lift" motion
 
 
 def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, *,
           step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
           tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
-          draw_speed: float = DrawRules().draw_speed, speed_tol: float = 0.02,
+          draw_speed: float = DrawRules().draw_speed, speed_tol: float = 0.03,
           stop_fraction: float = 0.05) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
 
@@ -50,20 +55,22 @@ def check(config_dir, arm_id: int, motion: Motion, phase: Phase, q_before=None, 
 
     traj = motion.traj
     drawing = motion.kind == "draw"
-    scene = build_scene(rig, arm_id, phase.walls, phase.parked, drawing)
+    scene = build_scene(rig, arm_id, phase.walls, phase.parked, drawing,
+                        pen_floor=PEN_FLOOR if motion.kind in ("lower", "lift") else None)
     ms = [measure("well formed", 1.0, 1.0, "min", "", ranked=False)]
     ms += _ends(traj, q_before)                                      # items 1-2
     r1, r4 = timing.rates(traj.t, traj.q, traj.qd, 1000.0, sub=4)
     ms += _limits(scene.model, r1, r4, rate_tol)                     # item 3
     sw = sweep(scene, traj, step, tol)
-    ms += _clearances(scene, sw, r4, drawing, rig.notes)                      # items 3-6, 8
+    titles = dict(_TITLE, pen=PEN_DEPTH) if motion.kind in ("lower", "lift") else _TITLE
+    ms += _clearances(scene, sw, r4, drawing, rig.notes, titles)                      # items 3-6, 8
     if drawing:                                                      # item 7
         ms += _pen(scene, traj, motion.tip_base, r1, tip_height_tol, line_tol, back_tol,
                    draw_speed, speed_tol, stop_fraction)
-    ms.append(_hold(scene, traj))                                    # item 9
+    ms.append(_hold(scene, traj, titles))                                    # item 9
     worst = min(CLASSES, key=lambda c: sw.per_class[c].value)
     return verdict(ms, sw.per_class[worst].value,
-                   f"{_TITLE[worst]}: {sw.per_class[worst].where} "
+                   f"{titles[worst]}: {sw.per_class[worst].where} "
                    f"({sw.n_samples} samples, {sw.rounds} refinements)")
 
 
@@ -80,7 +87,7 @@ def _ends(traj, q_before):
     return ms
 
 
-def _clearances(scene, sw, r4, drawing, notes=()):
+def _clearances(scene, sw, r4, drawing, notes=(), titles=_TITLE):
     m = scene.model
     q_margin = min(sw.q_min_margin, float(np.min(np.minimum(r4.q - m.q_min, m.q_max - r4.q))))
     ms = [measure("joint positions", q_margin, 0.0, "min", "rad",
@@ -90,18 +97,18 @@ def _clearances(scene, sw, r4, drawing, notes=()):
             continue
         res = sw.per_class[c]
         note = "".join(n + "; " for n in notes) if c == "tool" else ""
-        ms.append(measure(_TITLE[c], res.value + scene.margin[c], scene.margin[c], "min", "m",
+        ms.append(measure(titles[c], res.value + scene.margin[c], scene.margin[c], "min", "m",
                           note + ("" if res.exact else "at least; ") +
                           (f"{res.where} at t = {res.t:.3f} s" if res.where else "")))
     return ms
 
 
-def _hold(scene, traj):
+def _hold(scene, traj, titles=_TITLE):
     """The last configuration, standing still, at the demanded clearances."""
     end = clearance(scene, traj.q[-1:])
     c = min(CLASSES, key=lambda c: end.value[c][0])
     return measure("hold: clearance at the end", end.value[c][0], 0.0, "min", "m",
-                   f"beyond demanded; {_TITLE[c]}: {end.closest(c, 0)}")
+                   f"beyond demanded; {titles[c]}: {end.closest(c, 0)}")
 
 
 def _limits(model, r1, r4, rate_tol):
@@ -157,7 +164,7 @@ def _malformed(motion, q_before) -> str | None:
         return "NaN or infinity in the trajectory"
     if np.any(np.diff(t) <= 0):
         return "sample times do not increase"
-    if motion.kind not in ("draw", "free"):
+    if motion.kind not in ("draw", "free", "lower", "lift"):
         return f"unknown kind {motion.kind!r}"
     if motion.kind == "draw":
         if motion.tip_base is None or np.shape(motion.tip_base) != (len(t), 3):

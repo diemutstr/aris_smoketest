@@ -465,6 +465,76 @@ def test_fault_drawing_stops_halfway():
     _fails(check(CONFIG, 31, both, phase_of(31), a.q_start), "never stops")
 
 
+def _nearest_progress(m):
+    """The old reading: arc length of the nearest point of the planned line (for comparison)."""
+    from aris.check.drawing import _project
+    tr = m.traj
+    t = np.arange(tr.t[0], tr.t[-1], 1e-3)
+    x = RIG.arm(31).tip(sample(tr, t)[0])
+    P = m.tip_base
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    s_at = np.concatenate([[0.0], np.cumsum(seg)])
+    i = np.clip(np.searchsorted(tr.t, t, side="right") - 1, 0, len(P) - 2)
+    idx = np.clip(i[:, None] + np.arange(-2, 4), 0, len(P) - 2)
+    dist, u = _project(x, P[idx], P[idx + 1])
+    b = np.argmin(dist, axis=1)
+    r = np.arange(len(t))
+    return s_at[idx[r, b]] + u[r, b] * seg[idx[r, b]]
+
+
+def test_drawing_round_a_sharp_corner():
+    """A V turning 150 degrees: progress along the line never stops or goes back.  (How far
+    the nearest point of the line falls back there is printed, for comparison.)"""
+    a, v, b = np.array([-0.62, 0.05]), np.array([-0.52, 0.15]), None
+    turn = np.deg2rad(150.0)
+    d0 = (v - a) / np.linalg.norm(v - a)
+    c, s_ = np.cos(turn), np.sin(turn)
+    d1 = np.array([c * d0[0] - s_ * d0[1], s_ * d0[0] + c * d0[1]])
+    b = v + 0.12 * d1
+    pts = np.vstack([line_table(a, v, 80)[:-1], line_table(v, b, 80)])
+    m = draw_motion(31, pts)
+    v_ = check(CONFIG, 31, m, phase_of(31), m.q_start)
+    near = _nearest_progress(m)
+    dip = float(np.max(np.maximum.accumulate(near) - near))
+    print(f"\n{v_}\nnearest point on the line falls back by {dip * 1e3:.3f} mm at the corner")
+    for name in ("never stops", "never backwards", "tip on line", "tip speed"):
+        assert v_.get(name).passed, name
+
+
+def test_drawing_speed_allowance(good_draw):
+    """The pen may run up to 3 % over the drawing speed."""
+    tr = good_draw.traj
+    for factor, ok in ((1.015, True), (1.04, False)):
+        fast = Trajectory(tr.t / factor, tr.q, tr.qd * factor)
+        v = check(CONFIG, 31, Motion("draw", fast, good_draw.piece, good_draw.tip_base),
+                  phase_of(31), good_draw.q_start)
+        print(f"\n{factor}: tip speed {v.get('tip speed').value * 1e3:.3f} mm/s, "
+              f"limit {v.get('tip speed').limit * 1e3:.3f}")
+        assert v.get("tip speed").passed == ok
+
+
+def _down(depth, n=60):
+    """Tip straight down from 10 mm above the paper to `depth` (negative: into it)."""
+    z = np.linspace(0.010, depth, n)
+    Q, _ = ik_path(31, np.column_stack([np.full(n, -0.56), np.full(n, 0.17), z]))
+    return free_motion(31, Q).traj
+
+
+def test_lower_and_lift():
+    ph = phase_of(31)
+    tr = _down(0.0)
+    lower = check(CONFIG, 31, Motion("lower", tr), ph, tr.q[0])
+    print(f"\n{lower}")
+    assert lower.passed, lower.failed
+    depth = lower.get("pen depth (lower, lift)")
+    assert -0.0016 < depth.value < 0.0 and depth.limit == -0.002
+    back = Trajectory(tr.t[-1] - tr.t[::-1], tr.q[::-1], -tr.qd[::-1])
+    assert check(CONFIG, 31, Motion("lift", back), ph, back.q[0]).passed
+    _fails(check(CONFIG, 31, Motion("free", tr), ph, tr.q[0]), "clearance paper (pen)")
+    deep = _down(-0.003)
+    _fails(check(CONFIG, 31, Motion("lower", deep), ph, deep.q[0]), "pen depth (lower, lift)")
+
+
 @pytest.fixture(scope="module")
 def good_free():
     q0 = RIG.park_q(31)
