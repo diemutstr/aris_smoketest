@@ -45,6 +45,8 @@ types  <-  kernel, rig  <-  local, free  <-  sequencer, arm_planner  <-  system 
 ```
 
 - An arrow only ever points down the hierarchy. A test enforces it.
+- `execute` may import `check` (to run the checker at the queue and at a phase end) and
+  `kernel.retime` (the simulated arm samples trajectories); nothing above them.
 - `check` imports `types` and nothing else from this package. It has its own kinematics and its
   own distance code, so that it and the planners can only agree by being right.
 - Only `execute/drivers/` may import ROS. Only `rig.py` reads `config/`.
