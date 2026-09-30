@@ -12,6 +12,8 @@ purpose and not checked against it; the tool (hand, finger blades, holder) keeps
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from aris.kernel import collide as C
@@ -28,9 +30,9 @@ class Judge:
         self.arm, self.gates = arm, gates
         self.paper: Plane = papers[0]
         self.normal = np.asarray(self.paper.normal, float) / np.linalg.norm(self.paper.normal)
-        self.rest = C.pack(Obstacles(obstacles.boxes,
-                                     tuple(p for p in obstacles.planes if p.kind != "paper"),
-                                     obstacles.capsules))
+        # everything but the paper, every kind of obstacle (fields too: a neighbour's footprint)
+        self.rest = C.pack(replace(obstacles, planes=tuple(p for p in obstacles.planes
+                                                           if p.kind != "paper")))
         self.tables = C.arm_tables(arm)
         self._paper_only = C.pack(Obstacles(planes=(self.paper,)))
         self.reach = reach = np.asarray(arm.reach, float)
