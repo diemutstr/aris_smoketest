@@ -27,7 +27,7 @@ Per piece it hands out four motions:
 | motion | kind | what |
 |---|---|---|
 | move | free | from where the arm is to the piece's first lift-off configuration (free-space planner) |
-| set-down | lower | the pen straight down onto the paper: the lift-off flown backwards |
+| set-down | lower | the pen straight down onto the paper along the lift-off's path, landing at 10 mm/s |
 | drawing | draw | the piece, pen on the paper |
 | lift-off | lift | the pen straight up by the pen clearance plus 2 mm (22 mm today) at the end of the piece |
 
@@ -68,8 +68,13 @@ Decided by Pete, 2026-09-30: as simple and reliable as possible.
 The pen clearance is rig.json's `pen_lifted_to_paper_m`: the free-space planner keeps the pen
 that far above the paper, so the lift is just enough to hand over to it. Today 20 mm (until the
 calibration is proven on the rig; then 3 mm), so the lift is 22 mm. `rules.lift_height` is not
-used by the sequencer. The set-down is the lift-off at the piece's first configuration flown
-backwards (motion kind `lower`; the lift-off is `lift`). "Checked as flown": every IK sample
+used by the sequencer. The set-down (motion kind `lower`) follows the lift-off's path at the
+piece's first configuration backwards, timed so that the pen never goes faster than
+`rules.landing_speed` (rig.json `drawing.landing_speed_m_per_s`, 10 mm/s): the pen's path
+length along the descent is the arc length and the landing speed its cap, as on the hardware,
+where a fast landing against the controller's soft spring spikes the force. A 22 mm set-down
+takes 2.3 s instead of 0.3. The lift-off (kind `lift`) keeps its fast timing: leaving the paper
+fast does no harm. "Checked as flown": every IK sample
 inside the joint-limit margin and above the singular-value gate, the top configuration one the
 arm can hold with the pen judged against the paper (what the free-space planner asks of a
 start), and the timed motion free of every obstacle and of itself (the pen exempt from the
@@ -165,7 +170,7 @@ re-measured since the checker's stop limit changed).
 - A piece refused from where the arm is may be reachable from elsewhere; it is not offered
   again later.
 
-## Measured (2026-09-30, branch aris3, smooth timing, 22 mm lift, 8 workers, batches of 32 with refill 128, machine load 7 to 11)
+## Measured (2026-10-01, branch aris3, smooth timing, set-down landing at 10 mm/s, 22 mm lift, 8 workers, batches of 32 with refill 128, machine load 6 to 17)
 
 From park back to park; obstacles of the arm's leading phase (arm 31 phase 2, arm 13 phase 1);
 kinematic table on; drawing speed 20 mm/s. Drawings, set-downs and lifts are timed in the
@@ -176,19 +181,19 @@ arm 31.
 
 | arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | leftovers (m) | checker | slowest mm/s |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 31 word | 13 | 13 | 6.8 / 2.1 | 1.1 | 123.6 | 47.2 | 0.276 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
-| 31 scatter | 27 | 24 | 10.9 / 3.7 | 1.4 | 147.9 | 67.1 | 0.312 | 9.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 | 5.01 |
-| 31 starburst | 24 | 28 | 21.0 / 5.7 | 2.6 | 722.2 | 83.6 | 0.104 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
-| 31 spiral | 3 | 7 | 14.2 / 8.0 | 6.7 | 450.9 | 28.2 | 0.059 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
-| 31 duotone | 5 | 4 | 6.4 / 2.3 | 1.6 | 198.6 | 22.5 | 0.102 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
-| 31 lines | 100 | 105 | 70.5 / 41.8 | 8.0 | 2202.4 | 212.8 | 0.088 | 7.5 | blocked 2.325, no path 0.087, unreachable 0.015 | 421 / 421 | 4.99 |
-| 13 word | 13 | 13 | 7.8 / 2.2 | 1.2 | 122.5 | 37.5 | 0.234 | 5.5 | no path 0.010, unreachable 0.185 | 53 / 53 | 1.35 |
-| 13 hatch | 43 | 43 | 33.7 / 9.4 | 3.9 | 1517.0 | 65.8 | 0.042 | 6.8 | none | 173 / 173 | 5.09 |
-| 13 scatter | 24 | 23 | 9.1 / 2.5 | 1.3 | 142.9 | 60.5 | 0.297 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
-| 13 starburst | 5 | 5 | 6.5 / 1.8 | 1.6 | 54.0 | 13.7 | 0.202 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
-| 13 spiral | 3 | 3 | 4.3 / 2.2 | 1.9 | 72.6 | 10.2 | 0.123 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
-| 13 duotone | 5 | 7 | 9.1 / 3.5 | 2.5 | 189.0 | 38.6 | 0.169 | 8.1 | blocked 0.452, unreachable 0.015 | 29 / 29 | 4.99 |
-| 13 lines | 100 | 105 | 56.1 / 16.3 | 6.2 | 2198.3 | 219.1 | 0.091 | 6.1 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 | 4.99 |
+| 31 word | 13 | 13 | 8.1 / 2.7 | 1.4 | 123.6 | 72.9 | 0.371 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
+| 31 scatter | 27 | 24 | 11.4 / 3.9 | 1.4 | 147.9 | 115.4 | 0.438 | 9.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 | 5.01 |
+| 31 starburst | 24 | 28 | 22.7 / 6.7 | 2.7 | 722.2 | 140.0 | 0.162 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
+| 31 spiral | 3 | 7 | 15.6 / 8.9 | 7.5 | 450.9 | 42.3 | 0.086 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
+| 31 duotone | 5 | 4 | 9.0 / 2.9 | 2.1 | 198.6 | 30.3 | 0.133 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
+| 31 lines | 100 | 105 | 64.3 / 20.1 | 6.9 | 2202.4 | 424.3 | 0.162 | 7.5 | blocked 2.325, no path 0.087, unreachable 0.015 | 421 / 421 | 4.99 |
+| 13 word | 13 | 13 | 6.8 / 2.1 | 1.1 | 122.5 | 62.9 | 0.339 | 5.5 | no path 0.010, unreachable 0.185 | 53 / 53 | 1.35 |
+| 13 hatch | 43 | 43 | 33.2 / 9.2 | 3.9 | 1517.0 | 153.6 | 0.092 | 6.8 | none | 173 / 173 | 5.09 |
+| 13 scatter | 24 | 23 | 9.7 / 2.8 | 1.2 | 142.9 | 107.1 | 0.428 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
+| 13 starburst | 5 | 5 | 6.3 / 1.9 | 1.6 | 54.0 | 23.0 | 0.299 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
+| 13 spiral | 3 | 3 | 4.0 / 2.1 | 1.8 | 72.6 | 16.6 | 0.186 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
+| 13 duotone | 5 | 7 | 8.6 / 3.5 | 2.3 | 188.4 | 49.6 | 0.208 | 7.2 | blocked 0.452, no path 0.011, unreachable 0.015 | 29 / 29 | 4.99 |
+| 13 lines | 100 | 105 | 53.1 / 16.8 | 5.6 | 2198.3 | 429.4 | 0.163 | 6.1 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 | 4.99 |
 
 - **Every one of the 1 533 motions passes the independent checker.**
 - **Slowest mid-line pen speed:** 5.0 mm/s or more on every drawing (the median drawing's
@@ -211,8 +216,14 @@ arm 31.
   12 mm, word arm 13 10 mm, random lines 87 and 22 mm); no whole piece is lost. With the arm's
   shape held (the first version of rule 1, same day) it was 3.53 m, 1.85 m of it one piece of
   the spiral; with the five-rung ladder (earlier the same day, 5 mm lift) nothing.
-- **Pen-up time on the word:** arm 31, 47.2 s (shape held 43.5 s, ladder 40.0 s); arm 13,
-  37.5 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
+- **The landing speed** (2026-10-01): every set-down takes 2.29 to 2.31 s instead of the lift's
+  0.26 to 0.33 s, and the pen never exceeds 9.98 mm/s on it. The word's time on the rig: arm 31
+  196.6 s instead of 170.8 (+15 %), arm 13 185.3 s instead of 160.0 (+16 %); pen-up share 0.371
+  and 0.339. On 100 lines pen-up time roughly doubles (424 against 213 s, arm 31), 8 % of the
+  time on the rig. The checker passes every set-down (its pen-speed rule is for drawings).
+  One alternative changes: arm 13 duotone loses 11 mm more at a piece end.
+- **Pen-up time on the word, before the landing speed:** arm 31, 47.2 s (shape held 43.5 s,
+  ladder 40.0 s); arm 13, 37.5 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
   the shape held. The 22 mm lift and its turns cost a few seconds over the ladder's 5 to 25 mm.
 - The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 1.0 s for
   the word, 7.2 to 8.2 s for 100 lines; the rest is the local planner.

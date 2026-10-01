@@ -15,7 +15,7 @@ The pen clearance is the paper's lifted-pen margin (rig.json `pen_lifted_to_pape
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -32,7 +32,8 @@ class Lift:
     q_draw: np.ndarray
     q_up: np.ndarray
     up: Motion                        # kind "lift": q_draw -> q_up
-    down: Motion                      # kind "lower": q_up -> q_draw, the same motion backwards
+    down: Motion                      # kind "lower": q_up -> q_draw, the same path backwards,
+                                      # timed to land at `rules.landing_speed`
 
 
 def lift_height(paper: Plane, extra: float) -> float:
@@ -124,8 +125,29 @@ def _lift(arm, guard, paper, q_draw, rules, extra, step, max_jump, spin, turn7) 
     flown = guard.flown(res.traj, touching=True)
     if flown < 0.0:
         return f"the lift comes {-flown * 1e3:.2f} mm too close"
+    down = _lower(arm, guard, path[::-1], rules)
+    if isinstance(down, str):
+        return down
     return Lift(q_draw=path[0], q_up=res.traj.q[-1], up=Motion("lift", res.traj),
-                down=Motion("lower", reverse(res.traj)))
+                down=Motion("lower", down))
+
+
+def _lower(arm, guard, path, rules):
+    """The set-down along the lift's path backwards, timed so that the pen never goes faster
+    than `rules.landing_speed`: the pen's path length along the descent is the arc length, the
+    landing speed its cap (a fast landing against the controller's soft spring spikes the
+    force).  -> Trajectory or why not."""
+    tip = arm.tip(path)
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tip, axis=0), axis=1))])
+    res = retime_detailed(JointPath(path), arm.limits,
+                          replace(rules, draw_speed=rules.landing_speed), s=s, smooth=True,
+                          tip_of=arm.tip)
+    if isinstance(res, Refusal):
+        return f"the set-down cannot be timed: {res.reason} {res.detail}"
+    flown = guard.flown(res.traj, touching=True)
+    if flown < 0.0:
+        return f"the set-down comes {-flown * 1e3:.2f} mm too close"
+    return res.traj
 
 
 def end_lift(arm, guard, paper: Plane, plan: DrawPlan, end: int, rules: DrawRules, opt):

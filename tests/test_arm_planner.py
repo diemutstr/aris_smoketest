@@ -113,8 +113,10 @@ def test_the_first_motion_comes_before_the_tour_is_decided():
 
 # Measured 2026-09-30 on branch aris3 with the two lift rules (turns allowed) and a 20 mm pen clearance
 # (docs/modules/sequencer.md): every motion of the word passes the checker.
-WORD = {31: dict(checked=53, motions=53, share=0.32, cpu=2.4),
-        13: dict(checked=53, motions=53, share=0.30, cpu=4.3)}
+# Pen-up share ceilings raised 2026-10-01 for the set-down at the landing speed (10 mm/s, about
+# 2.3 s per piece instead of 0.3): measured 0.371 (arm 31) and 0.339 (arm 13).
+WORD = {31: dict(checked=53, motions=53, share=0.42, cpu=2.4),
+        13: dict(checked=53, motions=53, share=0.40, cpu=4.3)}
 
 
 @pytest.mark.slow
@@ -231,7 +233,8 @@ def test_first_motion_of_1000_lines_comes_within_seconds(tmp_path_factory):
     arm, obs, rules, _ = lc.problem(RIG, 13)
     assert_tour(arm, obs, rules, ms, RIG.park_q(13), RIG.park_q(13))
     assert st.batches == 32 and st.first_wall < 15.0         # 5 s wanted at load under 20
-    assert st.tour.penup_share <= 0.20
+    # raised from 0.20 on 2026-10-01: set-down at the landing speed, measured 0.290
+    assert st.tour.penup_share <= 0.33
     drawn = {m.piece.line_id for m in ms if m.kind == "draw"} | {x.piece.line_id for x in left}
     assert drawn == {x.id for x in lines}
 

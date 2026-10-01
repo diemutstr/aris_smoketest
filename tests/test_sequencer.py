@@ -43,7 +43,7 @@ def test_price_is_the_slowest_joint_at_the_allowed_speed(problem):
     assert np.allclose(got, [0.5 / v[3], max(0.1 / v[0], 0.3 / v[6])])
 
 
-def test_lift_off_goes_straight_up_and_the_set_down_is_the_same_backwards(problem):
+def test_lift_off_goes_straight_up_and_the_set_down_lands_slowly(problem):
     arm, obs, rules, bunches = problem
     guard = Guard(arm, obs, rules.gates)
     paper = [p for p in obs.planes if p.kind == "paper"][0]
@@ -63,9 +63,18 @@ def test_lift_off_goes_straight_up_and_the_set_down_is_the_same_backwards(proble
     side = np.linalg.norm((tip - tip[0]) - rise[:, None] * n, axis=1)
     assert abs(rise[-1] - lift_height(paper, opt.lift_extra)) < 1e-6 and side.max() < 2e-4
     assert np.all(np.diff(rise) > -1e-6)                         # it only rises
-    back = sample(up.down.traj, up.down.traj.t[-1] - t)[0]
-    assert np.allclose(back, sample(up.up.traj, t)[0], atol=1e-12)
     assert guard.hold(up.q_up, touching=False) is None
+    # the lift keeps its fast timing (the joint limits alone): well under the landing-speed time
+    assert up.up.traj.t[-1] < 0.5 * lift_height(paper, opt.lift_extra) / rules.landing_speed
+    # the set-down: the same path down, the pen never faster than the landing speed
+    td = np.linspace(0, up.down.traj.t[-1], int(up.down.traj.t[-1] * 4000) + 2)
+    tip_d = arm.tip(sample(up.down.traj, td)[0])
+    speed = np.linalg.norm(np.diff(tip_d, axis=0), axis=1) / np.diff(td)
+    assert speed.max() <= rules.landing_speed * 1.005, speed.max()
+    fall = (tip_d - tip_d[-1]) @ n
+    off = np.linalg.norm((tip_d - tip_d[-1]) - fall[:, None] * n, axis=1)
+    assert np.all(np.diff(fall) < 1e-6) and off.max() < 3e-4      # straight down, only down
+    assert up.down.traj.t[-1] > lift_height(paper, opt.lift_extra) / rules.landing_speed
 
 
 def test_rule_2_shortens_the_piece_until_rule_1_works(problem):
