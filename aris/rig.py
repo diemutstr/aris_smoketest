@@ -111,6 +111,8 @@ class Rig:
     rows: tuple[tuple[int, int], ...]
     leader_sets: dict                  # phase -> tuple of arm ids
     wall_pairs: dict                   # phase -> tuple of (arm, arm) with a wall between them
+    fences: tuple                      # (name, point_table, normal_table): planes every arm stays
+                                       # on the normal's side of, in every phase (rig.json fences)
     canvas_size: np.ndarray            # (2,)
     drawing_area_m: np.ndarray | None  # (2,) x by y, centred on the table; written by the
                                        # system planner from its maps, None until it has
@@ -147,6 +149,14 @@ class Rig:
         # row, a wall between a mounted and a missing arm is no wall.
         rp = cfg["rows_and_phases"]
         here = lambda ids: tuple(int(i) for i in ids if int(i) in mounts)
+        fences = tuple((f["name"], np.asarray(f["point_m"], float),
+                        np.asarray(f["normal"], float) / np.linalg.norm(f["normal"]))
+                       for f in cfg.get("fences", {}).get("planes", ()))
+        for name, pt, n in fences:          # a mounted arm must stand on the free side
+            for aid, m in mounts.items():
+                axis = np.array([m.axis_xy_table[0], m.axis_xy_table[1], pt[2]])
+                if n @ (axis - pt) <= 0.0:
+                    raise ValueError(f"rig.json: arm {aid} stands behind fence {name}")
         num = lambda d: {k: float(v) for k, v in d.items() if k.endswith("_m")}
         return Rig(
             mounts=mounts, steel=tuple(cage + hangers),
@@ -164,6 +174,7 @@ class Rig:
             leader_sets={int(k): here(v) for k, v in rp["leaders"].items()},
             wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v if len(here((a, b))) == 2)
                         for k, v in rp["walls"].items()},
+            fences=fences,
             canvas_size=np.array([cfg["canvas"]["size_x_m"], cfg["canvas"]["size_y_m"]]),
             drawing_area_m=(None if "drawing_area_m" not in cfg["canvas"]
                             else np.asarray(cfg["canvas"]["drawing_area_m"], float).reshape(2)),
@@ -330,6 +341,11 @@ class Rig:
             boxes.append(Box(b.name, Tb, 0.5 * (b.hi_table - b.lo_table), steel_m, exempt))
         planes = [self.paper(arm_id, for_planning)]
         planes += [self.wall_in_base(arm_id, w, for_planning) for w in walls]
+        # fences: walls that are always there, whatever the phase (e.g. toward the hangers of
+        # arms that are present but not controlled)
+        wall_m = self.clearance["wall_m"] + (self.allowance["wall_m"] if for_planning else 0.0)
+        planes += [self._plane_in_base(arm_id, name, n, pt, wall_m, "wall", None)
+                   for name, pt, n in self.fences]
         caps = [c for p in parked for c in self.parked_capsules(arm_id, p, for_planning)]
         return Obstacles(tuple(boxes), tuple(planes), tuple(caps))
 

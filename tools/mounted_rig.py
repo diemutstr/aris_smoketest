@@ -31,6 +31,7 @@ def derive(source: dict, arms: list[int], area: tuple[float, float] | None) -> d
         a["mounted"] = int(a["id"]) in arms
     if area is not None:
         out["canvas"]["drawing_area_m"] = [float(area[0]), float(area[1])]
+    out["fences"] = fences(out["arms"]["list"], arms)
     out["canvas"]["drawing_area_note"] = (
         "Chosen for the mounted arms by hand (conservative); it must lie inside the area the "
         "drawable maps give, which the server checks when it starts (aris/server/station.py).")
@@ -42,6 +43,29 @@ def derive(source: dict, arms: list[int], area: tuple[float, float] | None) -> d
                 "edit by hand; change config/rig.json and run the tool again.",
     }
     return out
+
+
+def fences(arm_list: list[dict], mounted: list[int]) -> dict:
+    """Planes the mounted arms stay behind: one between every row that has no mounted arm and
+    the nearest row that has one, halfway, square to the table's length.  An arm that is
+    present but not controlled (switched off, hanging from its hanger) is thereby ignored as a
+    body and fenced off as a region (Pete, 2026-10-01)."""
+    rows = sorted({round(float(a["axis_xy_m"][1]), 6) for a in arm_list})
+    live = sorted({round(float(a["axis_xy_m"][1]), 6) for a in arm_list if int(a["id"]) in mounted})
+    planes = []
+    for y in rows:
+        if y in live or not live:
+            continue
+        near = min(live, key=lambda v: abs(v - y))
+        mid, sign = 0.5 * (y + near), 1.0 if near > y else -1.0
+        planes.append(dict(name=f"fence_row_{y:+.3f}".replace(".", "p"),
+                           point_m=[0.0, round(mid, 6), 0.0], normal=[0.0, sign, 0.0],
+                           source=f"halfway between the row at y = {y:+.4f} m (no arm controlled) "
+                                  f"and the nearest controlled row at y = {near:+.4f} m"))
+    return dict(source="walls that hold in every phase and job: every controlled arm's whole body "
+                       "stays on the normal's side, at the wall clearance. Written by "
+                       "tools/mounted_rig.py for the rows without a controlled arm.",
+                planes=planes)
 
 
 def main() -> int:

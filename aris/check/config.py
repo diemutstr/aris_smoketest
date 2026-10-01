@@ -34,6 +34,8 @@ class RigData:
     paper_z: float
     draw_speed: float              # m/s, rig.json drawing.draw_speed_m_per_s
     notes: tuple = ()              # anything the verdict should say about how rig.json was read
+    fences: tuple = ()             # (name, point, unit normal), table frame: planes every arm
+                                   # stays on the normal's side of, in every phase (rig.json)
 
 
 def read_rig(config_dir) -> RigData:
@@ -66,10 +68,14 @@ def read_rig(config_dir) -> RigData:
         clearance["tool_to_paper_m"] = clearance["body_to_paper_m"]
         notes.append("rig.json has no clearances.tool_to_paper_m: the tool keeps "
                      "body_to_paper_m")
+    fences = []
+    for f in cfg.get("fences", {}).get("planes", ()):
+        n = np.asarray(f["normal"], float)
+        fences.append((str(f["name"]), np.asarray(f["point_m"], float), n / np.linalg.norm(n)))
     return RigData(mounts, tuple(names), tuple(owner),
                    tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
                    float(cfg["table"]["paper_surface_z_m"]),
-                   float(cfg["drawing"]["draw_speed_m_per_s"]), tuple(notes))
+                   float(cfg["drawing"]["draw_speed_m_per_s"]), tuple(notes), tuple(fences))
 
 
 def _need_rigid(T, what):

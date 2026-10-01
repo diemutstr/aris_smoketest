@@ -579,5 +579,38 @@
   "source": "what the executor checks before it runs a motion (orchestrator, 2026-09-30)",
   "start_tolerance_rad": 0.005,
   "start_tolerance_note": "per joint: what a joint trajectory controller accepts before it starts; the executor refuses a motion whose start is further than this from the measured configuration in any joint"
+ },
+ "fences": {
+  "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm.",
+  "planes": [
+   {
+    "name": "fence_row_-1p210",
+    "point_m": [
+     0.0,
+     -0.605106,
+     0.0
+    ],
+    "normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "source": "halfway between the row at y = -1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+   },
+   {
+    "name": "fence_row_+1p210",
+    "point_m": [
+     0.0,
+     0.605106,
+     0.0
+    ],
+    "normal": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+   }
+  ]
  }
 }

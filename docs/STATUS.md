@@ -64,6 +64,11 @@ and walls. Phases fall out as phase 1 = 71, phase 2 = 31 (no walls), fills. The 
 chosen conservatively at 1.2 x 1.0 m (the maps allow 1.60 x 1.16); a rig area smaller than the
 maps' is now allowed on purpose, only a larger one is "stale". The word "unknown" across the
 seam (`aris plan --config config/two_arms`): 2.59 m, 100 % drawn, 54 motions checked, 5 s.
+Pete, later that day: the other four arms hang there switched off → "ignore them, virtual
+walls": rig.json `fences` = planes that hold in every phase and job (planner: `obstacles()`;
+checker: its own reader + `build_scene`); the tool writes one halfway between every dead row
+and the nearest live one (y = ±0.605 m). Maps then allow 1.76 x 1.00 m; the 1.2 x 1.0 area
+stays; the word still 100 % (58 motions, 6 s).
 
 ## Next
 

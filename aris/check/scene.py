@@ -83,6 +83,8 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
         if side < 0:
             normal = -normal
         names.append(w.name), n.append(normal), d.append(normal @ np.asarray(w.point_table))
+    for name, pt, normal in rig.fences:        # always there, whatever the phase
+        names.append(name), n.append(normal), d.append(normal @ pt)
     o_names, o_a, o_b, o_r = [], [], [], []
     for p in parked:
         other = rig.mounts[p]

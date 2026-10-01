@@ -69,9 +69,12 @@ simulated arms instead of the real ones.
 arms that are actually bolted on today are in `config/two_arms/` (arms 31 and 71, written from
 the full rig by `tools/mounted_rig.py`, with a conservative drawing area of 1.2 × 1.0 m around
 the table centre). Use it with `--config config/two_arms` on every `aris` command; the empty
-hangers stay as steel, the phases and walls follow from the mounted arms, nothing else changes.
-When more arms go up, run the tool again with the new list and a new area (the maps allow
-1.60 × 1.16 m for these two; the server refuses an area larger than the maps allow).
+hangers stay as steel, the phases and walls follow from the mounted arms, and the rows whose
+arms are present but switched off are fenced: a plane halfway between that row and the nearest
+controlled one, which every controlled arm's whole body stays behind in every phase and job
+(the dead arms themselves are not modelled). When more arms go up, run the tool again with the
+new list and a new area (the maps allow 1.76 × 1.00 m for these two behind the fences; the
+server refuses an area larger than the maps allow).
 
 On the **operator PC** one process runs, `aris-robot serve`, installed once as a systemd
 service (`robot/aris-robot.service`, `robot/README.md` section 8). It brings up and keeps up the

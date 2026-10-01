@@ -555,3 +555,40 @@ def test_a_rig_with_two_arms_mounted_keeps_every_hanger_and_drops_the_rest():
     out = subprocess.run([sys.executable, str(DEPLOY / "tools" / "mounted_rig.py"),
                           "--check", str(CONFIG / "two_arms")], capture_output=True)
     assert out.returncode == 0, out.stdout.decode() + out.stderr.decode()
+
+
+def test_fences_hold_in_every_phase_for_the_planner_and_the_checker():
+    """config/two_arms fences off the rows whose arms are present but not controlled: planes at
+    y = +-0.605 m that every controlled arm's body stays behind, in every phase and job."""
+    import numpy as np
+    from aris.check.config import read_rig
+    from aris.check.scene import build_scene, clearance
+    from aris.kernel.collide import clearance as kernel_clearance
+    from aris.rig import Rig
+    two, six = Rig.load(CONFIG / "two_arms"), Rig.load(CONFIG)
+    assert len(six.fences) == 0 and [f[0] for f in two.fences] == ["fence_row_-1p210",
+                                                                    "fence_row_+1p210"]
+    for ph in (two.phase(1), two.phase(2)):
+        for a in ph.active:
+            names = [p.name for p in two.obstacles_for(a, ph).planes]
+            assert names == ["paper", "fence_row_-1p210", "fence_row_+1p210"]
+    # a configuration reaching past y = -0.605 m toward the dead row is refused on both sides
+    arm = two.arm(31)
+    q = two.park_q(31).copy()
+    reach = None
+    for q1 in np.linspace(-2.8, 2.8, 57):           # turn joint 1 until the elbow is far in -y
+        q[0] = q1
+        tip_y = (two.T_table_base(31) @ np.append(arm.tip(q[None])[0], 1.0))[1]
+        body = arm.body(q[None])
+        ys = (two.T_table_base(31)[:3, :3] @ body.p0[0].T).T[:, 1] + two.T_table_base(31)[1, 3]
+        if ys.min() < -0.65:
+            reach = q.copy()
+            break
+    assert reach is not None, "no configuration of arm 31 reaches past the fence from its park"
+    planner = kernel_clearance(arm.body(reach[None]), two.obstacles_for(31, two.phase(2)))[0]
+    assert planner < 0.0
+    rig_c = read_rig(CONFIG / "two_arms")
+    scene = build_scene(rig_c, 31, (), (71,), drawing=False)
+    chk = clearance(scene, reach[None])
+    assert chk.value["walls"][0] < 0.0 and scene.plane_names == ("fence_row_-1p210",
+                                                                "fence_row_+1p210")
