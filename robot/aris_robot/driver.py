@@ -7,13 +7,16 @@
               its first point; done, or failed with the controller's own error string
   draw(m)     lower, draw and lift under the impedance controller: the trajectory streamed at
               1 kHz with the pen force (force.py); a free motion goes to `move`
+  touch(m)    the calibration touch under the trajectory controller (touch.py): down until
+              the force onset, the joints there, back to the hover
   hold()      nothing to do: both controllers hold where the last motion ended
   stop()      at once: the impedance controller latches a hold, a trajectory goal is cancelled
   recover()   franka error recovery, then the trajectory controller re-activated
   switch(n)   "trajectory" or "impedance": that controller takes the arm
 
 With fake hardware the impedance controller cannot move the arm (the fake arm ignores
-torques), so `draw` goes to `move` and there is no pen force.
+torques), so `draw` goes to `move` and there is no pen force; `touch` runs as on the real
+arm, with a fake paper (`fake_paper_m`) standing in for the force estimate.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from aris.execute.drivers import ArmState, Result
 from aris.types import Refusal
 from aris_robot import force as F
 from aris_robot import stream as S
+from aris_robot import touch as T
 from aris_robot.rosarm import IMPEDANCE, MODES, TRAJECTORY, ArmNode, wait
 
 log = logging.getLogger("aris_robot")
@@ -35,9 +39,15 @@ TICK = 0.005               # s between two looks at the stream and the status
 
 
 class RosArm:
-    def __init__(self, site, rig, arm_id: int, fake: bool = False, lead: float = 0.1):
+    def __init__(self, site, rig, arm_id: int, fake: bool = False, lead: float = 0.1,
+                 fake_paper_m: float = 0.0):
+        """`fake_paper_m`: with fake hardware, where the fake paper is (m above the nominal
+        paper); its push stands in for the force estimate that fake hardware lacks."""
         self.arm_id, self.fake, self.lead = arm_id, fake, lead
         self.fs = F.ForceSettings.from_site(site.force)
+        self.ts = T.TouchSettings.from_site(site.touch, self.fs.sign)
+        self.kin = T.Kinematics.of(rig, arm_id)
+        self.fake_paper = T.FakePaper(self.kin, rig.paper(arm_id), fake_paper_m) if fake else None
         self.normal = np.asarray(rig.paper(arm_id).normal, float)   # base frame, up
         self.start_tol = float(rig.execution().start_tolerance)
         self.ros = ArmNode(site.arm(arm_id), site.joint_names())
@@ -110,29 +120,24 @@ class RosArm:
                            f_start=self._press)
             return self._run_stream(S.samples(motion.traj, fn, self.normal), motion.kind, fn)
 
-    def touch(self, traj) -> tuple[Result, dict]:
-        """The calibration touch: follow `traj` (a slow descent) under the impedance
-        controller with zero force and stop at the first contact.  Done only if the pen
-        touched; the report says when (stream time) and the largest force seen."""
+    def touch(self, motion) -> Result:
+        """The calibration touch (touch.py): the descent under the trajectory controller,
+        stopping at the force onset, back to the hover.  done with the joints at contact."""
         with self._busy:
-            refused = self._refuse(traj.q[0])
+            refused = self._refuse(motion.q_start)
             if refused:
-                return refused, {}
-            why = self.switch("impedance")
-            zero = self._tare() if not why else None
-            if why or isinstance(zero, Refusal):
-                why = why or f"{zero.reason}: {zero.detail}"
-                return Result.failed(why, self.state().q), {}
-            self._zero = zero
-            none = lambda t: np.zeros_like(np.asarray(t, float))   # noqa: E731
-            r = self._run_stream(S.samples(traj, none, self.normal), "lower", none,
-                                 stop_on_contact=True)
-            report = dict(self.last_report, air_zero=zero)
-            if r.done and report["contact_at"] is None:
-                r = Result.failed("no contact along the whole descent", r.q)
-            if report.get("contact_at") is not None:
-                self.ros.trigger(self.ros.resume_srv)     # stand where it touched, may move
-            return r, report
+                return refused
+            why = self.switch("trajectory")
+            if why:
+                return Result.failed(why, self.state().q)
+            r = T.touch(motion, _Position(self), self.kin, self.ts)
+            self.last_report = dict(kind="touch", air_zero=r.air_zero, held=r.held,
+                                    depth_past_end=r.depth_past_end, why=r.why)
+            if r.held:
+                self._stopped = True             # stands where it hit; a person looks first
+            if r.done:
+                return Result.ok(r.q_contact)
+            return Result.failed(r.why, self.state().q)
 
     def hold(self) -> None:
         return None
@@ -179,7 +184,9 @@ class RosArm:
             return Result.failed(f"trajectory starts {gap:.4g} rad from the arm", s.q)
         return None
 
-    def _follow(self, traj) -> Result:
+    def _follow(self, traj, watch=None) -> Result:
+        """The trajectory controller flies `traj`; `watch(q, F)` sees every reading and may
+        cancel it (True): then failed("cancelled") with the arm standing where it stopped."""
         client = self.ros.follow
         if not client.wait_for_server(timeout_sec=2.0):
             return Result.failed("the trajectory controller is not available", self.state().q)
@@ -189,10 +196,17 @@ class RosArm:
                                  self.state().q)
         result = handle.get_result_async()
         deadline = time.monotonic() + float(traj.t[-1] - traj.t[0]) + 5.0
+        self.ros.drain_readings(self.fake)
         while not result.done():
             if self._halt.is_set():
                 wait(handle.cancel_goal_async(), 2.0)
                 return Result.failed("stopped", self.state().q)
+            if watch is not None:
+                for q, f in self.ros.drain_readings(self.fake):
+                    if watch(q, self.fake_paper.force(q) if self.fake else f):
+                        wait(handle.cancel_goal_async(), 2.0)
+                        time.sleep(0.05)                    # the controller holds where it is
+                        return Result.failed("cancelled", self.state().q)
             if time.monotonic() > deadline:
                 wait(handle.cancel_goal_async(), 2.0)
                 return Result.failed("the trajectory did not finish in time", self.state().q)
@@ -216,7 +230,7 @@ class RosArm:
         self._stream += 1
         return self._stream
 
-    def _run_stream(self, samples: S.Samples, kind: str, fn, stop_on_contact=False) -> Result:
+    def _run_stream(self, samples: S.Samples, kind: str, fn) -> Result:
         """Streams one motion and watches it.  Returns done or failed with why."""
         sid = self._next_stream()
         pacer = S.Pacer(samples, sid, self.lead)
@@ -253,9 +267,6 @@ class RosArm:
                 if kind in ("lower", "draw") and contact.update(f_rel, st.t) \
                         and report["contact_at"] is None:
                     report["contact_at"] = contact.at
-                    if stop_on_contact:
-                        self.ros.trigger(self.ros.hold_srv, timeout=0.5)
-                        return self._end(report, Result.ok(self.state().q))
                 if kind == "draw" and t_prev is not None:
                     servo.update(float(fn(st.t)), f_rel, st.t - t_prev, contact.at is not None)
                 t_prev = st.t
@@ -275,3 +286,22 @@ class RosArm:
         self.last_report = report
         return r
 
+
+class _Position:
+    """The real arm as touch.py sees it: the trajectory controller and the robot's readings."""
+
+    def __init__(self, arm: RosArm):
+        self.arm = arm
+
+    def fly(self, traj, watch) -> str:
+        r = self.arm._follow(traj, watch)
+        return "" if r.done else r.why
+
+    def forces(self, seconds: float) -> list:
+        a = self.arm
+        a.ros.drain_readings(a.fake)
+        time.sleep(seconds)
+        return [a.fake_paper.force(q) if a.fake else f for q, f in a.ros.drain_readings(a.fake)]
+
+    def joints(self):
+        return self.arm.state().q

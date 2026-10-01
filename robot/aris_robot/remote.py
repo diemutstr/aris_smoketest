@@ -17,6 +17,22 @@ copy of the parts it runs, byte for byte, by following files as they grow:
                                                "stop": bool}; stop is true once the job was
                                                stopped on the server.
 
+The resident process (`aris-robot serve`, serve.py) also uses:
+
+  GET  /operator/next?wait=S                   long-poll, held up to S seconds: the next
+                                               command, {"id": c, "command": "run", "job": j}
+                                               | {"id": c, "command": "recover", "arm": a}
+                                               | {"id": c, "command": "report"}; 204 (or {})
+                                               when there is none
+  POST /operator/ack                           {"id": c}: the command is taken
+  POST /operator/rows                          {"source": "robot", "rows": [...]}: what the
+                                               operator PC says outside a job (started,
+                                               where, report, recovered, stack died, a run
+                                               refused, ...); every row has "event" and
+                                               "time", rows about arms have "where" or "q"
+  GET  /calibration                            {"arms": [ids that have a calibration file]}
+  GET  /calibration/{arm}                      that file, as JSON (404: none)
+
 A lost link stops nothing: the copy resumes from its own length, and what is already copied
 keeps running (DESIGN.md section 5).
 """
@@ -53,6 +69,46 @@ class Remote:
 
     def header(self, job: str) -> dict | Refusal:
         return self.get_json("jobs", job, "header")
+
+    def _post(self, body: dict, *parts, timeout=None) -> dict | Refusal:
+        req = urllib.request.Request(self.url(*parts), data=json.dumps(body).encode(),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+                data = r.read()
+                return json.loads(data) if data else {}
+        except urllib.error.HTTPError as e:
+            return Refusal("server", f"{e.code} from {'/'.join(map(str, parts))}: {_body(e)}")
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            return Refusal("unreachable", f"{self.base}: {e}")
+
+    def next_command(self, wait: float = 30.0) -> dict | None | Refusal:
+        """The server's next command for this PC, waiting up to `wait` s; None: nothing."""
+        try:
+            with urllib.request.urlopen(self.url("operator", "next", wait=wait),
+                                        timeout=wait + self.timeout) as r:
+                data = r.read()
+                if r.status == 204 or not data.strip():
+                    return None
+                cmd = json.loads(data)
+                return cmd if cmd.get("command") else None
+        except urllib.error.HTTPError as e:
+            return Refusal("server", f"{e.code} from operator/next: {_body(e)}")
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            return Refusal("unreachable", f"{self.base}: {e}")
+
+    def ack(self, cmd_id) -> dict | Refusal:
+        return self._post(dict(id=cmd_id), "operator", "ack")
+
+    def post_rows(self, rows: list[dict]) -> dict | Refusal:
+        return self._post(dict(source="robot", rows=rows), "operator", "rows")
+
+    def calibration_arms(self) -> list[int] | Refusal:
+        ans = self.get_json("calibration")
+        return ans if isinstance(ans, Refusal) else [int(a) for a in ans.get("arms", [])]
+
+    def calibration(self, arm: int) -> dict | Refusal:
+        return self.get_json("calibration", arm)
 
     def post_events(self, job: str, rows: list[dict]) -> dict | Refusal:
         body = json.dumps(dict(source="robot", rows=rows)).encode()

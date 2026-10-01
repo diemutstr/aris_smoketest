@@ -4,11 +4,10 @@ None of the moves here comes from the planner, so none is certified.  Each is re
 it is small: a jog of at most `JOG_MAX` on one joint; a park by straight joint interpolation
 only from within `PARK_NEAR` of the park on every joint (anything further goes through the
 server's park job: `aris park` on the planning PC, then `aris-robot run --job <id>`); a touch
-that descends at most `TOUCH_MAX` straight down, slowly, with zero force.
+that descends at most `TOUCH_MAX` straight down, slowly, under position control (touch.py).
 """
 from __future__ import annotations
 
-import dataclasses
 import re
 import socket
 
@@ -20,7 +19,6 @@ from aris.types import JointPath, Refusal
 JOG_MAX = 0.10          # rad
 PARK_NEAR = 0.05        # rad, on every joint
 TOUCH_MAX = 0.06        # m
-TOUCH_SPEED = 0.005     # m/s
 
 
 def straight(rig, arm_id: int, q0, q1):
@@ -54,30 +52,6 @@ def park_move(rig, arm_id: int, q):
                        f"{j + 1} (straight moves only within {PARK_NEAR}); run the server's park "
                        f"job: `aris park` there, then `aris-robot run --job <id>` here")
     return straight(rig, arm_id, q, park)
-
-
-def descent(rig, arm_id: int, q, depth: float, step: float = 0.001):
-    """A slow straight descent of the pen tip along minus the paper normal, keeping the hand's
-    orientation and joint 7: joint configurations by the arm's own IK, timed at TOUCH_SPEED."""
-    if not 0.0 < depth <= TOUCH_MAX:
-        return Refusal("too_far", f"a touch descends at most {TOUCH_MAX} m")
-    arm, n = rig.arm(arm_id), rig.paper(arm_id).normal
-    T0 = arm.fk(np.asarray(q, float)[None])[0]
-    d = np.linspace(0.0, depth, int(round(depth / step)) + 1)
-    path, prev = [np.asarray(q, float)], np.asarray(q, float)
-    for di in d[1:]:
-        T = T0.copy()
-        T[:3, 3] -= di * n
-        Q, ok = arm.ik(T[None], q[6])
-        if not ok[0].any():
-            return Refusal("unreachable", f"no arm configuration {di * 1000:.0f} mm down")
-        cand = Q[0][ok[0]]
-        prev = cand[np.argmin(np.abs(cand - prev).max(axis=1))]
-        if np.abs(prev - path[-1]).max() > 0.05:
-            return Refusal("branch", "the descent would jump between arm shapes")
-        path.append(prev)
-    rules = dataclasses.replace(rig.rules(), draw_speed=TOUCH_SPEED)
-    return retime(JointPath(np.array(path)), arm.limits, rules, s=d)
 
 
 def identify(site, rig, timeout: float = 3.0) -> list[dict]:

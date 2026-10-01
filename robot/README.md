@@ -16,6 +16,14 @@ robot/
   tests/                       everything that runs without ROS
 ```
 
+**In normal operation one process runs here, `aris-robot serve` (section 8), started at boot
+by systemd. Nobody touches this PC after that: every command (draw, park, calibrate, recover,
+report) is given on the planning PC with `aris ...`, and the only thing on this side is the
+e-stop.** Sections 5 to 7 are the hardware-day steps that come before it. The tools they use
+(`aris-robot run, park, jog, touch, identify, switch, recover`) stay for that, but they are
+not needed once serve runs. Stop serve (`sudo systemctl stop aris-robot`) before using any of
+them on the same arm.
+
 Nothing below has been run on the operator PC yet. Where a step can fail for a reason we could
 not check here, it says so.
 
@@ -29,7 +37,7 @@ not check here, it says so.
   them from 20 N to 40 N before every pass). Write down which are in force.
 
 `robot/generated/` (from `aris-robot bringup`) and `out/robot_jobs/` (the local copies of
-jobs) are gitignored.
+jobs) are gitignored, and so is `out/operator/`, serve's log directory.
 
 ## 1. Get the code
 
@@ -143,8 +151,9 @@ aris-robot park 31                  # only from within 0.05 rad of the park, str
 ```
 
 A park from further away is a planned job, planned from where the arms really stand. The
-server knows that only from the runner: every run reports every mounted arm's joints at its
-start, on every row about an arm, and at its end. So:
+server knows that only from this PC: every run reports every mounted arm's joints at its start,
+on every row about an arm, and at its end, and serve reports them every 10 s while idle. With
+serve running, `aris park` on the planning PC is all it takes. Without serve:
 
 1. Run anything with `aris-robot run` first (the last run's report is what the server plans
    from). If the arms were moved by hand since, the server's positions are stale.
@@ -159,18 +168,65 @@ the true positions, so run `aris park` again and then the new job.
 The first contact with paper is the touch, with the pen a few centimetres above the paper:
 
 ```
-aris-robot touch 31 --depth 0.04    # zero force, 5 mm/s, stops at the first contact, comes back up
+aris-robot touch 31 --depth 0.04 --extra 0.01
 ```
 
-It prints the joint angles and the pen tip where it touched and the air reading. Check the
-sign of the force (site.json `force.sign`) here: the reading must rise when the pen meets the
-paper. Then the first job, in the air first (a drawing planned 30 mm above the paper), then on
+It goes straight down at 5 mm/s under position control (the trajectory controller), and on
+for at most 10 mm more at 2 mm/s if it has not met the paper. It stops at the force onset
+(1.0 N over the air reading), prints the joints, the pen tip and the air reading, and goes
+back up the same way. Over 3 N it stops and holds where it is. This is the same touch the
+calibration job uses (`aris calibrate <arm>` on the planning PC, with serve running). Check
+the sign of the force (site.json `force.sign`) here: the reading must rise when the pen meets
+the paper. Then the first job, in the air first (a drawing planned 30 mm above the paper), then on
 paper.
 
 If an arm faults or was stopped: look at it, clear the cause, then `aris-robot recover 31`
 (franka error recovery, then the trajectory controller takes the arm again). The runner never
 does this by itself: a failed arm holds, and the next job refuses an arm that is not able to
 move. Never recover an arm in user stop (mode "user stopped") or guiding.
+
+## 8. The resident process: `aris-robot serve`
+
+Once the steps above work for every mounted arm, install serve and leave this PC alone:
+
+```
+sudo cp ~/aris3/robot/aris-robot.service /etc/systemd/system/
+sudo nano /etc/systemd/system/aris-robot.service     # User= and the paths, if not operator/~/aris3
+sudo systemctl daemon-reload && sudo systemctl enable --now aris-robot
+systemctl status aris-robot
+```
+
+What the unit needs: the operator's user (it owns `~/aris3`, `~/ros2_ws` and the venv);
+ROS 2 Jazzy, the franka_ros2 workspace and `robot/ros2_ws` sourced (the unit does it, in
+that order); the venv's `aris-robot`; real-time limits for the control loop (`LimitRTPRIO`,
+`LimitMEMLOCK`, set in the unit). `Restart=always` brings it back after a crash and at every
+boot.
+
+What it does, on its own:
+- writes the launch files and starts one ROS stack per mounted arm (site.json), each in its own
+  process group, with its output in `out/operator/stack_arm<id>.log`. A stack that dies is
+  started again after 1 s, then 2, 4, ... up to a minute, and every death is reported.
+- asks the drawing server for work (`GET /operator/next`, waiting 30 s at a time), so this PC
+  opens no port. "run" runs a job exactly as `aris-robot run --job` does (a drawing, a park or
+  a calibration); "recover" recovers one arm; "report" reports every arm.
+- before each job, fetches the calibration files from the server into `config/calibration/`
+  (the server owns them; a local file the server does not have is removed).
+- every 10 s while no job runs, reports where every arm stands.
+- says everything as rows to the server and to `out/operator/rows.jsonl`; its own log is
+  `out/operator/serve.log`. It needs no terminal.
+
+The config directory must hold the same rig file as the server's. Add
+`--config config/two_arms` before `serve` in the `ExecStart` line when the server runs with
+that one.
+
+**Fake hardware**: `aris-robot --fake serve` (add `--fake` to the unit's command line). The
+stacks start on fake hardware, which ignores torques. A drawing motion therefore goes through
+the trajectory controller, without pen force, and the impedance controller is never used. A
+touch works as on a real arm: the fake hardware has no force estimate, so a fake paper stands
+in for it, at `--fake-paper-mm` above the nominal paper (default 0: the touch meets it at the
+planned end of its descent). `aris-robot serve --sim-speed inf` runs without ROS at all, on
+simulated arms that also touch a fake paper. It is useful for trying the server's commands on
+any PC.
 
 ## Defaults worth knowing
 

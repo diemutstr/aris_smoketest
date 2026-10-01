@@ -89,7 +89,12 @@ class Coordinator:
 
         def work(a):
             ex = Executor(a, self.drivers[a], self.log, self.start_tol)
-            runs[a] = ex.run(self.job.queue(phase.name, a), self._stop, self.poll)
+            try:
+                runs[a] = ex.run(self.job.queue(phase.name, a), self._stop, self.poll)
+            except Exception as e:  # a bug in a driver or the executor: that arm failed, the
+                self.drivers[a].hold()   # phase reports it; the other arms finish their queues
+                self.log.write("failed", phase=phase.name, arm=a, why=f"internal error: {e!r}")
+                runs[a] = ArmRun(a, phase.name, "failed", 0, f"internal error: {e!r}")
 
         threads = [threading.Thread(target=work, args=(a,), daemon=True) for a in phase.active]
         for t in threads:

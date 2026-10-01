@@ -1,7 +1,9 @@
 """A stand-in for the drawing server's job endpoints, serving job directories on disk.
 
-It is also the reference for the server's owner: the four endpoints the operator PC uses
-(see aris_robot/remote.py), implemented as the runner expects them.
+It is also the reference for the server's owner: the endpoints the operator PC uses (see
+aris_robot/remote.py), implemented as the runner and `aris-robot serve` expect them: the four
+job endpoints, the operator's command queue (`app.state.commands`, append dicts with an "id"),
+its rows (`app.state.rows`), and the calibration files (`app.state.calibration`, arm -> dict).
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from aris.execute import Job
 from aris.execute.queue import Queue
@@ -51,6 +53,10 @@ def create_app(jobs_dir, max_bytes=None) -> FastAPI:
     app = FastAPI()
     app.state.stop = set()          # job ids stopped on the server
     app.state.received = {}         # job id -> rows posted by the robot, in order
+    app.state.commands = []         # the operator's commands not yet handed out
+    app.state.acked = []            # command ids taken
+    app.state.rows = []             # rows posted outside a job
+    app.state.calibration = {}      # arm id -> the calibration file (dict)
 
     def job(jid: str) -> Job:
         d = jobs_dir / jid
@@ -88,6 +94,35 @@ def create_app(jobs_dir, max_bytes=None) -> FastAPI:
                 rows.append(r)
                 taken += 1
         return dict(accepted=taken, next_seq=len(rows), stop=jid in app.state.stop)
+
+    @app.get("/operator/next")
+    async def next_command(wait: float = 30.0):
+        t_end = time.monotonic() + wait
+        while time.monotonic() < t_end:
+            if app.state.commands:
+                return app.state.commands.pop(0)
+            await asyncio.sleep(0.01)
+        return Response(status_code=204)
+
+    @app.post("/operator/ack")
+    async def ack(request: Request):
+        app.state.acked.append((await request.json())["id"])
+        return {}
+
+    @app.post("/operator/rows")
+    async def rows(request: Request):
+        app.state.rows += (await request.json())["rows"]
+        return dict(accepted=True)
+
+    @app.get("/calibration")
+    def calibration_arms():
+        return dict(arms=sorted(app.state.calibration))
+
+    @app.get("/calibration/{arm}")
+    def calibration(arm: int):
+        if arm not in app.state.calibration:
+            raise HTTPException(404, f"no calibration for arm {arm}")
+        return app.state.calibration[arm]
 
     return app
 

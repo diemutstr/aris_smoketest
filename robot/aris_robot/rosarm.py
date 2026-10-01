@@ -64,6 +64,8 @@ class ArmNode:
         self.robot_state = None
         self.status = None
         self.statuses = collections.deque(maxlen=4096)   # every status, for the force servo
+        self.readings = collections.deque(maxlen=4096)   # (q, F) per robot state, for touch
+        self.joint_readings = collections.deque(maxlen=4096)   # q per joint state
         n.create_subscription(JointState, f"{ns}/franka/joint_states", self._on_joints, 10)
         n.create_subscription(FrankaRobotState, f"{ns}/franka_robot_state_broadcaster/robot_state",
                               self._on_robot_state, 10)
@@ -85,19 +87,43 @@ class ArmNode:
 
     # ------------------------------------------------------------------ incoming
 
-    def _on_joints(self, m: JointState) -> None:
-        idx = {name: i for i, name in enumerate(m.name)}
+    def _ordered(self, js):
+        idx = {name: i for i, name in enumerate(js.name)}
         if not all(n in idx for n in self.names):
+            return None
+        return [idx[n] for n in self.names]
+
+    def _on_joints(self, m: JointState) -> None:
+        order = self._ordered(m)
+        if order is None:
             return
-        order = [idx[n] for n in self.names]
         q = np.array([m.position[i] for i in order])
         qd = np.array([m.velocity[i] for i in order]) if len(m.velocity) else np.zeros(7)
         with self._lock:
             self.q, self.qd = q, qd
+            self.joint_readings.append(q)
 
     def _on_robot_state(self, m) -> None:
+        js = m.measured_joint_state
+        order = self._ordered(js)
+        f = m.o_f_ext_hat_k.wrench.force
         with self._lock:
             self.robot_state = m
+            if order is not None:
+                self.readings.append((np.array([js.position[i] for i in order]),
+                                      np.array([f.x, f.y, f.z])))
+
+    def drain_readings(self, joints_only: bool = False) -> list:
+        """Every (q, F) from the robot state since the last call; `joints_only`: every q from
+        the joint states instead (fake hardware has no robot state), with F None."""
+        with self._lock:
+            if joints_only:
+                out = [(q, None) for q in self.joint_readings]
+                self.joint_readings.clear()
+            else:
+                out = list(self.readings)
+                self.readings.clear()
+            return out
 
     def _on_status(self, m) -> None:
         with self._lock:

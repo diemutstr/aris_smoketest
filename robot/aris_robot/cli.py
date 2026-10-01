@@ -1,11 +1,16 @@
 """The operator PC's one command: `aris-robot <verb>`.
 
+  serve     the resident process: started once (at boot), takes every command from the
+            drawing server; once it runs, nothing below is needed
+
+Hardware-day tools:
   bringup   write the launch arguments and controller settings of every arm
   identify  which arm answers on which address and domain, and where it stands
   run       fetch a job's queues from the server and run them on the mounted arms
   park      straight to the park, only from close by (else the server's park job)
   jog       one joint by a little
-  touch     the calibration touch: descend with zero force until the pen meets the paper
+  touch     the calibration touch by hand: straight down under position control until the
+            force onset, report the joints, back up
   switch    hand an arm to the trajectory or the impedance controller
   recover   after a fault or a stop, once a person has looked: error recovery, then the
             trajectory controller takes the arm
@@ -101,21 +106,22 @@ def cmd_jog(a, site, rig) -> int:
 
 
 def cmd_touch(a, site, rig) -> int:
+    from aris_robot.touch import Kinematics, manual_touch
     drv = _driver(site, rig, a.arm, a.fake)
     try:
-        q0 = drv.state().q
-        traj = tools.descent(rig, a.arm, q0, a.depth)
-        if isinstance(traj, Refusal):
-            return _say(False, f"{traj.reason}: {traj.detail}")
-        r, report = drv.touch(traj)
+        if a.depth > tools.TOUCH_MAX:
+            return _say(False, f"a touch descends at most {tools.TOUCH_MAX} m")
+        kin = Kinematics.of(rig, a.arm)
+        m = manual_touch(kin, drv.state().q, a.depth, a.extra)
+        if isinstance(m, Refusal):
+            return _say(False, f"{m.reason}: {m.detail}")
+        r = drv.touch(m)
         if r.done:
-            tip = rig.arm(a.arm).tip(r.q[None])
+            tip = kin.tip(r.q)
             print(json.dumps(dict(arm=a.arm, q=r.q.tolist(), tip_base=tip[0].tolist(),
-                                  tip_table=rig.to_table(a.arm, tip)[0].tolist(), **report)))
-            back = drv.move(tools.straight(rig, a.arm, r.q, q0))   # up the way it came
-            if not back.done:
-                return _say(False, f"touched, but the way back failed: {back.why}")
-        return _say(r.done, "touched" if r.done else r.why)
+                                  tip_table=rig.to_table(a.arm, tip)[0].tolist(),
+                                  **drv.last_report)))
+        return _say(r.done, "touched and back at the start" if r.done else r.why)
     finally:
         drv.close()
 
@@ -138,6 +144,49 @@ def cmd_recover(a, site, rig) -> int:
         drv.close()
 
 
+def cmd_serve(a, site, rig) -> int:
+    import logging
+    import signal
+    from aris_robot.serve import Operator, Rows, Stacks, launch_commands
+    log_dir = Path(a.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(filename=log_dir / "serve.log", level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    remote = Remote(site.server_url)
+    rows = Rows(remote, log_dir)
+    mounted = [i for i in site.mounted if i in rig.arm_ids]
+    stacks = None
+    if a.sim_speed is not None:
+        from aris_robot.simarm import SimTouchArm
+        drivers = {i: SimTouchArm(rig, i, rig.park_q(i), speed=a.sim_speed,
+                                  paper_m=a.fake_paper_mm / 1000.0) for i in mounted}
+    else:
+        from aris_robot.driver import RosArm
+        files = [f for f in bringup.write(rig, site, a.out, fake=a.fake)
+                 if json.loads(f.read_text())["arm"] in mounted]
+        stacks = Stacks(launch_commands(files), rows, log_dir).start()
+        drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
+                   for i in mounted}
+    op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows)
+
+    def leave(signum, frame):
+        op.quit.set()
+        if op.busy.is_set():
+            for d in drivers.values():
+                d.stop()
+
+    signal.signal(signal.SIGTERM, leave)
+    signal.signal(signal.SIGINT, leave)
+    try:
+        op.serve()
+    finally:
+        if stacks is not None:
+            stacks.stop()
+        for d in drivers.values():
+            getattr(d, "close", lambda: None)()
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aris-robot", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -147,6 +196,14 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="verb", required=True)
     b = sub.add_parser("bringup")
     b.add_argument("--out", default=str(REPO / "robot" / "generated"))
+    sv = sub.add_parser("serve")
+    sv.add_argument("--out", default=str(REPO / "robot" / "generated"))
+    sv.add_argument("--work", default=str(REPO / "out" / "robot_jobs"))
+    sv.add_argument("--log-dir", default=str(REPO / "out" / "operator"))
+    sv.add_argument("--sim-speed", type=float, default=None,
+                    help="simulated arms at this many times real time (inf: at once); no ROS")
+    sv.add_argument("--fake-paper-mm", type=float, default=0.0,
+                    help="with --fake or --sim-speed: the fake paper, mm above the nominal one")
     sub.add_parser("identify")
     r = sub.add_parser("run")
     r.add_argument("--job", required=True)
@@ -161,6 +218,8 @@ def parser() -> argparse.ArgumentParser:
             s.add_argument("--delta", type=float, required=True, help="rad")
         if name == "touch":
             s.add_argument("--depth", type=float, default=0.04, help="m, at most 0.06")
+            s.add_argument("--extra", type=float, default=0.01,
+                           help="m further, at 2 mm/s, if no contact by --depth")
         if name == "switch":
             s.add_argument("controller", choices=["trajectory", "impedance"])
     return p
@@ -175,7 +234,8 @@ def main(argv=None) -> int:
     print(f"site {site.path}; server {site.server_url}; mounted {list(site.mounted)}"
           + ("; FAKE HARDWARE" if a.fake else ""))
     verbs = dict(bringup=cmd_bringup, identify=cmd_identify, run=cmd_run, park=cmd_park,
-                 jog=cmd_jog, touch=cmd_touch, switch=cmd_switch, recover=cmd_recover)
+                 jog=cmd_jog, touch=cmd_touch, switch=cmd_switch, recover=cmd_recover,
+                 serve=cmd_serve)
     return verbs[a.verb](a, site, rig)
 
 

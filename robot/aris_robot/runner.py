@@ -74,6 +74,9 @@ class KindRouter:
     def draw(self, motion):
         return self.driver.draw(motion)
 
+    def touch(self, motion):
+        return self.driver.touch(motion)
+
     def state(self):
         return self.driver.state()
 

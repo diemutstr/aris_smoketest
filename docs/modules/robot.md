@@ -43,6 +43,31 @@ implements all four):
 The server must also stop running its own simulated arms for such a job: with real arms, the
 executors run on the operator PC.
 
+## The resident process (`aris-robot serve`)
+
+Pete's requirement: one process on the hardware computer that nobody touches; every command,
+calibration included, comes over the Ethernet cable. `aris-robot serve` is started by systemd
+at boot (`robot/aris-robot.service`, restart always) and:
+
+- **Keeps the ROS stacks up.** One `ros2 launch` per mounted arm, each in its own process
+  group. One that exits is restarted after 1, 2, 4, ... s, up to a minute, and every start
+  and death is a row. It supervises child processes rather than using a systemd unit per arm,
+  because the stacks follow site.json without installing units, their deaths reach the server
+  like every other row, and there is one unit to enable.
+- **Pulls its work.** It asks `GET /operator/next?wait=30` (long-poll), acknowledges with
+  `POST /operator/ack`, and gets `run <job>`, `recover <arm>` or `report`. A run is exactly
+  `aris-robot run --job`, in the same process, with drivers kept for the process's life. This
+  PC opens no port.
+- **Fetches the calibration** from the server (`GET /calibration`, `GET /calibration/{arm}`)
+  into its config before every job, and removes local files the server does not have. The
+  drivers take the new pen and paper. The job's digests then agree, unless rig.json itself
+  differs (another commit), which is still refused.
+- **Says where the arms are.** A "where" row every 10 s while idle, besides the rows of every
+  run (above).
+- **Needs no terminal.** Everything goes to the server as rows (`POST /operator/rows`) and to
+  `out/operator/rows.jsonl` and `serve.log`. A command that fails is a row; the process goes
+  on.
+
 ## How the arm follows a motion
 
 Two controllers, one at a time, switched by the driver:
@@ -118,6 +143,7 @@ a few seconds.
 | `state()` | joints and speeds; robot mode and errors; the impedance controller's hold. Able to move only in mode idle or move, with no error, not stopped |
 | `move(traj)` | checks the arm is at the first knot (5 mrad), then the trajectory controller flies it. Answers done, or failed with the controller's own error text |
 | `draw(motion)` | lower, draw and lift go through the impedance controller with the pen force; a free motion goes to `move` |
+| `touch(motion)` | the calibration touch, below |
 | `hold()` | nothing to do: both controllers hold where the last motion ended |
 | `stop()` | at once: the impedance controller holds, a trajectory goal is cancelled; the arm refuses to move until `recover` |
 | `recover()` | Franka error recovery, then the trajectory controller takes the arm again. Refused while the arm is in user stop or guiding |
@@ -146,13 +172,23 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
 - **Servo.** A slow correction of the fed force toward the setpoint, from the force
   estimate: a 1 s time constant (`servo_ki` 1/s), bounded to ±1 N, only in contact. On by
   default.
-- **Touch** (`aris-robot touch`). A straight descent at 5 mm/s, at most 60 mm, with zero force.
-  It stops at the first contact and reports the joints, the pen tip and the air zero. This is
-  the step the calibration job will use.
+- **Touch** (`touch.py`, the calibration's `touch` motions; DESIGN 6 step 1). Under
+  position control, with the stock trajectory controller and not the impedance one: the
+  encoders say where the paper is, the force only when. The air zero is taken standing at
+  the hover. The arm flies the descent half of the motion at its own slow timing. At the
+  first onset (1.0 N over the zero, 3 readings in a row) the trajectory is cancelled, and the
+  joints of the first of those readings are the answer. If the planned end comes without
+  contact, it goes straight on in the same direction for the motion's `extra_depth` (at most
+  30 mm), at 2 mm/s, the hand keeping its orientation (IK, as the planner made the descent);
+  then it gives up with "no contact within … mm". In both cases it flies back to the hover
+  along the path flown. Over 3 N at any reading it stops and holds where it is, flies no way
+  back, and the arm refuses to move until it is recovered. The executor logs a "contact" row
+  with the joints. `aris-robot touch` makes the same motion by hand from where the arm stands.
+  On fake hardware a fake paper stands in for the force estimate.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 44 tests, 40 in the quick set (about 12 s); the 4 slow ones compile the controller
+`robot/tests`: 55 tests, 51 in the quick set (15 s); the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -176,6 +212,21 @@ core (6 to 15 s under load).
 - **Launch generation.** All six arms: address, domain and namespace; the hanging base
   reproduces `T_table_base` to 1e-12; the pen tip in the flange frame reproduces the kernel's
   tip to 1e-12; the fake-hardware variant. The launch file reads only keys that are written.
+- **Touch.** Simulated position control and a fake paper (5000 N/m, an air reading of 2.3 N
+  with noise). Paper 5 mm high, at the plan and 4 mm low: contact read within 0.4 mm of the
+  surface, back at the hover to 1e-9. Paper 12 mm low: the extension goes on straight (within
+  20 µm) at no more than 2 mm/s and finds it 12 mm past the end. Paper 50 mm low: it gives up
+  after exactly the planned descent plus 20 mm and comes back. Steel instead of paper: the
+  cap stops and holds, with no way back flown. Refused before moving: an extra depth over the
+  cap, or a 9 N air reading. Through the executor, the "contact" row carries the joints at the
+  paper.
+- **serve.** Against the stand-in server: report, two runs (a drawing-like job and a
+  calibration job with a touch), recover, and recover of an arm that is not there. Every
+  command is acknowledged in order. The server's calibration file arrives and the stale local
+  one is removed, so the calibrated job's digests agree and it runs. The touch's contact row
+  sits on the calibrated fake paper. "where" rows come while idle. A job planned for another
+  rig gives a "run refused" row, and the process goes on. The stack keeper restarts a dying
+  child after 0.05, 0.1, 0.2 s and stops a running one with SIGINT in under 3 s.
 - **Runner.** Real HTTP against the stand-in server with simulated arms. The job is written
   while it runs (free, lower, draw, lift): done, the arm back at its park to 1e-9, the copied
   queue byte-identical, every event on the server in order (4 motions at 50x: 0.3 s). Also
@@ -205,6 +256,9 @@ core (6 to 15 s under load).
   1 kHz samples reach the controller without starving it (a tenth of a second of lead), the
   switch between controllers while standing, error recovery.
 - Whether fake hardware offers a position command interface (the fake setup assumes it).
+- The touch on a real arm: cancelling a trajectory goal mid-descent (the controller then holds
+  where it is), the force estimate from the robot state broadcaster at 100 Hz, and the
+  systemd unit (user, paths, real-time limits).
 - `aris-robot identify` reports the address, the domain, the mode, the robot's IP in its launch
   and the nearest park. It gives no serial number: FCI and ROS do not report one.
 

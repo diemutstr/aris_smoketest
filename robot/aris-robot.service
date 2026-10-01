@@ -1,0 +1,35 @@
+# The operator PC's resident process: `aris-robot serve`.  Install once:
+#   sudo cp ~/aris3/robot/aris-robot.service /etc/systemd/system/
+#   (edit User=, and the paths below if the repository or the workspaces live elsewhere)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now aris-robot
+# Then: `systemctl status aris-robot`; its own log is ~/aris3/out/operator/serve.log, every row
+# it said is in rows.jsonl next to it and on the drawing server, each arm's ROS stack logs to
+# stack_arm<id>.log there.  Add --fake after `serve` for fake hardware.
+[Unit]
+Description=aris-robot serve: the arms' ROS stacks and the drawing server's commands
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# the operator's account: it owns ~/aris3, ~/ros2_ws and the venv
+User=operator
+WorkingDirectory=/home/operator/aris3
+# ROS 2 Jazzy, the franka_ros2 workspace, this repository's workspace, then the venv
+ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && \
+  source $HOME/ros2_ws/install/setup.bash && \
+  source $HOME/aris3/robot/ros2_ws/install/setup.bash && \
+  exec $HOME/aris3/.venv/bin/aris-robot serve'
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+Environment=PYTHONUNBUFFERED=1
+# the 1 kHz control loop of ros2_control_node (a child) wants real-time priority and locked memory
+LimitRTPRIO=99
+LimitMEMLOCK=infinity
+Restart=always
+RestartSec=5
+# serve stops the arms if a job runs, waits for its long-poll (30 s) and stops the stacks
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

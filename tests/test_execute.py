@@ -238,6 +238,10 @@ class _Recorder:
         self.calls.append(("draw", motion.kind))
         return self.arm.draw(motion)
 
+    def touch(self, motion):
+        self.calls.append(("touch", motion.kind))
+        return self.arm.touch(motion)
+
     def hold(self):
         self.arm.hold()
 

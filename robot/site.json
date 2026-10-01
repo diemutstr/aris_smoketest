@@ -36,6 +36,17 @@
     "sign_note": "+1: the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading."
   },
 
+  "touch": {
+    "source": "the calibration touch under position control (DESIGN section 6 step 1; orchestrator 2026-10-01)",
+    "contact_n": 1.0,
+    "contact_ticks": 3,
+    "cap_n": 3.0,
+    "cap_note": "above the air zero at any reading: the arm stops where it is and holds; no way back is flown until a person has looked",
+    "extra_speed": 0.002,
+    "extra_max": 0.03,
+    "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed"
+  },
+
   "arms": [
     {"id": 13, "ip": "192.168.50.11", "domain": 13, "mounted": false, "inverted": true},
     {"id": 17, "ip": "192.168.50.16", "domain": 17, "mounted": false, "inverted": true},

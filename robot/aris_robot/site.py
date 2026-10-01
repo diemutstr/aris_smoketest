@@ -31,6 +31,7 @@ class Site:
     joint_prefix: str
     rmw: str
     force: dict              # the "force" block, read by force.ForceSettings.from_site
+    touch: dict              # the "touch" block, read by touch.TouchSettings.from_site
     arms: tuple[SiteArm, ...]
 
     def arm(self, arm_id: int) -> SiteArm:
@@ -64,4 +65,5 @@ def load(path) -> Site:
             raise ValueError(f"{path}: two arms share the same {key}")
     ros = d.get("ros", {})
     return Site(path, str(d["server_url"]).rstrip("/"), str(ros.get("joint_prefix", "fr3")),
-                str(ros.get("rmw", "rmw_fastrtps_cpp")), dict(d["force"]), tuple(arms))
+                str(ros.get("rmw", "rmw_fastrtps_cpp")), dict(d["force"]),
+                dict(d.get("touch", {})), tuple(arms))

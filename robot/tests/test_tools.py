@@ -39,18 +39,18 @@ def test_jog_is_small_and_inside_the_limits(rig):
     assert tools.jog_target(rig, 31, edge, 7, 0.05).reason == "limit"
 
 
-def test_touch_descends_straight_down_keeping_the_hand(rig):
-    arm, n = rig.arm(31), rig.paper(31).normal
-    T = arm.hand_pose(np.array([[0.45, 0.1, 0.97 - 0.04]]), n, 0.3, np.zeros(2))
-    q0 = next(Q[0][ok[0]][0] for Q, ok in (arm.ik(T, q7) for q7 in (-1.0, 0.0, 1.0))
-              if ok[0].any())
-    traj = tools.descent(rig, 31, q0, 0.03)
-    tips = arm.tip(traj.q)
-    move = tips - tips[0]
-    assert np.allclose(move - np.outer(move @ -n, -n), 0.0, atol=2e-5)     # straight along -n
-    assert (tips[-1] - tips[0]) @ -n == pytest.approx(0.03, abs=1e-6)
-    R = arm.fk(traj.q)[:, :3, :3]
-    assert np.allclose(R, R[0], atol=1e-4)                                  # hand keeps its turn
-    speed = np.linalg.norm(np.diff(tips, axis=0), axis=1) / np.diff(traj.t)
-    assert speed.max() <= tools.TOUCH_SPEED * 1.05
-    assert tools.descent(rig, 31, q0, 0.1).reason == "too_far"
+def test_the_hand_touch_goes_straight_down_and_back(rig):
+    from aris_robot.touch import Kinematics, manual_touch
+    from sim_touch import hover_q
+    kin = Kinematics.of(rig, 31)
+    q0 = hover_q(rig, 31, height=0.04)
+    m = manual_touch(kin, q0, 0.03, 0.01)
+    tips = kin.tip(m.traj.q)
+    depth = (tips - tips[0]) @ kin.down
+    assert m.kind == "touch" and m.extra_depth == 0.01
+    assert depth.max() == pytest.approx(0.03, abs=1e-5)
+    assert np.allclose(m.q_start, q0) and np.allclose(m.q_end, q0, atol=1e-12)
+    lateral = (tips - tips[0]) - np.outer(depth, kin.down)
+    assert np.abs(lateral).max() < 2e-5
+    speed = np.linalg.norm(np.diff(tips, axis=0), axis=1) / np.diff(m.traj.t)
+    assert speed.max() <= 0.005 * 1.05
