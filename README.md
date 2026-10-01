@@ -73,13 +73,20 @@ hangers stay as steel, the phases and walls follow from the mounted arms, nothin
 When more arms go up, run the tool again with the new list and a new area (the maps allow
 1.60 × 1.16 m for these two; the server refuses an area larger than the maps allow).
 
-On the **operator PC**, one terminal per mounted arm, plus one for the runner:
+On the **operator PC** one process runs, `aris-robot serve`, installed once as a systemd
+service (`robot/aris-robot.service`, `robot/README.md` section 8). It brings up and keeps up the
+ROS stack of every mounted arm, takes every command from the planning PC's server over the
+network (run a drawing, park or calibration job; recover an arm; report), fetches the
+calibration files from the server before each job and reports where the arms stand while idle.
+Nobody types anything on that PC after it is installed; the e-stop is the only thing on that
+side. (The hardware-day tools `aris-robot bringup / identify / touch / jog` exist for the first
+runs, with serve stopped.)
+
+Before the first drawing, once per arm and again whenever an arm or the frame was moved:
 
 ```
-aris-robot bringup                                   # writes the launch arguments from site.json
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_31.json
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_71.json
-aris-robot identify                                  # every arm answers: address, mode, nearest park
+aris calibrate 31                     # touches the paper on a grid with that arm, writes config/calibration/31.json
+aris calibrate 71
 ```
 
 Then a drawing, from the planning PC or any machine that reaches the server
@@ -90,18 +97,11 @@ aris draw drawings/today.json         # submits, prints a line whenever somethin
 aris status                           # the current or last job, any time
 aris stop                             # every arm stops at once and holds; the job is finished
 aris park                             # every arm back to its park, one at a time (pens lifted first)
+aris recover 31                       # after a fault, once a person has looked
 aris rig                              # what the server runs: arms, drawing area, calibration state
 ```
 
-and on the operator PC, for each job the server has accepted:
-
-```
-aris-robot run --job <id>             # fetches the queues, runs them, posts back what happens
-```
-
-Before the first real drawing of a day: `aris-robot touch 31 --depth 0.04` finds the paper
-with one arm at zero force and prints where it touched; and a drawing planned in the air
-first, then on paper (`robot/README.md`, section 7).
+The operator PC picks every accepted job up by itself and posts back what happens.
 
 To try a drawing without any arms: `aris plan drawings/today.json --uncalibrated` plans it,
 checks every motion and prints the report; `aris check <job dir>` runs the checker again on
@@ -139,6 +139,10 @@ Everything a job produces is in one directory, `out/jobs/<job id>/` on the plann
 | `report.json` | drawn and left over, by line and by reason; the same thing `aris draw` prints |
 | `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning, with where the arm stood and what the checker said (the piece is then left over or drawn by a later phase) |
 
+`out/jobs/operator.jsonl` is what the operator PC said outside any job (positions, its arm
+stacks, commands taken). `config/calibration/<arm>.json` is written by `aris calibrate` and read
+by every later job; the operator PC fetches these files, it never has its own.
+
 The operator PC keeps a copy of each job it ran under `out/robot_jobs/<id>/`. `out/cache/`
 holds the drawable maps and the kinematic table (built on first use, minutes; reused as long
 as the rig does not change). The rig itself is one file, `config/rig.json`: arm poses, steel,
@@ -150,8 +154,10 @@ directory.
 
 ## 6. Not built yet
 
-- **Calibration**: the dimple plates and the pin are Pete's hardware; the software that turns
-  the touches into the calibration files is next. Until then every job runs `--uncalibrated`
+- **Calibration beyond the plane**: `aris calibrate` finds each arm's height, roll and pitch
+  from paper touches. Its position on the table and its turn stay nominal until the dimple
+  plates and the pin exist (Pete's hardware); the pen's length is not measured either (a flat
+  paper cannot see it). Until the first calibration runs, every job needs `--uncalibrated`
   and the pen stays 20 mm off the paper when lifted.
 - **First run on the operator PC**: nothing under `robot/` has been built against the real
   ROS headers or run on an arm yet. The order is fake hardware first, then one real arm, then

@@ -9,6 +9,7 @@
     GET  /rig               arms, parks, drawing area, calibration, digests, driver, speed
     GET  /arms              each arm's configuration and its driver's state
     and the operator PC's four (remote.py): header, phases, queues, events
+    POST /calibrate/{arm}, the operator channel, recover, calibration files (operator.py)
 
 One job at a time: a second job while one runs is refused (409).
 """
@@ -20,7 +21,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from aris.server import drawing, remote, runner
+from aris.server import drawing, operator, remote, runner
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
 
@@ -131,6 +132,7 @@ def create_app(st) -> FastAPI:
         return arms_view(st)
 
     remote.add_routes(app, st, store)
+    operator.add_routes(app, st, store)
     return app
 
 

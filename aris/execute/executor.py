@@ -88,10 +88,16 @@ class Executor:
             r = (self.driver.move(item.motion.traj) if kind == "free"
                  else self.driver.touch(item.motion) if kind == "touch"
                  else self.driver.draw(item.motion))
-            if kind == "touch" and r.done:
-                # the calibration reads these rows: where the pen met the paper
-                self._log("contact", phase, index=item.index, q=r.q)
-                r = Result.ok(self.driver.state().q)
+            if kind == "touch":
+                if r.done:
+                    # the calibration reads these rows: where the pen met the paper
+                    self._log("contact", phase, index=item.index, q=r.q)
+                    r = Result.ok(self.driver.state().q)
+                elif r.why.startswith("no contact") and not stop.is_set():
+                    # no paper within the declared depth: not a fault; the arm is back at the
+                    # hover and the calibration counts the point as missed
+                    self._log("no contact", phase, index=item.index, q=r.q, why=r.why)
+                    r = Result.ok(self.driver.state().q)
             if not r.done:
                 status = "stopped" if stop.is_set() else "failed"
                 return self._halt(phase, done, status, r.why, item.index)

@@ -3,12 +3,15 @@
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
     aris draw   <drawing.json|.npz> [--server URL]   submit, follow, report; exit 0 on PASS
     aris status | stop | park | rig   [--server URL]
+    aris calibrate <arm>                             touch the paper, write the arm's calibration
+    aris recover <arm>                               release an arm after a fault
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
 
 Every command prints its assumptions (rig and calibration digests, calibration state, driver,
 speed) once and one PASS or FAIL line at the end.  Only `serve`, `plan` and `check` touch the
-planners or the checker; the others talk to the server only.
+planners or the checker; the others talk to the server only.  (Just over 400 lines: twelve
+short subcommands side by side; split by kind of command when it grows further.)
 """
 from __future__ import annotations
 
@@ -73,6 +76,18 @@ def _mm(x) -> str:
 
 def report_lines(rep: dict) -> list[str]:
     out = [f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else "")]
+    if rep.get("kind") == "calibrate":
+        out.append(f"arm          {rep.get('arm')}: {rep.get('points', 0)} points touched "
+                   f"({rep.get('contacts', 0)} contacts), {len(rep.get('dropped', []))} out of "
+                   f"reach, spin {rep.get('spin_deg')} deg")
+        f = rep.get("fit")
+        if f:
+            out.append(f"plane        {'passed' if f['passed'] else 'FAILED: ' + f['why']}; "
+                       f"rms {f['rms_mm']} mm, worst {f['max_residual_mm']} mm, tilt "
+                       f"{f['tilt_deg']} deg (roll {f['roll_deg']}, pitch {f['pitch_deg']}), "
+                       f"height {f['height_change_mm']} mm")
+        if rep.get("written"):
+            out.append(f"written      {rep['written']}")
     if rep.get("kind") == "park":
         for a, r in rep.get("arms", {}).items():
             out.append(f"arm {a:<8} {r['result']}")
@@ -178,6 +193,32 @@ def cmd_draw(a, http) -> int:
     return verdict(job_passed(rep), _summary(rep))
 
 
+def cmd_calibrate(a, http) -> int:
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    code, r = http.post(f"/calibrate/{a.arm}")
+    if code != 200:
+        return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
+    say(f"job {r['id']}")
+    v = follow(http, r["id"], a.poll)
+    for line in report_lines(v["report"]):
+        say(line)
+    rep = v["report"]
+    return verdict(v["state"] == "done", f"calibrate arm {a.arm}: {v['state']}"
+                   + (f", written {rep['written']}" if rep.get("written") else ""))
+
+
+def cmd_recover(a, http) -> int:
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    code, r = http.post(f"/arms/{a.arm}/recover")
+    if code != 200:
+        return verdict(False, f"{r}")
+    if "queued" in r:
+        return verdict(True, f"recover arm {a.arm}: asked the operator PC")
+    return verdict(bool(r.get("recovered")), f"recover arm {a.arm}: {r.get('why') or 'done'}")
+
+
 def cmd_park(a, http) -> int:
     if _assume(http) is None:
         return verdict(False, "the server does not answer")
@@ -249,7 +290,16 @@ def _station(a, with_arms: bool):
                         speed=getattr(a, "speed", 1.0), uncalibrated=a.uncalibrated,
                         cache_dir=None if a.cache in ("", "none") else a.cache,
                         jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
-                        settings=Settings(grid_step=a.map_grid), with_arms=with_arms)
+                        settings=Settings(grid_step=a.map_grid), with_arms=with_arms,
+                        sim_paper=_sim_paper(getattr(a, "sim_paper", None)))
+
+
+def _sim_paper(text):
+    """"dz_mm,roll_deg,pitch_deg" -> (dz m, roll deg, pitch deg), or None."""
+    if not text:
+        return None
+    dz, roll, pitch = (float(x) for x in text.split(","))
+    return dz * 1e-3, roll, pitch
 
 
 def cmd_serve(a, _http=None) -> int:
@@ -323,16 +373,24 @@ def parser() -> argparse.ArgumentParser:
     local(s)
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8420)
-    s.add_argument("--driver", default="sim", help="the arm driver (only 'sim' is built)")
+    s.add_argument("--driver", default="sim",
+                   help="sim: simulated arms here; robot: the operator PC runs the arms")
     s.add_argument("--speed", type=float, default=1.0, help="simulated arm: times real time")
+    s.add_argument("--sim-paper", default=None,
+                   help="simulated arms' paper: dz_mm,roll_deg,pitch_deg against the nominal")
     s.add_argument("--jobs", default="out/jobs", help="where the job directories go")
     for name, what in (("draw", "submit a drawing and follow it"),):
         s = sub.add_parser(name, help=what)
         s.add_argument("drawing")
+    for name, what in (("calibrate", "touch the paper with one arm and write its calibration"),
+                       ("recover", "release an arm after a fault, once a person has looked")):
+        s = sub.add_parser(name, help=what)
+        s.add_argument("arm", type=int)
     for name, what in (("status", "the current or last job"), ("stop", "stop the job"),
                        ("park", "park all arms"), ("rig", "the rig the server runs")):
         sub.add_parser(name, help=what)
-    for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig")):
+    for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "calibrate",
+                                       "recover")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -347,7 +405,8 @@ def parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = dict(serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
-                park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check)
+                park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check,
+                calibrate=cmd_calibrate, recover=cmd_recover)
 
 
 def main(argv=None, http=None) -> int:

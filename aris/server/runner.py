@@ -24,6 +24,7 @@ from aris.execute.queue import digest, header_for
 from aris.server import drawing, pipeline, report
 from aris.server.jobs import JobRecord, JobStore, arm_progress
 from aris.server.park import at_park, plan_park
+from aris.server.steps import queue_steps, run_queued
 from aris.types import Refusal
 
 
@@ -45,11 +46,18 @@ def prepare_arms(st) -> dict | Refusal:
     return where
 
 
+def announce(st, rec) -> None:
+    """With the robot, every admitted job is a "run" command for the operator PC."""
+    if st.remote and st.operator is not None:
+        st.operator.push("run", job=rec.id, kind=rec.kind)
+
+
 def _header(st, rec, extra) -> dict:
     h = header_for(st.rig, rec.lines, st.rules) if rec.lines else dict(
         rig_digest=st.digests()["rig_digest"],
         calibration_digest=st.digests()["calibration_digest"], rules=None)
-    h.update(kind=rec.kind, name=rec.name, uncalibrated=st.uncalibrated,
+    # the pen's force rules travel with the job: the operator PC applies the header's values
+    h.update(pen=st.rig.pen(), kind=rec.kind, name=rec.name, uncalibrated=st.uncalibrated,
              driver=st.driver_kind, speed=str(st.speed), **extra)
     return h
 
@@ -93,6 +101,7 @@ def submit_draw(st, store: JobStore, lines, name: str = "") -> JobRecord | Refus
     rec.thread = threading.Thread(target=_run_draw, args=(st, rec, job), daemon=True,
                                   name=f"job {rec.id}")
     rec.thread.start()
+    announce(st, rec)
     return rec
 
 
@@ -245,11 +254,11 @@ def submit_park(st, store: JobStore) -> JobRecord | Refusal:
     rec.thread = threading.Thread(target=_run_park, args=(st, rec, job), daemon=True,
                                   name=f"job {rec.id}")
     rec.thread.start()
+    announce(st, rec)
     return rec
 
 
 def _run_park(st, rec: JobRecord, job: Job) -> None:
-    coord = None
     try:
         where = reported_where(st, need_all=True) if st.remote else prepare_arms(st)
         if isinstance(where, Refusal):
@@ -261,37 +270,15 @@ def _run_park(st, rec: JobRecord, job: Job) -> None:
         t0 = time.perf_counter()
         steps = plan_park(st, where)
         planning_s = time.perf_counter() - t0
-        moving = [s for s in steps if s.motions and not s.why]
-        for name in dict.fromkeys(s.phase.name for s in moving):     # phases in order
-            these = [s for s in moving if s.phase.name == name]
-            job.add_phase(these[0].phase)
-            for s in these:
-                q = job.queue(name, s.arm)
-                for m, v in zip(s.motions, s.verdicts):
-                    q.append(m, v)
-                    rec.count_queued(name, s.arm)
-                q.close()
-                if s.fields:
-                    pipeline.save_context(pipeline.context_path(q), s.phase, s.fields)
-        job.end_phases("park planned")
+        moving = queue_steps(job, rec, steps, "park planned")
         if moving:
             rec.set_state("moving")
-        if st.remote:                        # the operator PC runs it and reports
-            run = _wait_robot(rec) if moving else _robot_run(rec)
-            if not moving:
-                run.status, run.why = "done", ""
-            run.where = {**where, **run.where}
-        else:
-            coord = Coordinator(job, st.drivers, st.config_dir, st.rig)
-            rec.coordinator = coord
-            if rec.stop.is_set():
-                coord.stop()
-            run = coord.run()
+        run = run_queued(st, rec, job, moving, where)
         _finish(rec, job.dir, _park_report(st, rec, steps, run, planning_s), *_park_end(
             st, rec, steps, run))
     except Exception as e:
-        if coord is not None:
-            coord.stop()
+        if rec.coordinator is not None:
+            rec.coordinator.stop()
         rec.log.write("error", why=traceback.format_exc())
         _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}", kind="park",
                                    assumptions=st.assumptions()), "failed",

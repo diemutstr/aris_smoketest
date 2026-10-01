@@ -23,14 +23,19 @@ START_GUARD = 1e-3      # rad, the driver's own refusal: a trajectory that start
 
 class SimArm:
     def __init__(self, arm_id: int, q0, speed: float = 1.0, fail_at: float | None = None,
-                 fail_why: str = "injected failure", tick: float = 0.002):
+                 fail_why: str = "injected failure", tick: float = 0.002, paper=None,
+                 tip_of=None):
         """`speed`: times real time (math.inf: at once).  `fail_at`: seconds of the motion
-        clock at which the arm faults.  `tick`: wall seconds between two updates."""
+        clock at which the arm faults.  `tick`: wall seconds between two updates.
+        `paper`: (normal (3,), offset) of the fake paper in this arm's base frame, the normal
+        pointing up toward the arm (paper where normal . p = offset); `tip_of(Q (N,7)) ->
+        (N,3)` the pen tip in the base frame.  Both are needed for `touch`."""
         if not speed > 0:
             raise ValueError("speed must be positive")
         self.arm_id = arm_id
         self.speed, self.tick = float(speed), float(tick)
         self.fail_at, self.fail_why = fail_at, fail_why
+        self.paper, self.tip_of = paper, tip_of
         self.clock = 0.0                    # s of motion flown, at the trajectories' timing
         self._q = np.asarray(q0, float).reshape(7).copy()
         self._qd = np.zeros(7)
@@ -66,6 +71,20 @@ class SimArm:
         worker.start()
         worker.join()
         return out[0]
+
+    def touch(self, motion: Motion) -> Result:
+        """Flies the whole down-and-up (the arm ends back at the hover) and answers the joints
+        where the planned descent, carried on straight for `extra_depth`, meets the fake
+        paper; failed("no contact") if it does not within that depth."""
+        if self.paper is None or self.tip_of is None:
+            return Result.failed("no paper in this simulation")
+        r = self.move(motion.traj)
+        if not r.done:
+            return r
+        q = contact(motion, self.paper, self.tip_of)
+        if q is None:
+            return Result.failed("no contact", self._q.copy())
+        return Result.ok(q)
 
     def draw(self, motion: Motion) -> Result:
         return self.move(motion.traj)
@@ -119,3 +138,44 @@ class SimArm:
             self._moving = False
             self.clock = clock0 + tau
         out.append(result)
+
+
+# --------------------------------------------------------------------------- the fake paper
+
+
+def contact(motion: Motion, paper, tip_of) -> np.ndarray | None:
+    """Where the descent of a touch motion meets the paper: the descent's joint samples (up
+    to its lowest tip), then on straight in joint space at the last samples' rate for
+    `extra_depth` of tip travel; the first place the tip's height above the paper turns
+    negative, found between samples by bisection.  None if it never does."""
+    normal, offset = np.asarray(paper[0], float), float(paper[1])
+    q = motion.traj.q
+    h = tip_of(q) @ normal - offset
+    bottom = int(np.argmin(h))
+    down = q[:bottom + 1]
+    if len(down) >= 2 and motion.extra_depth > 0.0:
+        # the direction of the last 2 mm of the descent (the samples near the bottom are
+        # dense, the arm slowing to rest), carried on in 1 mm steps
+        tips = tip_of(down)
+        far = np.linalg.norm(tips - tips[-1], axis=1)
+        j = int(np.flatnonzero(far >= 0.002)[-1]) if np.any(far >= 0.002) else 0
+        if far[j] > 0.0:
+            per_mm = (down[-1] - down[j]) / (far[j] * 1e3)
+            k = int(np.ceil(motion.extra_depth * 1e3))
+            down = np.vstack([down, down[-1] + np.arange(1, k + 1)[:, None] * per_mm])
+    hd = tip_of(down) @ normal - offset
+    below = np.flatnonzero(hd <= 0.0)
+    if not len(below):
+        return None
+    i = int(below[0])
+    if i == 0:
+        return down[0].copy()
+    a, b = down[i - 1], down[i]
+    lo, hi = 0.0, 1.0
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if float(tip_of((a + mid * (b - a))[None])[0] @ normal) - offset > 0.0:
+            lo = mid
+        else:
+            hi = mid
+    return a + hi * (b - a)

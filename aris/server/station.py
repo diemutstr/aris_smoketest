@@ -44,6 +44,14 @@ class Station:
     maps_area: tuple = ()              # the same worked out from the drawable maps
     # --driver robot: where the operator PC last said each arm stands (Positions)
     positions: object = None
+    calib_settings: object = None      # calibrate.CalibSettings; None: the defaults
+    operator: object = None            # the operator channel (operator.py)
+
+    def reload(self) -> None:
+        """Read the rig again (after a calibration file was written)."""
+        self.rig = Rig.load(self.config_dir)
+        self.uncalibrated = any(not self.rig.calibration_status(a).startswith("applied")
+                                for a in self.rig.arm_ids)
 
     @property
     def remote(self) -> bool:
@@ -105,6 +113,21 @@ class Positions:
             return {a: dict(v) for a, v in self._q.items()}
 
 
+def fake_paper(rig, a: int, spec=None) -> tuple:
+    """The simulated arms' paper in arm a's base frame: (normal toward the arm, offset), the
+    nominal paper moved by dz and tilted by roll (about table x) and pitch (about table y)
+    about the table centre.  The simulated arms hang where the rig says at the start."""
+    dz, roll, pitch = (0.0, 0.0, 0.0) if spec is None else (float(x) for x in spec)
+    r, p = np.deg2rad(roll), np.deg2rad(pitch)
+    Rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
+    Ry = np.array([[np.cos(p), 0, np.sin(p)], [0, 1, 0], [-np.sin(p), 0, np.cos(p)]])
+    n_t = Ry @ Rx @ np.array([0.0, 0.0, 1.0])
+    p_t = np.array([0.0, 0.0, rig.paper_z + dz])
+    T = rig.T_base_table(a)
+    n_b = T[:3, :3] @ n_t
+    return n_b, float(n_b @ (T[:3, :3] @ p_t + T[:3, 3]))
+
+
 def default_workers() -> int:
     return max(1, min(8, (os.cpu_count() or 2) // 2))
 
@@ -113,9 +136,11 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  uncalibrated: bool = False, cache_dir="out/cache", jobs_dir="out/jobs",
                  workers: int | None = None,
                  settings: Settings | None = None, drivers: dict | None = None,
-                 with_arms: bool = True, with_area: bool = True) -> Station | Refusal:
+                 with_arms: bool = True, with_area: bool = True,
+                 sim_paper=None) -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
-    False: no drivers at all (plan and check only).  `with_area` False: the drawing area is
+    False: no drivers at all (plan and check only).  `sim_paper`: (dz m, roll deg, pitch deg),
+    the simulated arms' paper against the nominal one (default: the nominal paper).  `with_area` False: the drawing area is
     not worked out (it needs the drawable maps; checking does not)."""
     config_dir = Path(config_dir)
     try:
@@ -134,7 +159,9 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         return Refusal("speed", "the speed must be positive")
     if drivers is None and with_arms and driver == "sim":
         from aris.execute.drivers.sim import SimArm
-        drivers = {a: SimArm(a, rig.park_q(a), speed=speed) for a in rig.arm_ids}
+        drivers = {a: SimArm(a, rig.park_q(a), speed=speed,
+                             paper=fake_paper(rig, a, sim_paper), tip_of=rig.arm(a).tip)
+                   for a in rig.arm_ids}
     cfg = settings or Settings()
     w = workers or default_workers()
     kind = driver if drivers or with_arms else "none (plan and check only)"
@@ -146,6 +173,10 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
     if st.cache_dir is not None:
         st.cache_dir.mkdir(parents=True, exist_ok=True)
     st.positions = Positions()
+    from aris.server.calibrate import CalibSettings
+    from aris.server.operator import Channel
+    st.calib_settings = CalibSettings()
+    st.operator = Channel()
     if with_area:
         st.maps_area = drawing_area(st)
         fa = file_area(rig)
@@ -166,18 +197,18 @@ def file_area(rig) -> tuple | None:
 
 
 def area_mismatch(maps_area, rig_area, cell: float) -> str:
-    """Why the rig file's drawing area is stale, or "": it must lie inside the area the
-    drawable maps give, to one grid cell (the system planner checks the same).  Smaller on
-    purpose is allowed: a conservative area is a choice, a larger one is a stale file."""
+    """Why the rig file's drawing area is stale, or "".  It may be smaller than the area the
+    drawable maps give (a conservative choice), never larger by more than one grid cell (the
+    system planner checks the same)."""
     if rig_area is None:
         return ""
-    over = max(b - a for a, b in zip(maps_area, rig_area))
-    if over <= cell + 1e-9:
+    gap = max(b - a for a, b in zip(maps_area, rig_area))
+    if gap <= cell + 1e-9:
         return ""
     return (f"rig.json's canvas.drawing_area_m {rig_area[0]:.3f} x {rig_area[1]:.3f} m is larger "
             f"than the area the drawable maps give, {maps_area[0]:.3f} x {maps_area[1]:.3f} m, "
-            f"by {100 * over:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "
-            "is stale; write the maps' area, or a smaller one, into it")
+            f"by {100 * gap:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "
+            "is stale; write the maps' area into it")
 
 
 def drawing_area(st: Station) -> tuple:

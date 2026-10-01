@@ -138,6 +138,8 @@ def _motion_record(index: int, m: Motion, verdict: dict) -> bytes:
     meta = dict(type="motion", index=index, kind=m.kind, intensity=float(m.intensity),
                 verdict=verdict,
                 piece=None if m.piece is None else [m.piece.line_id, m.piece.s0, m.piece.s1])
+    if m.kind == "touch":               # only touch records carry it; older records unchanged
+        meta["extra_depth"] = float(m.extra_depth)
     arrays = dict(t=m.traj.t, q=m.traj.q, qd=m.traj.qd)
     if m.tip_base is not None:
         arrays["tip_base"] = m.tip_base
@@ -148,7 +150,8 @@ def _entry(meta: dict, a: dict) -> Entry:
     p = meta["piece"]
     m = Motion(meta["kind"], Trajectory(a["t"], a["q"], a["qd"]),
                None if p is None else Piece(p[0], float(p[1]), float(p[2])),
-               a.get("tip_base"), meta["intensity"], checked=meta["verdict"])
+               a.get("tip_base"), meta["intensity"],
+               extra_depth=float(meta.get("extra_depth", 0.0)), checked=meta["verdict"])
     return Entry(meta["index"], m, meta["verdict"])
 
 

@@ -3,6 +3,7 @@ the queues over real HTTP, runs them on its own (here simulated) arms and posts 
 back; the server runs no executors and its job follows those events."""
 from __future__ import annotations
 
+import json
 import math
 import sys
 import threading
@@ -78,8 +79,9 @@ def test_the_operator_pc_runs_a_job_of_the_server(station, tmp_path):
             _post(f"{srv.url}/park")
         assert e.value.code == 409
         jid = _post(f"{srv.url}/jobs", SMALL.read_bytes())["id"]
-        assert _get_json(f"{srv.url}/jobs/{jid}/header")["rig_digest"] == \
-            st.digests()["rig_digest"]
+        head = _get_json(f"{srv.url}/jobs/{jid}/header")
+        assert head["rig_digest"] == st.digests()["rig_digest"]
+        assert head["pen"] == json.loads(json.dumps(rig.pen()))      # travels with the job
         with pytest.raises(urllib.error.HTTPError) as e:           # not written yet
             urllib.request.urlopen(f"{srv.url}/jobs/{jid}/queues/phase%201/13", timeout=10)
         assert e.value.code == 404

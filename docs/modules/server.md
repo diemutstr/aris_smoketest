@@ -70,14 +70,23 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
 | `GET /jobs/{id}/queues/{phase}/{arm}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
 | `POST /jobs/{id}/events` | the operator PC: `{source, rows: [{seq, ...}]}`; each row appended to the job's log once, in seq order; answers `{accepted, next_seq, stop}` (stop: the job was stopped here) |
+| `POST /calibrate/{arm}` | the calibrate job for one arm (below); 409 if a job runs |
+| `GET /operator/next?wait=30` | the operator PC: the oldest command it has not acknowledged, or 204 after the wait: `run` a job, `recover` an arm, `report` |
+| `POST /operator/ack` | the operator PC: `{"id": n}`, the command was taken (it is given again until then) |
+| `POST /operator/rows` | the operator PC: `{source, rows}`, what it says outside any job (started, where, report, recovered, stack died, ...); kept in `operator.jsonl` beside the jobs; every `where` or `q` updates the arm positions |
+| `GET /operator`, `POST /operator/report` | the commands waiting, when the operator PC was last heard, its stacks, its last rows; ask it to report |
+| `POST /arms/{id}/recover` | release an arm after a fault, once a person has looked: the simulated arm at once; with `--driver robot`, a `recover` command for the operator PC |
+| `GET /calibration`, `GET /calibration/{arm}` | `{"arms": [...], "files": [...]}`: the arms that have a calibration file under the server's config, each file with a digest; one file as it is (404 if none) |
 
 ## The command
 
 | command | what it does |
 |---|---|
-| `aris serve [--host --port --driver sim --speed --uncalibrated --cache --jobs]` | start the server (default `127.0.0.1:8420`) |
+| `aris serve [--host --port --driver sim\|robot --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
 | `aris draw <drawing> [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
+| `aris calibrate <arm>` | touch the paper with that arm and write its calibration file |
+| `aris recover <arm>` | release an arm after a fault |
 | `aris plan <drawing> [--out dir]` | plan and check only, no server, no arms; writes the job directory and prints the report |
 | `aris check <job dir>` | the checker again on every queued motion, one line per motion |
 
@@ -154,17 +163,69 @@ The drawing job's "park all arms first" check uses the same positions (with the 
 within the start tolerance, 5 mrad, of its park counts as parked; one that never reported is
 taken to be at its park, and the runner refuses to move it if it is not).
 
+## The calibrate job
+
+Step 1 of the calibration (DESIGN.md section 6): the paper under one arm, found with the arm's
+own pen and joints. `aris calibrate 31`.
+
+1. From where every arm stands, as the park job sees it: the arm need not be parked (a pen at
+   the paper first rises, as in park); the other arms are parked arms or, where they are not
+   at their parks, bodies where they stand.
+2. Grid points inside the drawing area and within 0.6 m of the arm's axis (5 x 5 before the
+   cut). One hand spin for all of them, pen upright: the 24 spins 15 degrees apart are tried
+   in order and the first that reaches every point any spin reaches is taken; a point no spin
+   reaches is dropped and named in the report. The spin never changes between points, so an
+   unknown pen length moves every touch alike and the tilt stays exact.
+3. At each point: a free move to a hover 60 mm above the nominal paper, then a `touch`: the
+   pen straight down to the nominal paper and back up (an IK answer every 2 mm at the same hand
+   orientation, the sequencer's rise rule), 5 mm/s along the line, with 20 mm of extra depth
+   for the paper's uncertainty. Back to the park at the end. One phase, "calibrate 31".
+4. The checker checks every motion; a touch as its descent (a lower) and its climb (a lift),
+   since the checker knows no touch. The extra depth is declared, not checked.
+5. The arm stops each touch where it meets the paper and logs a "contact" row with its joints.
+   The solver (`aris.calib.calibration_from_events`) fits the plane; a passing result is
+   written as `calibration/<arm>.json` under the server's `--config` and the server reloads
+   the rig, so `aris rig` shows the arm calibrated and the next drawing uses it. The report
+   gives the points touched and dropped, the spin, the residuals (RMS, worst, each), the tilt,
+   roll, pitch and height change, and pass or fail.
+6. A touch that meets no paper within the extra depth is skipped and named; the job fails only
+   if fewer than 9 contacts remain. (This needs the executor to log "no contact" and go on;
+   today a missed touch still stops the arm, and the job then fails naming the point.)
+
+**The simulated paper.** `aris serve --sim-paper -12,0,1` gives the simulated arms a paper
+12 mm low at the table centre and turned 1 degree about table y. A touch then meets that
+paper where its planned descent, carried straight on, crosses it (joints found by bisection
+along the descent), and the calibration can be tested end to end.
+
+## The operator channel
+
+The operator PC runs one resident process (`aris-robot serve`, DESIGN.md section 4) that pulls
+its work: `GET /operator/next?wait=30` answers the oldest command it has not acknowledged —
+`run` a job (with `--driver robot` every admitted job: drawing, park, calibrate), `recover` an
+arm (`aris recover <arm>`), `report` — or nothing after the wait; `POST /operator/ack` marks it
+taken. What the operator PC says outside any job (`POST /operator/rows`) goes to
+`operator.jsonl` beside the job directories, and every arm position in it (`where`, `q`)
+updates the positions park and calibrate plan from. The operator PC needs no open port; the
+server stays the only front door. The commands live in the server's memory: a restarted server
+starts with none.
+
+**The server owns the calibration files.** They are written only by the calibrate job, under
+the server's `--config`. The operator PC fetches them (`GET /calibration` lists them with a
+digest of each file; `GET /calibration/{arm}` gives one) before every run, and removes any of
+its own files the server does not have: the server's set is the truth.
+
 ## Where things end up
 
 One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 
 | file | what is in it |
 |---|---|
-| `job.json` | the header: rig, calibration and drawing digests, rules, scale, driver, speed |
+| `job.json` | the header: rig, calibration and drawing digests, rules, the pen's force rules (rig.json `pen`, which the operator PC applies), scale, driver, speed |
 | `phases.jsonl` | the phases in the order they run, then an end line |
 | `<phase>__arm<id>.queue` | the checked motions of one arm in one phase (format: execute.md) |
 | `<phase>__arm<id>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
 | `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning: `t`, `q`, `qd`, `tip_base` (drawing), `kind`, `piece` (line id and arc lengths, JSON), `intensity`, `q_before`, the failed measurements and the whole verdict as text |
+| `operator.jsonl` (beside the job directories) | the operator PC's rows outside any job |
 | `events.jsonl` | every state change: the job's, the coordinator's, each arm's (with `--driver robot`, the operator PC's rows, marked `source: robot`) |
 | `report.json` | the report below |
 
@@ -220,7 +281,7 @@ A park job's report says per arm "parked", "already at its park" or why not.
 
 - Resume after a stop or a failure; re-planning after a failure.
 - SVG drawings.
-- Calibration jobs (only "park all arms" is built of the other kinds of job).
+- Steps 2 to 5 of the calibration (dimples, pen length, the drawn check).
 - The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them.
 - Pause.
 - Clearing an arm's fault from the server.
