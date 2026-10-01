@@ -44,14 +44,17 @@ def read_rig(config_dir) -> RigData:
     names, lo, hi, owner = [], [], [], []
     for a in cfg["arms"]["list"]:
         aid = int(a["id"])
+        # the hanger is on the frame whether or not an arm hangs from it ("mounted": false)
+        for n, l, h in _hanger(aid, a, cfg["hanger"]):
+            names.append(n), lo.append(l), hi.append(h), owner.append(aid)
+        if not a.get("mounted", True):
+            continue
         T = np.eye(4)
         T[:3, :3] = np.asarray(a["R_table_base"], float)
         T[:3, 3] = [a["axis_xy_m"][0], a["axis_xy_m"][1], a["base_z_m"]]
         _need_rigid(T, f"arm {aid} in rig.json")
         T, tip, status = _calibration(config_dir / "calibration" / f"{aid}.json", aid, T)
         mounts[aid] = ArmMount(aid, T, np.asarray(a["park_q_rad"], float), tip, status)
-        for n, l, h in _hanger(aid, a, cfg["hanger"]):
-            names.append(n), lo.append(l), hi.append(h), owner.append(aid)
     for b in cfg["steel"]["boxes"]:
         names.append(b["name"]), lo.append(b["lo_m"]), hi.append(b["hi_m"]), owner.append(None)
     lo, hi = np.asarray(lo, float), np.asarray(hi, float)

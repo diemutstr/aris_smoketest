@@ -55,6 +55,16 @@ Quick test set: 229 tests, all pass in 87 s at machine load 6 (`.venv/bin/python
   the server re-parsed a 140 MB queue every 20 ms while streaming (in-band end detection).
 - Operator side: endpoints, runner reports positions, park from them with pens lifted first.
 
+## Two-arm rig (2026-10-01, for the writing test)
+
+`config/two_arms/rig.json` = the full rig with `"mounted": false` on 13, 17, 2, 97 (written by
+`tools/mounted_rig.py`, checked in step by a rig test); the rig readers (rig.py and the
+checker's own) keep every hanger as steel and drop the unmounted arms from arms, rows, leaders
+and walls. Phases fall out as phase 1 = 71, phase 2 = 31 (no walls), fills. The drawing area is
+chosen conservatively at 1.2 x 1.0 m (the maps allow 1.60 x 1.16); a rig area smaller than the
+maps' is now allowed on purpose, only a larger one is "stale". The word "unknown" across the
+seam (`aris plan --config config/two_arms`): 2.59 m, 100 % drawn, 54 motions checked, 5 s.
+
 ## Next
 
 - The serial check doubles an arm's planning wall time at scale (30 min for 10 000 lines,

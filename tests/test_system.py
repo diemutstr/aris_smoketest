@@ -281,9 +281,12 @@ def test_a_drawing_outside_the_drawing_area_is_refused(rig, rules):
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_the_drawing_area_comes_from_the_rig_and_must_match_the_maps(rig, rules):
     lines = _small()[:1]
-    stale = replace(rig, drawing_area_m=rig.drawing_area_m - 0.2)
+    stale = replace(rig, drawing_area_m=rig.drawing_area_m + 0.2)      # larger than the maps'
     _, out, _ = plan_detailed(stale, lines, rules, settings=COARSE, workers=6)
     assert isinstance(out, Refusal) and out.reason == "stale_drawing_area"
+    smaller = replace(rig, drawing_area_m=rig.drawing_area_m - 0.2)    # conservative: allowed
+    _, out, _ = plan_detailed(smaller, lines, rules, settings=COARSE, workers=6)
+    assert not isinstance(out, Refusal)
     _, out, _ = plan_detailed(replace(rig, drawing_area_m=None), lines, rules, settings=COARSE,
                               workers=6)
     assert isinstance(out, Refusal) and out.reason == "no_drawing_area"

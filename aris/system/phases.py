@@ -102,6 +102,6 @@ def execution_phase(rig, phase: Phase) -> Phase:
     if is_fill(phase):
         return phase
     partners = tuple(rig.row_partner(a) for a in phase.active
-                     if rig.row_partner(a) in phase.parked)
+                     if rig.row_partner(a) is not None and rig.row_partner(a) in phase.parked)
     return Phase(phase.name, phase.active + partners,
                  tuple(a for a in phase.parked if a not in partners), phase.walls)

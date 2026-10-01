@@ -536,3 +536,22 @@ def test_obstacles_for_matches_obstacles(rig):
     b = rig.obstacles(71, parked=seen, walls=tuple(ph.walls), for_planning=False)
     assert [c.name for c in a.capsules] == [c.name for c in b.capsules]
     assert [p.name for p in a.planes] == [p.name for p in b.planes]
+
+
+def test_a_rig_with_two_arms_mounted_keeps_every_hanger_and_drops_the_rest():
+    """config/two_arms is config/rig.json with four arms unmounted (tools/mounted_rig.py)."""
+    import subprocess
+    import sys
+    from aris.rig import Rig
+    two = Rig.load(CONFIG / "two_arms")
+    six = Rig.load(CONFIG)
+    assert two.arm_ids == (31, 71)
+    assert two.rows == ((31, 71),) and two.leader_sets == {1: (71,), 2: (31,)}
+    assert two.wall_pairs == {1: (), 2: ()}
+    assert len(two.steel) == len(six.steel)                     # the empty hangers stay
+    assert two.row_partner(31) == 71 and six.row_partner(13) == 17
+    assert tuple(two.drawing_area_m) == (1.2, 1.0)
+    # the derived file is in step with its source
+    out = subprocess.run([sys.executable, str(DEPLOY / "tools" / "mounted_rig.py"),
+                          "--check", str(CONFIG / "two_arms")], capture_output=True)
+    assert out.returncode == 0, out.stdout.decode() + out.stderr.decode()

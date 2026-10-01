@@ -65,6 +65,14 @@ aris serve --host 0.0.0.0 --driver robot --uncalibrated
 the pen is kept 20 mm above the paper when lifted). Leave out `--driver robot` to draw with
 simulated arms instead of the real ones.
 
+**Which arms are mounted** is a fact of the rig file. `config/rig.json` is the full rig; the
+arms that are actually bolted on today are in `config/two_arms/` (arms 31 and 71, written from
+the full rig by `tools/mounted_rig.py`, with a conservative drawing area of 1.2 × 1.0 m around
+the table centre). Use it with `--config config/two_arms` on every `aris` command; the empty
+hangers stay as steel, the phases and walls follow from the mounted arms, nothing else changes.
+When more arms go up, run the tool again with the new list and a new area (the maps allow
+1.60 × 1.16 m for these two; the server refuses an area larger than the maps allow).
+
 On the **operator PC**, one terminal per mounted arm, plus one for the runner:
 
 ```

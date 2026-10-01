@@ -125,19 +125,27 @@ class Rig:
         mounts, hangers = {}, []
         for a in cfg["arms"]["list"]:
             aid = int(a["id"])
+            axis = np.asarray(a["axis_xy_m"], float)
+            # The hanger is bolted to the frame whether or not an arm hangs from it today.
+            hangers += _hanger_boxes(aid, axis, cfg["hanger"])
+            if not a.get("mounted", True):
+                continue
             T = np.eye(4)
             T[:3, :3] = np.asarray(a["R_table_base"], float)
             T[:3, 3] = [a["axis_xy_m"][0], a["axis_xy_m"][1], a["base_z_m"]]
             if not _rot_ok(T[:3, :3]):
                 raise ValueError(f"arm {aid}: R_table_base is not a rotation")
             T, tip, status = _read_calibration(config_dir / "calibration" / f"{aid}.json", aid, T)
-            axis = np.asarray(a["axis_xy_m"], float)
             mounts[aid] = Mount(aid, axis, T,
                                 np.asarray(a["park_q_rad"], float), tip, status)
-            hangers += _hanger_boxes(aid, axis, cfg["hanger"])
+        if not mounts:
+            raise ValueError("rig.json: no arm is mounted")
         cage = [SteelBox(b["name"], np.asarray(b["lo_m"], float), np.asarray(b["hi_m"], float),
                          b["source"]) for b in cfg["steel"]["boxes"]]
+        # Rows, leaders and walls keep only the mounted arms: a row with one arm missing is no
+        # row, a wall between a mounted and a missing arm is no wall.
         rp = cfg["rows_and_phases"]
+        here = lambda ids: tuple(int(i) for i in ids if int(i) in mounts)
         num = lambda d: {k: float(v) for k, v in d.items() if k.endswith("_m")}
         return Rig(
             mounts=mounts, steel=tuple(cage + hangers),
@@ -149,9 +157,9 @@ class Rig:
             shoulder_below_base=float(cfg["reach"]["shoulder_below_base_m"]),
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
             own_hanger_exempt=tuple(cfg["hanger"]["exempt_links"]),
-            rows=tuple(tuple(int(i) for i in r) for r in rp["rows"]),
-            leader_sets={int(k): tuple(int(i) for i in v) for k, v in rp["leaders"].items()},
-            wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v)
+            rows=tuple(here(r) for r in rp["rows"] if len(here(r)) == 2),
+            leader_sets={int(k): here(v) for k, v in rp["leaders"].items()},
+            wall_pairs={int(k): tuple((int(a), int(b)) for a, b in v if len(here((a, b))) == 2)
                         for k, v in rp["walls"].items()},
             canvas_size=np.array([cfg["canvas"]["size_x_m"], cfg["canvas"]["size_y_m"]]),
             drawing_area_m=(None if "drawing_area_m" not in cfg["canvas"]
@@ -356,8 +364,9 @@ class Rig:
         walls = tuple(w for w in phase.walls if arm_id in w.arms)
         return self.obstacles(arm_id, parked, walls, for_planning)
 
-    def row_partner(self, arm_id: int) -> int:
+    def row_partner(self, arm_id: int) -> int | None:
+        """The other arm of this arm's row; None when that arm is not mounted."""
         for a, b in self.rows:
             if arm_id in (a, b):
                 return b if arm_id == a else a
-        raise KeyError(f"arm {arm_id} is in no row")
+        return None

@@ -166,17 +166,18 @@ def file_area(rig) -> tuple | None:
 
 
 def area_mismatch(maps_area, rig_area, cell: float) -> str:
-    """Why the rig file's drawing area is stale, or "": it must agree with the area the
-    drawable maps give to one grid cell (the system planner checks the same)."""
+    """Why the rig file's drawing area is stale, or "": it must lie inside the area the
+    drawable maps give, to one grid cell (the system planner checks the same).  Smaller on
+    purpose is allowed: a conservative area is a choice, a larger one is a stale file."""
     if rig_area is None:
         return ""
-    gap = max(abs(a - b) for a, b in zip(maps_area, rig_area))
-    if gap <= cell + 1e-9:
+    over = max(b - a for a, b in zip(maps_area, rig_area))
+    if over <= cell + 1e-9:
         return ""
-    return (f"rig.json's canvas.drawing_area_m {rig_area[0]:.3f} x {rig_area[1]:.3f} m differs "
-            f"from the area the drawable maps give, {maps_area[0]:.3f} x {maps_area[1]:.3f} m, "
-            f"by {100 * gap:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "
-            "is stale; write the maps' area into it")
+    return (f"rig.json's canvas.drawing_area_m {rig_area[0]:.3f} x {rig_area[1]:.3f} m is larger "
+            f"than the area the drawable maps give, {maps_area[0]:.3f} x {maps_area[1]:.3f} m, "
+            f"by {100 * over:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "
+            "is stale; write the maps' area, or a smaller one, into it")
 
 
 def drawing_area(st: Station) -> tuple:

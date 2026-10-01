@@ -129,8 +129,9 @@ def test_refuses_to_start_without_calibration_or_with_an_unbuilt_driver():
 def test_a_stale_drawing_area_in_the_rig_file_is_refused():
     from aris.server.station import area_mismatch
     assert area_mismatch((1.56, 3.56), (1.56, 3.56), 0.02) == ""
-    assert area_mismatch((1.58, 3.56), (1.56, 3.56), 0.02) == ""  # within one grid cell
-    why = area_mismatch((1.60, 3.56), (1.56, 3.56), 0.02)
+    assert area_mismatch((1.56, 3.56), (1.58, 3.56), 0.02) == ""  # within one grid cell
+    assert area_mismatch((1.56, 3.56), (1.20, 1.00), 0.02) == ""  # smaller on purpose: allowed
+    why = area_mismatch((1.56, 3.56), (1.60, 3.56), 0.02)
     assert "stale" in why and "4.0 cm" in why
 
 

@@ -25,7 +25,8 @@ CELL = 0.01          # m, the footprint's grid
 
 def pairs(rig, phase) -> list[tuple[int, int]]:
     """(leader, follower) for every leader whose row partner stands parked in `phase`."""
-    return [(a, rig.row_partner(a)) for a in phase.active if rig.row_partner(a) in phase.parked]
+    return [(a, rig.row_partner(a)) for a in phase.active
+            if rig.row_partner(a) is not None and rig.row_partner(a) in phase.parked]
 
 
 def setup(job):

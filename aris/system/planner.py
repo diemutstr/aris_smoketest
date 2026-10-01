@@ -154,10 +154,12 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
         return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
     rep.drawing_area = np.asarray(file_area, float).reshape(2)
     maps_area = area.admissible(maps)
-    if np.max(np.abs(maps_area - rep.drawing_area)) > cfg.grid_step + 1e-9:
+    # the file's area may be smaller than the maps' on purpose (a conservative choice), never
+    # larger by more than a grid cell (a stale file)
+    if np.max(rep.drawing_area - maps_area) > cfg.grid_step + 1e-9:
         return Refusal("stale_drawing_area",
                        f"rig.json's drawing area {rep.drawing_area[0]:.3f} x "
-                       f"{rep.drawing_area[1]:.3f} m differs from the maps' {maps_area[0]:.3f} x "
+                       f"{rep.drawing_area[1]:.3f} m is larger than the maps' {maps_area[0]:.3f} x "
                        f"{maps_area[1]:.3f} m by more than one grid cell ({cfg.grid_step} m)")
     out = area.first_outside(lines, rep.drawing_area)
     if out is not None:
