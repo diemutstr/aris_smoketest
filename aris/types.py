@@ -232,11 +232,18 @@ class Motion:
     # draw: pen on the paper.  free: pen up, anywhere.  lower: the short move that puts the
     # pen down at the start of a piece; lift: the short move that takes it up at the end.
     # For lower and lift, the pen may be at the paper at one end.
-    kind: Literal["draw", "free", "lower", "lift"]
+    # touch (calibration): the pen descends from a hover pose onto the nominal paper and comes
+    # back up the same way; `traj` is that down-and-up, so the motion starts and ends at the
+    # hover.  The arm flies the descent slowly under position control and stops at the first
+    # contact, where it reads its joints; finding none by the planned end, it may keep going
+    # straight on for `extra_depth` before giving up.  The planned path is what is checked;
+    # the extra depth is the declared uncertainty of the paper's height.
+    kind: Literal["draw", "free", "lower", "lift", "touch"]
     traj: Trajectory
     piece: Piece | None = None         # draw motions: what is being drawn
-    tip_base: np.ndarray | None = None # draw motions: (N, 3) tip positions, same samples as traj
+    tip_base: np.ndarray | None = None # draw and touch motions: (N, 3) tips, same samples as traj
     intensity: float = 1.0
+    extra_depth: float = 0.0           # touch motions: m past the planned end, see above
     # The independent checker's word on this motion, when it was checked before being handed
     # on: at least {"passed": bool, "tightest": str}, plus the numbers the checker keeps.  The
     # planners do not read it; the execution side queues nothing without it.  None: unchecked.

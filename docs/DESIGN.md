@@ -225,6 +225,15 @@ every arm reports parked, start the next.
 planner is called again with the lines still to draw and the configuration the arm is actually
 in. The other arms are not affected, because the walls make them independent.
 
+**The operator PC runs one resident process (Pete, 2026-10-01).** `aris-robot serve` is
+started once (at boot) and never touched again: it brings up and supervises the per-arm ROS
+stacks, and it asks the drawing server what to do — run this job (a drawing, a park, a
+calibration), recover this arm, report — over the one Ethernet connection, pulling, so the
+operator PC needs no open port and the server stays the only front door. It fetches the
+calibration files from the server, so both machines always hold the same ones. Everything a
+person does, they do on the planning PC with `aris …`; the e-stop is the only thing on the
+operator side.
+
 ## 5. Drawing server
 
 The top of the hierarchy and the one front door. The GUI and the command line talk only to it.
@@ -294,9 +303,24 @@ by four arms each, the two outer spots by the two end arms. Every arm reaches ex
 | +605 | 31, 71, 2, 97 |
 | +1815 | 2, 97 |
 
-**Step 1. Paper height and tilt, automatic.** Each arm lowers the pin until it touches, on a grid
-of about 25 points. A plane fit gives the roll and pitch of the base and the height; the rest is
-the unevenness of the table, kept as a height map.
+**Step 1. Paper height and tilt, automatic — built first, on its own (Pete, 2026-10-01).** Each
+arm touches the paper on a grid of about 25 points with its own pen, pen upright, the same hand
+spin at every point. A plane through the touches gives the arm's roll, pitch and height over the
+paper; the rest is the unevenness of the table, kept as a height map. With one orientation an
+unknown pen length shifts every point alike: the tilt is exact and the length lands in the
+height, which is the height we want (where the pen meets the paper). x, y and yaw stay nominal
+until the dimples (steps 2 and 3) are done; they add on top without changing this step.
+How: a job like park (`aris calibrate <arm>`): hover poses 60 mm above the nominal paper, the
+free-space planner between them, a `touch` motion at each (the planned descent to the nominal
+paper, checked like a lower; the arm flies it slowly under position control — the stock
+joint-trajectory controller, not the drawing controller — stops at the first force onset, reads
+its encoders, retreats; it may go 20 mm past the planned end before giving up, the declared
+uncertainty of the paper). Encoders say where the paper is; force only says when. The contact
+joints are event rows; the solver (`aris/calib/`) fits the plane and writes the file.
+The pen length is not observable from a flat paper (a 15-degree lean changes the height by 3 %
+of the error): it comes from the dimple pivot later, or from the drawn check (the same line with
+the hand turned 180 degrees: a gap of 0.78 times the length error, since the pen sits at 23
+degrees in the holder).
 
 **Step 2. Shared spots, hand-guided, about a minute per arm and spot.** Guide the pin into the
 dimple and, keeping it seated, tilt and turn the hand through a range of orientations. The arm

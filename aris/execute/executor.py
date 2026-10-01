@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from aris.execute.drivers import Driver
+from aris.execute.drivers import Result, Driver
 from aris.execute.log import EventLog
 from aris.execute.queue import End, Queue
 
@@ -84,8 +84,14 @@ class Executor:
                 return self._halt(phase, done, "failed", refused, item.index)
             self._log("motion started", phase, index=item.index, kind=item.motion.kind,
                       duration=float(item.motion.traj.t[-1] - item.motion.traj.t[0]))
-            r = (self.driver.move(item.motion.traj) if item.motion.kind == "free"
+            kind = item.motion.kind
+            r = (self.driver.move(item.motion.traj) if kind == "free"
+                 else self.driver.touch(item.motion) if kind == "touch"
                  else self.driver.draw(item.motion))
+            if kind == "touch" and r.done:
+                # the calibration reads these rows: where the pen met the paper
+                self._log("contact", phase, index=item.index, q=r.q)
+                r = Result.ok(self.driver.state().q)
             if not r.done:
                 status = "stopped" if stop.is_set() else "failed"
                 return self._halt(phase, done, status, r.why, item.index)

@@ -60,6 +60,13 @@ class Driver(Protocol):
         The real arm reads the kind to know the pen state and ramps the pen force (up on a
         lower, held on a draw, down on a lift); otherwise as `move`."""
 
+    def touch(self, motion: Motion) -> Result:
+        """A "touch" motion: fly the descent half of `motion.traj` slowly under position
+        control, stop at the first contact with the paper (force onset against the tare, a
+        depth cap of the planned end plus `motion.extra_depth`), then return to the hover the
+        same way.  done with `q` = the joints at contact; failed("no contact") when nothing was
+        met within the depth, with the arm back at the hover."""
+
     def hold(self) -> None:
         """Stand still where the arm is, for as long as it takes."""
 
