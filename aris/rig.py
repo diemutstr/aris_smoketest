@@ -104,6 +104,7 @@ class Rig:
     gate_cfg: dict                     # rig.json "gates", as read
     drawing_cfg: dict                  # rig.json "drawing", as read
     execution_cfg: Execution
+    pen_cfg: dict                      # rig.json "pen": force band, cap, ramp, servo
     shoulder_below_base: float
     body_reach: float                  # from the shoulder, see rig.json "reach"
     own_hanger_exempt: tuple[str, ...] # body groups not checked against the arm's own hanger
@@ -154,6 +155,8 @@ class Rig:
             drawing_cfg={k: float(v) for k, v in cfg["drawing"].items()
                          if not isinstance(v, str)},
             execution_cfg=Execution(float(cfg["execution"]["start_tolerance_rad"])),
+            pen_cfg={k: v for k, v in cfg.get("pen", {}).items() if not k.endswith("note")
+                     and k != "source"},
             shoulder_below_base=float(cfg["reach"]["shoulder_below_base_m"]),
             body_reach=float(cfg["reach"]["body_reach_from_shoulder_m"]),
             own_hanger_exempt=tuple(cfg["hanger"]["exempt_links"]),
@@ -250,9 +253,15 @@ class Rig:
         planner uses; the type defaults are not."""
         d = self.drawing_cfg
         return DrawRules(draw_speed=d["draw_speed_m_per_s"], lift_height=d["lift_height_m"],
+                         landing_speed=d.get("landing_speed_m_per_s", 0.010),
                          lean_max=float(np.deg2rad(self.gate_cfg["pen_lean_max_deg"])),
                          min_piece=d["min_piece_m"], speed_fraction=d["speed_fraction"],
                          gates=self.gates())
+
+    def pen(self) -> dict:
+        """rig.json's `pen` block as plain data: the force band, cap, ramp and servo the
+        operator PC applies.  The server copies it into every job header."""
+        return dict(self.pen_cfg)
 
     # ------------------------------------------------------------------ walls
 

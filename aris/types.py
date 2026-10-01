@@ -304,6 +304,7 @@ class Gates:
 class DrawRules:
     """How drawing motions are timed and shaped."""
     draw_speed: float = 0.02           # m/s along the line
+    landing_speed: float = 0.010       # m/s of the pen tip on a lower, as it meets the paper
     lift_height: float = 0.025         # m, how far the tip is raised between lines
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down
