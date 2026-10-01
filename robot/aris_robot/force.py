@@ -8,6 +8,10 @@ paper normal at every moment of a motion, and reads the arm's own force estimate
   contact   "the moment the force lifts off the air zero is the table" (Diemut): the force
             above the air zero stays over `contact_n` for `contact_ticks` readings in a row
   setpoint  intensity 0..1 -> the band (0.7 to 1.0 N for graphite), in `levels` steps
+
+Band, levels, cap, ramps and servo are facts of pen and paper: rig.json's `pen` block, which
+the server copies into every job header; the runner applies the header's.  The tare limits,
+the contact detection and each arm's force sign are facts of this site: site.json.
   ramp      zero while lowering; from zero to the setpoint over the first `ramp_m` of a
             drawing motion; back to zero over the first `lift_ramp_s` of the lift
   guard     the force above the air zero over `cap_n` for `cap_ticks` readings in a row:
@@ -20,11 +24,17 @@ which points into free space).  The force the arm applies is along minus the nor
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
 import numpy as np
 
 from aris.types import Refusal
+
+
+# rig.json `pen` block key -> ForceSettings field
+PEN_KEYS = {"force_band_n": "band_n", "force_levels": "levels", "force_cap_n": "cap_n",
+            "force_ramp_m": "ramp_m", "lift_ramp_s": "lift_ramp_s", "servo_ki_per_s": "servo_ki",
+            "servo_trim_max_n": "trim_max_n"}
 
 
 @dataclass(frozen=True)
@@ -45,15 +55,20 @@ class ForceSettings:
     sign: float = 1.0
 
     @staticmethod
-    def from_site(block: dict) -> "ForceSettings":
-        names = {f.name for f in fields(ForceSettings)}
-        kw = {k: v for k, v in block.items() if k in names}
+    def from_parts(pen: dict, site_force: dict | None = None, sign: float = 1.0) -> "ForceSettings":
+        """`pen`: the rig's `pen` block, as the job header carries it (facts of pen and paper,
+        the same on both machines).  `site_force`: site.json's `force` block (the tare and the
+        contact detection of this site).  `sign`: this arm's force sign (site.json)."""
+        kw = {f: pen[k] for k, f in PEN_KEYS.items() if k in pen}
+        site_names = {"tare_s", "tare_max_n", "tare_spread_n", "contact_n", "contact_ticks",
+                      "cap_ticks"}
+        kw.update({k: v for k, v in (site_force or {}).items() if k in site_names})
         if "band_n" in kw:
             lo, hi = (float(x) for x in kw["band_n"])
             if not 0.0 <= lo <= hi:
                 raise ValueError(f"force band {kw['band_n']} is not low <= high")
             kw["band_n"] = (lo, hi)
-        s = ForceSettings(**kw)
+        s = ForceSettings(sign=float(sign), **kw)
         if s.band_n[1] > s.cap_n:
             raise ValueError("the force cap is below the top of the band")
         return s

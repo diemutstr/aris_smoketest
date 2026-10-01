@@ -44,7 +44,8 @@ class RosArm:
         """`fake_paper_m`: with fake hardware, where the fake paper is (m above the nominal
         paper); its push stands in for the force estimate that fake hardware lacks."""
         self.arm_id, self.fake, self.lead = arm_id, fake, lead
-        self.fs = F.ForceSettings.from_site(site.force)
+        self._site_force, self._sign = site.force, site.arm(arm_id).force_sign
+        self.set_pen(rig.pen())
         self.ts = T.TouchSettings.from_site(site.touch, self.fs.sign)
         self.kin = T.Kinematics.of(rig, arm_id)
         self.fake_paper = T.FakePaper(self.kin, rig.paper(arm_id), fake_paper_m) if fake else None
@@ -78,6 +79,10 @@ class RosArm:
             flags.append("stopped")
         mode_ok = mode in (1, 2) or (mode is None and self.fake)
         return ArmState(q, qd, bool(mode_ok and not errors and not self._stopped), tuple(flags))
+
+    def set_pen(self, pen: dict) -> None:
+        """The pen rules (rig.json `pen`, as the job header carries them) for what follows."""
+        self.fs = F.ForceSettings.from_parts(pen, self._site_force, self._sign)
 
     def switch(self, name: str) -> str:
         """The named controller takes the arm ("" when it has it)."""

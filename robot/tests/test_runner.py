@@ -72,7 +72,7 @@ def _motions(rig, arm_id):
 
 def _header(rig):
     calib = {a: (m.T_table_base, m.tip_hand, m.calibration) for a, m in rig.mounts.items()}
-    return dict(rig_digest=digest(rig), calibration_digest=digest(calib))
+    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen())
 
 
 def _writer(rig, job, active, motions, pause=0.02):
@@ -246,6 +246,37 @@ def test_the_copy_survives_a_link_that_keeps_dropping(rig, tmp_path):
     assert res.status == "done", res.why
     assert (tmp_path / "robot" / "j6" / "phase_1__arm31.queue").read_bytes() == \
         job.queue("phase 1", 31).path.read_bytes()
+
+
+class PenRecording(Recording):
+    def set_pen(self, pen):
+        self.pen = pen
+
+
+@pytest.mark.parametrize("in_header", [True, False])
+def test_the_job_headers_pen_rules_are_applied(rig, tmp_path, in_header):
+    """The header's `pen` (the server's rig file) rules the job; an old header without it
+    runs with this PC's rig file."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    header = _header(rig)
+    gel = dict(rig.pen(), force_band_n=[0.6, 1.0], force_cap_n=2.2)
+    if in_header:
+        header["pen"] = gel
+    else:
+        header.pop("pen")
+    job = Job.create(server_dir / "pen", header)
+    app = create_app(server_dir)
+    arm = PenRecording(SimArm(31, rig.park_q(31), speed=math.inf))
+    with Served(app) as srv:
+        _writer(rig, job, (31,), _motions(rig, 31), pause=0.0).join()
+        res = run_job(Remote(srv.url), "pen", rig, CONFIG, tmp_path / "robot", {31: arm})
+    assert res.status == "done", res.why
+    want = gel if in_header else rig.pen()
+    assert arm.pen == want
+    first = app.state.received["pen"][0]
+    assert first["pen"] == want
+    assert first["pen_from"] == ("job header" if in_header else "rig file")
 
 
 def test_a_job_planned_for_another_rig_is_refused(rig, tmp_path):

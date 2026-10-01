@@ -156,6 +156,14 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
 
 ## The pen force (`aris_robot/force.py`, no ROS)
 
+Where the numbers come from: the band, levels, cap, ramps and servo are facts of pen and
+paper, in `config/rig.json` (`pen`). The server copies that block into every job header, and
+the runner applies the header's values to every arm of that job. Both machines therefore use
+the same numbers, and the "runner started" row says which were used. A header without them
+(an older job) runs with the operator PC's rig file. `robot/site.json` keeps what is a fact of
+the site or the arm: each arm's force sign, the tare limits, the contact thresholds, the
+touch settings.
+
 - **Air zero (tare).** The robot's force estimate is not zero in the air, and it changes with
   the pose (2.5 N on arm 17 in the old stack). Before each landing the arm stands still for
   0.2 s and the mean reading becomes the zero. It is refused if it is over 8 N, or if it moves
@@ -164,7 +172,7 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
   when the force above the zero stays over 0.25 N for three readings in a row. A single spike
   is ignored.
 - **How hard.** Intensity 0 to 1 maps onto the band (0.7 to 1.0 N for graphite, in 9 steps,
-  from `site.json`).
+  from the job's `pen`).
 - **When.** Zero while lowering. From zero up to the setpoint over the first 2 mm of the line
   (Diemut's slide-in). Back to zero over the first 0.2 s of the lift.
 - **Guard.** More than 3.5 N above the zero for 12 readings in a row: the arm holds and the
@@ -188,7 +196,7 @@ and sends lower and lift to `draw`. **Contract change requested:** the executor 
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 55 tests, 51 in the quick set (15 s); the 4 slow ones compile the controller
+`robot/tests`: 57 tests, 53 in the quick set (16 s); the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -220,6 +228,9 @@ core (6 to 15 s under load).
   cap stops and holds, with no way back flown. Refused before moving: an extra depth over the
   cap, or a 9 N air reading. Through the executor, the "contact" row carries the joints at the
   paper.
+- **Pen rules from the job.** The runner hands the header's `pen` to each driver (a gel-pen
+  band and cap in the test), or the rig file's when the header has none, and the first row
+  says which.
 - **serve.** Against the stand-in server: report, two runs (a drawing-like job and a
   calibration job with a touch), recover, and recover of an arm that is not there. Every
   command is acknowledged in order. The server's calibration file arrives and the stale local

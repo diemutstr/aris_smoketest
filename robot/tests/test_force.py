@@ -19,11 +19,18 @@ def test_intensity_to_force_in_nine_levels():
     assert intensity_to_force(0.5, S) == pytest.approx(0.85)
 
 
-def test_site_block_is_read_and_checked():
-    s = ForceSettings.from_site({"band_n": [0.6, 1.0], "cap_n": 2.2, "unknown": 1})
-    assert s.band_n == (0.6, 1.0) and s.cap_n == 2.2
+def test_pen_block_and_site_block_are_read_and_checked():
+    from pathlib import Path
+    from aris.rig import Rig
+    rig = Rig.load(Path(__file__).resolve().parents[2] / "config")
+    s = ForceSettings.from_parts(rig.pen(), {"tare_max_n": 6.0, "band_n": [9, 9]}, sign=-1.0)
+    assert s.band_n == (0.7, 1.0) and s.levels == 9 and s.cap_n == 3.5      # from the rig
+    assert s.ramp_m == 0.002 and s.servo_ki == 1.0 and s.trim_max_n == 1.0
+    assert s.tare_max_n == 6.0 and s.sign == -1.0                           # from the site
+    gel = ForceSettings.from_parts({"force_band_n": [0.6, 1.0], "force_cap_n": 2.2})
+    assert gel.band_n == (0.6, 1.0) and gel.cap_n == 2.2
     with pytest.raises(ValueError):
-        ForceSettings.from_site({"band_n": [0.7, 1.0], "cap_n": 0.9})
+        ForceSettings.from_parts({"force_band_n": [0.7, 1.0], "force_cap_n": 0.9})
 
 
 def test_normal_force_sign():

@@ -1,4 +1,6 @@
-"""The site file: which arm answers where, which arms are bolted in, the server, the pen force.
+"""The site file: which arm answers where, which arms are bolted in, the server, and what is a
+fact of this site or arm about force (each arm's force sign, the tare limits, the contact
+detection, the touch).  How hard the pen presses is a fact of pen and paper: rig.json `pen`.
 
 Geometry is not here: poses, parks and pens come from config/rig.json through `aris.rig`.
 A malformed site file is a broken installation, so reading it raises with the reason.
@@ -18,6 +20,7 @@ class SiteArm:
     domain: int              # ROS_DOMAIN_ID; by convention the arm id
     mounted: bool            # bolted in and answering; an unmounted arm is never driven
     inverted: bool           # hangs from the frame (the launch hangs the model too)
+    force_sign: float = 1.0  # +1: the paper pushing the pen up reads positive on this arm
 
     @property
     def namespace(self) -> str:
@@ -30,7 +33,7 @@ class Site:
     server_url: str
     joint_prefix: str
     rmw: str
-    force: dict              # the "force" block, read by force.ForceSettings.from_site
+    force: dict              # the "force" block: tare and contact detection (ForceSettings.from_parts)
     touch: dict              # the "touch" block, read by touch.TouchSettings.from_site
     arms: tuple[SiteArm, ...]
 
@@ -58,7 +61,7 @@ def load(path) -> Site:
         if not 0 <= dom <= 101:
             raise ValueError(f"arm {row['id']}: DDS domain {dom} outside 0..101")
         arms.append(SiteArm(int(row["id"]), str(row["ip"]), dom, bool(row["mounted"]),
-                            bool(row["inverted"])))
+                            bool(row["inverted"]), float(row.get("force_sign", 1.0))))
     for key in ("id", "ip", "domain"):
         seen = [getattr(a, key) for a in arms]
         if len(set(seen)) != len(seen):

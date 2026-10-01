@@ -20,6 +20,10 @@ cannot move an arm: the executor refuses a motion that does not start within the
 tolerance (0.005 rad per joint) of the arm's joints, writes a "failed" row saying by how much,
 and the arm holds.
 
+How hard the pen presses (band, levels, cap, ramps, servo) is the job header's `pen` block,
+copied by the server from its rig.json, so both machines use the same numbers; a header
+without it (an older job) runs with this PC's rig file.  The "runner started" row says which.
+
 Nothing here depends on what a job draws: a park job (one arm per phase, free motions) runs
 the same way.
 
@@ -175,10 +179,14 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
     job = Job(d)
 
+    pen, pen_from = (header["pen"], "job header") if header.get("pen") else (rig.pen(), "rig file")
+    for drv in drivers.values():
+        if hasattr(drv, "set_pen"):
+            drv.set_pen(pen)
     routed = {a: KindRouter(drv, d, a) for a, drv in drivers.items()}
     coord = Coordinator(job, routed, config_dir, rig, poll=poll)
     coord.log = log = ArmLog(job.log_path, drivers)   # the executors write through it too
-    log.write("runner started", job=job_id, where=log.where())
+    log.write("runner started", job=job_id, where=log.where(), pen=pen, pen_from=pen_from)
     refused: list[str] = []
     halt = threading.Event()
 

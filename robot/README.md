@@ -8,7 +8,8 @@ steps.
 
 ```
 robot/
-  site.json                    addresses, domains, which arms are mounted, the server, the pen force
+  site.json                    addresses, domains, which arms are mounted, the server, each arm's
+                               force sign, the tare and contact thresholds, the touch
   aris_robot/                  the Python package (the command `aris-robot`)
   ros2_ws/src/aris_msgs        the reference and status messages
   ros2_ws/src/aris_controllers the controller aris_joint_impedance_controller (C++)
@@ -95,6 +96,12 @@ per arm its control-box IP, its DDS domain (the arm id), and `mounted`: true onl
 bolted in their places and switched on. The IPs in the file are from the 2026-09-09 briefing;
 arm 71 had no IP on 2026-09-15. Nothing else about this site is typed anywhere else.
 
+The file also holds what is a fact of this site or arm about force: each arm's `force_sign`,
+the tare limits and contact thresholds (`force`), and the touch settings (`touch`). How hard
+the pen presses (the force band, levels, cap, ramps, the servo) is a fact of pen and paper. It
+lives in `config/rig.json` (`pen`) on the planning PC, comes with every job, and the runner
+applies the job's values. A job without them (an older one) runs with this PC's rig file.
+
 ## 5. Launch files
 
 ```
@@ -176,7 +183,7 @@ for at most 10 mm more at 2 mm/s if it has not met the paper. It stops at the fo
 (1.0 N over the air reading), prints the joints, the pen tip and the air reading, and goes
 back up the same way. Over 3 N it stops and holds where it is. This is the same touch the
 calibration job uses (`aris calibrate <arm>` on the planning PC, with serve running). Check
-the sign of the force (site.json `force.sign`) here: the reading must rise when the pen meets
+the sign of the force (site.json, the arm's `force_sign`) here: the reading must rise when the pen meets
 the paper. Then the first job, in the air first (a drawing planned 30 mm above the paper), then on
 paper.
 

@@ -36,7 +36,7 @@ class Passed:
 
 def _header(rig):
     calib = {a: (m.T_table_base, m.tip_hand, m.calibration) for a, m in rig.mounts.items()}
-    return dict(rig_digest=digest(rig), calibration_digest=digest(calib))
+    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen())
 
 
 def _free(rig, a, q0, q1):

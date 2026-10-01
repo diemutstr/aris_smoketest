@@ -4,6 +4,7 @@
     "read_by": "robot/aris_robot/site.py and nothing else",
     "addresses_source": "control-box IPs and domains from the 2026-09-09 control-stack briefing (section 5, arm_registry.py). Arm 71 had no IP on 2026-09-15 (HARDWARE_DAY1 section 1.6). Verify every row with `aris-robot identify` before the first run.",
     "mounted_source": "HARDWARE_DAY1 (2026-09-16): arms 31 and 71 were mounted. Set `mounted` true for an arm only when it hangs in its place in rig.json and answers on its address.",
+    "force_sign_note": "per arm: +1 when the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading.",
     "inverted_note": "rig.json hangs all six arms upside down; `inverted` true makes the launch hang the robot model from the frame (mount_to_world, as the operator patches do)."
   },
 
@@ -16,24 +17,14 @@
   },
 
   "force": {
-    "source": "graphite mine (2 mm, 4H / H): band 0.7-1.0 N in 9 levels, force cap 3.5 N on arm 13 (control-stack briefing 2026-09-09, sections 9 and 10). A gel pen uses 0.6-1.0 N and a cap of 2.0-2.6 N.",
-    "band_n": [0.7, 1.0],
-    "levels": 9,
-    "cap_n": 3.5,
-    "ramp_m": 0.002,
-    "ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
-    "lift_ramp_s": 0.2,
+    "source": "facts of this site about the force estimate (control-stack briefing 2026-09-09). How hard the pen presses (band, levels, cap, ramps, servo) is a fact of pen and paper: config/rig.json `pen`, carried in every job header.",
     "tare_s": 0.2,
     "tare_max_n": 8.0,
     "tare_note": "the force estimate in the air is not zero (2.5 N on arm 17 in the old stack was the clamp); a larger reading than this refuses the landing",
     "contact_n": 0.25,
     "contact_ticks": 3,
     "cap_ticks": 12,
-    "servo_ki": 1.0,
-    "servo_ki_note": "1/s: the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant (orchestrator, 2026-09-30). 0 turns it off: the force is then fed forward without correction.",
-    "trim_max_n": 1.0,
-    "sign": 1.0,
-    "sign_note": "+1: the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading."
+    "cap_ticks_note": "readings in a row over the pen's force cap before the arm holds"
   },
 
   "touch": {
@@ -48,11 +39,11 @@
   },
 
   "arms": [
-    {"id": 13, "ip": "192.168.50.11", "domain": 13, "mounted": false, "inverted": true},
-    {"id": 17, "ip": "192.168.50.16", "domain": 17, "mounted": false, "inverted": true},
-    {"id": 31, "ip": "192.168.50.12", "domain": 31, "mounted": true,  "inverted": true},
-    {"id": 71, "ip": "192.168.50.14", "domain": 71, "mounted": true,  "inverted": true},
-    {"id": 2,  "ip": "192.168.50.13", "domain": 2,  "mounted": false, "inverted": true},
-    {"id": 97, "ip": "192.168.50.15", "domain": 97, "mounted": false, "inverted": true}
+    {"id": 13, "ip": "192.168.50.11", "domain": 13, "mounted": false, "inverted": true, "force_sign": 1.0},
+    {"id": 17, "ip": "192.168.50.16", "domain": 17, "mounted": false, "inverted": true, "force_sign": 1.0},
+    {"id": 31, "ip": "192.168.50.12", "domain": 31, "mounted": true,  "inverted": true, "force_sign": 1.0},
+    {"id": 71, "ip": "192.168.50.14", "domain": 71, "mounted": true,  "inverted": true, "force_sign": 1.0},
+    {"id": 2,  "ip": "192.168.50.13", "domain": 2,  "mounted": false, "inverted": true, "force_sign": 1.0},
+    {"id": 97, "ip": "192.168.50.15", "domain": 97, "mounted": false, "inverted": true, "force_sign": 1.0}
   ]
 }
