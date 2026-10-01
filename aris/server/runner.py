@@ -52,7 +52,7 @@ def announce(st, rec) -> None:
         st.operator.push("run", job=rec.id, kind=rec.kind)
 
 
-def _header(st, rec, extra) -> dict:
+def job_header(st, rec, extra) -> dict:
     h = header_for(st.rig, rec.lines, st.rules) if rec.lines else dict(
         rig_digest=st.digests()["rig_digest"],
         calibration_digest=st.digests()["calibration_digest"], rules=None)
@@ -62,7 +62,7 @@ def _header(st, rec, extra) -> dict:
     return h
 
 
-def _finish(rec: JobRecord, job_dir, rep: dict, state: str, why: str) -> None:
+def finish_job(rec: JobRecord, job_dir, rep: dict, state: str, why: str) -> None:
     rep = dict(rep, id=rec.id, total_s=time.time() - rec.t_received)
     (job_dir / "report.json").write_text(json.dumps(rep, indent=1, default=_plain))
     rec.report = json.loads(json.dumps(rep, default=_plain))
@@ -88,14 +88,14 @@ def submit_draw(st, store: JobStore, lines, name: str = "") -> JobRecord | Refus
     fitted = drawing.fit(lines, st.drawing_area)
     rec.lines = list(lines) if isinstance(fitted, Refusal) else fitted[0]
     rec.fit = None if isinstance(fitted, Refusal) else fitted[1]
-    job = Job.create(rec.dir, _header(st, rec, dict(
+    job = Job.create(rec.dir, job_header(st, rec, dict(
         drawing_area=list(st.drawing_area), drawing_digest_in=digest(list(lines)),
         scale=None if rec.fit is None else rec.fit.scale)))
     rec.set_state("received", lines=len(lines), received=rec.t_received)
     if isinstance(fitted, Refusal):
         rec.report = dict(state="failed", why=f"{fitted.reason}: {fitted.detail}",
                           assumptions=st.assumptions())
-        _finish(rec, job.dir, rec.report, "failed", rec.report["why"])
+        finish_job(rec, job.dir, rec.report, "failed", rec.report["why"])
         return rec
     rec.set_state("fitted", scale=rec.fit.scale, bbox=rec.fit.bbox_out, bbox_in=rec.fit.bbox_in)
     rec.thread = threading.Thread(target=_run_draw, args=(st, rec, job), daemon=True,
@@ -141,7 +141,7 @@ def _run_draw(st, rec: JobRecord, job: Job) -> None:
         configs = where if isinstance(where, Refusal) else _arm_configs(st, where)
         if isinstance(configs, Refusal):
             job.end_phases(configs.reason)
-            _finish(rec, job.dir, dict(state="failed", why=configs.detail,
+            finish_job(rec, job.dir, dict(state="failed", why=configs.detail,
                                        assumptions=st.assumptions()), "failed", configs.detail)
             return
         coord = Coordinator(job, st.drivers, st.config_dir, st.rig)
@@ -160,12 +160,12 @@ def _run_draw(st, rec: JobRecord, job: Job) -> None:
         done = {k: r["done"] for k, r in rows.items()}
         rep = report.draw_report(st, rec, job, out, run, done,
                                  None if first is None else first - rec.t_received, state, why)
-        _finish(rec, job.dir, rep, state, why)
+        finish_job(rec, job.dir, rep, state, why)
     except Exception as e:                       # a bug: the arms stop, the job fails loudly
         if coord is not None:
             coord.stop()
         rec.log.write("error", why=traceback.format_exc())
-        _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
+        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
                                    assumptions=st.assumptions()), "failed",
                 f"internal error: {e!r}")
 
@@ -182,36 +182,36 @@ def _run_draw_remote(st, rec: JobRecord, job: Job) -> None:
         configs = _arm_configs(st, reported_where(st, need_all=False))
         if isinstance(configs, Refusal):
             job.end_phases(configs.reason)
-            _finish(rec, job.dir, dict(state="failed", why=configs.detail,
+            finish_job(rec, job.dir, dict(state="failed", why=configs.detail,
                                        assumptions=st.assumptions()), "failed", configs.detail)
             return
         rec.set_state("planning")
         out = pipeline.plan_into(st, job, rec.lines, configs, rec,
                                  on_first=lambda: rec.set_state("drawing"))
-        run = _wait_robot(rec)
+        run = wait_robot(rec)
         state, why = _end_state(rec, out, run)
         rows, first = arm_progress(rec.log.read())
         done = {k: r["done"] for k, r in rows.items()}
         rep = report.draw_report(st, rec, job, out, run, done,
                                  None if first is None else first - rec.t_received, state, why)
-        _finish(rec, job.dir, rep, state, why)
+        finish_job(rec, job.dir, rep, state, why)
     except Exception as e:
         rec.log.write("error", why=traceback.format_exc())
-        _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
+        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
                                    assumptions=st.assumptions()), "failed",
                 f"internal error: {e!r}")
 
 
-def _wait_robot(rec: JobRecord):
+def wait_robot(rec: JobRecord):
     """Until the operator PC reports the job's end (or a stop it does not confirm)."""
     while not rec.robot_end.wait(0.1):
         if rec.stop.is_set() and (rec.robot_rows == 0 or time.time() - (
                 rec.stop_time or time.time()) > ROBOT_STOP_WAIT):
             break
-    return _robot_run(rec)
+    return robot_run(rec)
 
 
-def _robot_run(rec: JobRecord):
+def robot_run(rec: JobRecord):
     """The operator PC's run, from the rows it posted: like the coordinator's JobRun."""
     from aris.execute import JobRun
     run = JobRun(status="stopped", why="the operator PC did not report the end of the job")
@@ -249,7 +249,7 @@ def submit_park(st, store: JobStore) -> JobRecord | Refusal:
     rec = store.admit("park", "park all arms")
     if isinstance(rec, Refusal):
         return rec
-    job = Job.create(rec.dir, _header(st, rec, {}))
+    job = Job.create(rec.dir, job_header(st, rec, {}))
     rec.set_state("received", received=rec.t_received)
     rec.thread = threading.Thread(target=_run_park, args=(st, rec, job), daemon=True,
                                   name=f"job {rec.id}")
@@ -263,7 +263,7 @@ def _run_park(st, rec: JobRecord, job: Job) -> None:
         where = reported_where(st, need_all=True) if st.remote else prepare_arms(st)
         if isinstance(where, Refusal):
             job.end_phases(where.reason)
-            _finish(rec, job.dir, dict(state="failed", why=where.detail, kind="park",
+            finish_job(rec, job.dir, dict(state="failed", why=where.detail, kind="park",
                                        assumptions=st.assumptions()), "failed", where.detail)
             return
         rec.set_state("planning")
@@ -274,13 +274,13 @@ def _run_park(st, rec: JobRecord, job: Job) -> None:
         if moving:
             rec.set_state("moving")
         run = run_queued(st, rec, job, moving, where)
-        _finish(rec, job.dir, _park_report(st, rec, steps, run, planning_s), *_park_end(
+        finish_job(rec, job.dir, _park_report(st, rec, steps, run, planning_s), *_park_end(
             st, rec, steps, run))
     except Exception as e:
         if rec.coordinator is not None:
             rec.coordinator.stop()
         rec.log.write("error", why=traceback.format_exc())
-        _finish(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}", kind="park",
+        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}", kind="park",
                                    assumptions=st.assumptions()), "failed",
                 f"internal error: {e!r}")
 

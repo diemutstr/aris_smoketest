@@ -32,7 +32,7 @@ from aris.free import plan as free_plan
 from aris.kernel.retime import retime_detailed
 from aris.sequencer.guard import Guard
 from aris.sequencer.lift import reverse, rise_path
-from aris.server.park import Step, _lift_pens, _Scene, at_park, pen_down
+from aris.server.steps import Scene, Step, at_park, lift_pens, pen_down
 from aris.types import JointPath, Motion, Phase, Refusal, Trajectory
 
 SPINS = np.arange(24) * np.deg2rad(15.0)
@@ -156,11 +156,11 @@ def plan_calibrate(st, a: int, where: dict, cfg: CalibSettings = CalibSettings()
     """The calibrate job's motions for arm `a`, from where every arm stands (`where`)."""
     rig, rules = st.rig, st.rules
     now = {b: np.asarray(q, float) for b, q in where.items()}
-    scene = _Scene(rig)
+    scene = Scene(rig)
     steps, q = [], now[a]
     obs, fields, phase = scene.of(a, now, (a,), (), f"calibrate {a}")
     if not at_park(rig, a, q) and pen_down(rig, a, q):      # as the park job: lift it first
-        up = _lift_pens(st, scene, now, [a])[0]
+        up = lift_pens(st, scene, now, [a])[0]
         if up.why:
             return Plan(a, phase, [], np.zeros((0, 2)), [], None, up.why)
         steps.append(Step(a, phase, up.motions, up.verdicts, fields))
@@ -219,7 +219,7 @@ def submit_calibrate(st, store, arm: int):
     rec = store.admit("calibrate", f"calibrate arm {arm}")
     if isinstance(rec, _Refusal):
         return rec
-    job = Job.create(rec.dir, runner._header(st, rec, dict(arm=arm)))
+    job = Job.create(rec.dir, runner.job_header(st, rec, dict(arm=arm)))
     rec.set_state("received", received=rec.t_received, arm=arm)
     rec.thread = threading.Thread(target=_run, args=(st, rec, job, arm), daemon=True,
                                   name=f"job {rec.id}")
@@ -250,7 +250,7 @@ def _run(st, rec, job, arm: int) -> None:
         run = run_queued(st, rec, job, moving, where)
         state, why, result, written = _solve(st, rec, plan, run)
         rep = _report(st, rec, plan, run, result, written, planning_s, state, why)
-        runner._finish(rec, job.dir, rep, state, why)
+        runner.finish_job(rec, job.dir, rep, state, why)
     except Exception as e:
         if rec.coordinator is not None:
             rec.coordinator.stop()
@@ -267,7 +267,7 @@ def _fail(st, rec, job, why, plan=None) -> None:
     if plan is not None:
         rep.update(points=len(plan.points_table), dropped=plan.dropped, spin_deg=None
                    if plan.spin is None else float(np.rad2deg(plan.spin)))
-    runner._finish(rec, job.dir, rep, "failed", why)
+    runner.finish_job(rec, job.dir, rep, "failed", why)
 
 
 def touch_points(plan: Plan) -> dict:
