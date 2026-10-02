@@ -70,7 +70,21 @@ Types are in `aris/types.py`. The calls:
 | sequencer | `tour(arm, bunches, q_start, obstacles, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]`. `verify(motion, q_before) -> dict` (at least `passed`, `tightest`) is the independent checker, handed in by the server: a piece whose group of motions does not all pass is left over as `failed_check`; a motion that passed carries the dict as `Motion.checked` |
 | arm_planner | `plan(arm, lines, obstacles, q_start, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]` |
 | system | `plan(rig, drawing, arm_configs, verify=None)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]`. `verify(arm_id, phase, fields, motion, q_before) -> dict` is picklable (the arm planners run in worker processes); the system planner binds the first three for each arm planner |
-| check | `check(config_dir, arm_id, motion, phase, q_before)` | a verdict: pass or fail, every measured number, and the tightest one |
+| check | `check(config_dir, slot, motion, phase, q_before, fields=())` | a verdict: pass or fail, every measured number, and the tightest one. Arms are slots (`types.Slot`, e.g. "2R") everywhere: `Phase.active`, `Wall.arms`, queue names, event rows |
+
+## The calibration file (`config/calibration/<slot>.json`)
+
+```
+{"slot": "2R",
+ "base": {"passed": true, "date": "...", "method": "plane" | "plane+dimples",
+          "T_table_base": [[...4x4...]], "residuals": {...}, "why": ""},
+ "pen":  {"passed": true, "date": "...", "pen": "graphite_4h", "tip_hand_m": [x, y, z],
+          "reference_touch": {"xy_table_m": [x, y], "q": [...7...]}, "why": ""}}
+```
+
+`Rig.load` applies `base` when it passed, and `pen` when it passed and names the pen that is in
+(`rig.json pens.current`); otherwise the nominal values, with the status saying why. The plane
+job writes `base`; `aris touchoff <slot>` writes `pen`; neither touches the other part.
 
 ## What is checked is what is flown
 

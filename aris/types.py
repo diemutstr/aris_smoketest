@@ -19,6 +19,11 @@ import numpy as np
 
 N_JOINTS = 7
 
+# An arm is named by its SLOT: the place on the frame it hangs from, "1L" .. "3R" (row 1 to 3
+# along the table's length, L/R by x).  Which robot (serial, address) hangs in a slot is a
+# fact of the site (site/*.json), never of the planning code.  Decided 2026-10-02.
+Slot = str
+
 # --------------------------------------------------------------------------- drawing input
 
 
@@ -275,7 +280,7 @@ class Refusal:
 class Wall:
     """A vertical plane in the table frame, between two arms."""
     name: str
-    arms: tuple[int, int]
+    arms: tuple[Slot, Slot]
     point_table: np.ndarray            # (3,) a point on the wall, on the paper
     normal_table: np.ndarray           # (3,) unit, horizontal, pointing from arms[0] to arms[1]
 
@@ -284,8 +289,8 @@ class Wall:
 class Phase:
     """Who moves, who stands parked, and the walls between those who move."""
     name: str
-    active: tuple[int, ...]
-    parked: tuple[int, ...]
+    active: tuple[Slot, ...]
+    parked: tuple[Slot, ...]
     walls: tuple[Wall, ...]
 
 
@@ -305,6 +310,11 @@ class DrawRules:
     """How drawing motions are timed and shaped."""
     draw_speed: float = 0.02           # m/s along the line
     landing_speed: float = 0.010       # m/s of the pen tip on a lower, as it meets the paper
+    # The drawing surface lies this far below the paper: with position control the pen is
+    # pressed into the paper by planning it there (3.5 mm for 2 mm 4H graphite on the rig,
+    # 2026-10-01).  The system planner gives the drawing's points this z; the planners below
+    # it never know.  The real paper stays the plane the holder and links must clear.
+    press: float = 0.0                 # m
     lift_height: float = 0.025         # m, how far the tip is raised between lines
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down

@@ -234,6 +234,43 @@ calibration files from the server, so both machines always hold the same ones. E
 person does, they do on the planning PC with `aris …`; the e-stop is the only thing on the
 operator side.
 
+## 4c. Decided 2026-10-02, after the first word drawn on the hardware
+
+**Slots and robots.** An arm is named by its slot on the frame, `1L 1R 2L 2R 3L 3R` (row 1 at
+the −y end, L at −x). `config/rig.json` describes slots; one table in `site/` says which robot
+(serial, address) hangs in which slot today, and the runner refuses a robot that is not the one
+the table names. The old prime-number ids live on only in that table. Nothing in the planning
+code knows a robot.
+
+**Tracking, mode A.** The word "unknown" was drawn on 2026-10-01 under plain joint position
+control: certified joint trajectories through the stock trajectory controller, at most 15 mm/s
+on the paper, every touchdown from standstill, and a purely geometric press — the plan runs
+3.5 mm below the measured paper (2 mm 4H graphite). That is the default. The impedance
+controller with the pen force (4b) is mode B, kept behind a flag until A draws well.
+
+**The drawing surface.** The press is a property of the surface the drawing's points lie on:
+the system planner gives the points `z = paper − press` and the planners below put the tip where
+the points are; the real paper stays the plane the holder and links must clear; the checker's
+"tip on paper" rule reads the same press. No planner knows that pens exist.
+
+**Pens are rig data.** `rig.json` has a `pens` table (name, nominal length and lean, capsule,
+press, speed on paper, force band and cap for mode B) and one line naming the pen that is in.
+The job header names it; the report records it; the drawing file stays pen-agnostic.
+
+**Calibration in two parts, two clocks.** Per slot, one file with a `base` part (x, y, z, roll,
+pitch, yaw; the plane job now, the dimples later; re-done when an arm or the frame moves) and a
+`pen` part (the tip offset from a one-touch touch-off at a reference point on the paper, against
+the measured plane; re-done after every pen switch or handling of the pencil — with a
+geometric press the pen length is the tone). Each part has its own date and pass flag.
+
+**One model from the sources.** Sources: `config/rig.json`, `config/calibration/<slot>.json`,
+`site/`, the vendor meshes. One builder, `Rig.load`, turns them into the model — slot poses
+with calibration applied, hanger steel placed from the *calibrated* axis (the arm is bolted to
+the plate), parked bodies at calibrated poses, the pen capsule from the measured length,
+fences, phases. Nothing else constructs geometry; the checker re-reads the same files with its
+own reader; caches (maps, kinematic table) are keyed by the sources' digests; every job header
+pins those digests. Until x/y are calibrated (1–2 cm off today) the wall clearance is 40 mm.
+
 ## 5. Drawing server
 
 The top of the hierarchy and the one front door. The GUI and the command line talk only to it.
