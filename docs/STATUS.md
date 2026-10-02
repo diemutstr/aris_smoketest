@@ -70,6 +70,24 @@ checker: its own reader + `build_scene`); the tool writes one halfway between ev
 and the nearest live one (y = ±0.605 m). Maps then allow 1.76 x 1.00 m; the 1.2 x 1.0 area
 stays; the word still 100 % (58 motions, 6 s).
 
+## 2026-10-02: slots, mode A, pens, two-part calibration (DESIGN 4c)
+
+After the first word drawn on the rig (by the old stack, 2026-10-01, arms 97+71 under position
+control with a 3.5 mm geometric press): arms are SLOTS (`1L..3R`; 13→1L, 17→1R, 31→2L, 71→2R,
+2→3L, 97→3R; the slot→robot table in `site/`); tracking mode A (position control, press 3.5 mm,
+15 mm/s) is the default, mode B (impedance + force) behind `--tracking impedance`; pens are rig
+data (`pens` table, current pen) and the system planner puts the drawing on the surface
+`paper − press`; the calibration file has a `base` part (`aris calibrate <slot>`, plane) and a
+`pen` part (`aris touchoff <slot>`, one touch); hangers follow the calibrated axis; the drawing
+area has a centre; walls 40 mm until x/y are calibrated; `aris draw --rest-of <job>`; the
+header carries tracking, pen and a note. Two-arm rig = 2R+3R, fences toward row 1 and at x = 0
+(the dead arms in 2L/3L), area 0.36 x 2.0 about (0.40, 0.605); the word along the table:
+2.59 m 100 %, 54 motions checked, 6 s. Seven six-slot cases 100 % at the new speed (+33-54 % rig
+time from 15 mm/s and the 10 mm/s landings). Quick suite 270 tests, robot 63.
+
+Dead-code audit done (read-only): ~1 500 lines removable; decisions pending Pete on followers,
+legacy_docs/assets, hardware-day verbs; the rest to be executed next.
+
 ## Next
 
 - The serial check doubles an arm's planning wall time at scale (30 min for 10 000 lines,

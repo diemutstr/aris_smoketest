@@ -368,7 +368,7 @@ def cmd_plan(a, _http=None) -> int:
     lines = drawing.load(a.drawing)
     if not isinstance(lines, list):
         return verdict(False, f"{lines.reason}: {lines.detail}")
-    fitted = drawing.fit(lines, st.drawing_area)
+    fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
     if not isinstance(fitted, tuple):
         return verdict(False, f"{fitted.reason}: {fitted.detail}")
     out_dir = Path(a.out or f"out/plans/{time.strftime('%Y%m%d-%H%M%S')}-{Path(a.drawing).stem}")
