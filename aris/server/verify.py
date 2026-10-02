@@ -26,9 +26,11 @@ from aris.execute.queue import slug, verdict_numbers
 class CheckVerify:
     config_dir: Path
     refused_dir: Path | None = None
+    surface_z: float | None = None     # an air run's drawing surface (table z); None: rig's
 
     def __call__(self, arm_id, phase, motion, q_before) -> dict:
-        v = check(self.config_dir, arm_id, motion, phase, q_before)
+        kw = {} if self.surface_z is None else dict(surface_z=self.surface_z)
+        v = check(self.config_dir, arm_id, motion, phase, q_before, **kw)
         out = verdict_numbers(v)
         if not v.passed and self.refused_dir is not None:
             out["refused_file"] = save_refused(self.refused_dir, phase.name, arm_id, motion,

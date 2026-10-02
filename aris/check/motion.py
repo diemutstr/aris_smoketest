@@ -1,12 +1,12 @@
 """`check`: the verdict on one motion of one arm in one phase, before it may reach the robot."""
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import numpy as np
 
 from aris.check import timing
-from aris.check.config import read_rig
+from aris.check.config import Tolerances, read_rig
 from aris.check.drawing import pen_report
 from aris.check.model import tip
 from aris.check.scene import CLASSES, build_scene, clearance
@@ -31,11 +31,8 @@ ON_SURFACE = "tip on surface (lower, lift)"  # a lower ends, a lift starts, on t
 TOUCH_PAPER = "tip on paper"                 # a touch's descent ends, its climb starts, there
 
 
-def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, *,
-          standing=None, step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
-          tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
-          speed_tol: float = 0.03,
-          stop_speed: float = 2.5e-4) -> Verdict:
+def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, standing=None,
+          surface_z: float | None = None, *, tolerances: Tolerances | None = None) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
 
     slot            the arm, by its slot on the frame ("2R"); `phase` names slots too
@@ -44,21 +41,13 @@ def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, *
                     at its park, held to the demanded arm-to-arm clearance (the "parked" row,
                     named "standing2R:..." where one is closest).  A slot listed here and in
                     `phase.parked` stands where `standing` says.
-
-    step            m, the most any capsule point may move between two clearance samples
-    tol             m, how far under the true minimum a reported clearance may lie
-    rate_tol        largest relative difference allowed between the 1 kHz and 4 kHz readings
-    tip_height_tol  m, drawing: tip within this of the drawing surface (the paper less the
-                    current pen's press, rig.json); lower and lift: the tip at the paper end
-    line_tol        m, drawing: tip within this of the planned line
-    back_tol        m, drawing: numerical allowance for "never goes backwards"
-    speed_tol       drawing: the tip may go this much faster than the drawing speed, which is
-                    the current pen's speed_m_per_s in rig.json (the planners read the same)
-    stop_speed      m/s, drawing: between getting going and the final stop the pen's speed
-                    along the line stays above this.  Absolute, not a share of draw_speed: a
-                    sharp corner slows the pen to about 1 mm/s whatever the drawing speed
-                    (measured: 0.83 mm/s at a 130 degree corner drawn at 80 mm/s), while a
-                    real stop reads 1e-7 m/s.
+    surface_z       m, table frame: the height every drawing tip, lower end and lift start must
+                    sit on, in place of the paper less the pen's press (None).  For the air run,
+                    the whole plan flown above the paper: the server passes paper + 0.030.  The
+                    links, the tool and the lifted pen still clear the real paper; a touch still
+                    probes the real paper.
+    tolerances      replaces the checker's numerical allowances, which otherwise come from
+                    rig.json `checker` (see `config.Tolerances`).  For tests only.
     """
     problem = _malformed(motion, q_before)
     if problem is None:
@@ -68,13 +57,15 @@ def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, *
             problem = f"cannot read the rig: {e}"
     if problem is None:
         problem = _wrong_phase(rig, slot, phase) or _bad_standing(rig, slot, standing)
+    if problem is None and surface_z is not None and not np.isfinite(surface_z):
+        problem = "surface_z is not a number"
     if problem is not None:
         return verdict([measure("well formed", 0.0, 1.0, "min", "", problem, ranked=False)])
 
     standing = {p: np.asarray(q, float) for p, q in (standing or {}).items()}
-    opts = dict(standing=standing, step=step, tol=tol, rate_tol=rate_tol,
-                tip_height_tol=tip_height_tol, line_tol=line_tol, back_tol=back_tol,
-                speed_tol=speed_tol, stop_speed=stop_speed)
+    if surface_z is not None:            # the press is what puts the surface where it is
+        rig = replace(rig, press=rig.paper_z - float(surface_z))
+    opts = dict(asdict(tolerances or rig.tolerances), standing=standing)
     others = dict.fromkeys((*phase.parked, *standing))
     notes = rig.notes + sum((rig.mounts[s].notes for s in (slot, *others)), ())
     if motion.kind == "touch":
@@ -222,6 +213,8 @@ def _on_surface(scene, rig, traj, kind, tol, title=ON_SURFACE):
 def _surface(rig):
     if rig.press == 0.0:
         return "the paper itself (no press)"
+    if rig.press < 0.0:
+        return f"{-rig.press * 1e3:.1f} mm above the paper (surface_z given)"
     return f"{rig.press * 1e3:.1f} mm below the paper (press of pen {rig.pen})"
 
 

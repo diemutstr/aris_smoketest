@@ -2,8 +2,9 @@
 
 Two rules (Pete and the orchestrator, 2026-09-30), nothing else:
 1. A piece starts and ends with the pen rising straight up along the paper normal until it is
-   the pen clearance plus `extra` (2 mm) above the real paper (from a drawing surface below the
-   paper, the press, the rise is that much longer), following at every `step` (2 mm) the nearest IK answer that
+   the pen clearance plus `extra` (2 mm) above the higher of the real paper and the drawing
+   surface (from a surface below the paper, the press, the rise is that much longer; from one
+   above it, an air run, it is the same as from the paper), following at every `step` (2 mm) the nearest IK answer that
    passes the gates (at most `max_jump`, 0.15 rad, from the last), with the hand's spin about
    the normal and joint 7 changing evenly over the rise by the smallest amounts, each within
    0.5 rad, that let every sample pass; the timed motion is checked as flown.
@@ -55,7 +56,11 @@ def rise_path(arm, guard: Guard, q: np.ndarray, paper: Plane, height: float, ste
     n = n / nn
     T0 = arm.fk(q[None])[0]
     tip0 = arm.tip(q[None])[0]
-    height = height - (float(np.asarray(paper.normal, float) @ tip0) - paper.offset) / nn
+    # Above the higher of the real paper and the drawing surface (where the pen starts): a
+    # surface below the paper (the press) makes the rise that much longer; one above it (an air
+    # run) keeps the same geometry relative to the surface as a real run has to the paper.
+    h0 = (float(np.asarray(paper.normal, float) @ tip0) - paper.offset) / nn
+    height = height - min(h0, 0.0)
     if height <= 0.0:
         return "the pen is already above the lift height"
     k = int(np.ceil(height / step)) + 1

@@ -83,17 +83,23 @@ def _plain(o):
 
 
 def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
-                rest_of: str | None = None) -> JobRecord | Refusal:
+                rest_of: str | None = None, air_mm: float = 0.0) -> JobRecord | Refusal:
     """Admit a drawing job and start it.  A drawing that cannot be fitted is a failed job.
-    `rest_of`: the job whose leftovers these lines are (already in place: not refitted)."""
+    `rest_of`: the job whose leftovers these lines are (already in place: not refitted).
+    `air_mm`: an air run, the validation every first drawing on the hardware starts with: the
+    whole job planned and checked with the drawing surface that far above the paper, so every
+    draw is flown in the air; phases, checker and queues otherwise identical."""
+    if not 0.0 <= air_mm <= 200.0:
+        return Refusal("air", f"--air {air_mm} mm is not a height above the paper (0 to 200)")
     fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
 
     def prepare(rec):
-        rec.note, rec.rest_of = note, rest_of
+        rec.note, rec.rest_of, rec.air_mm = note, rest_of, float(air_mm)
         rec.lines = list(lines) if isinstance(fitted, Refusal) else fitted[0]
         rec.fit = None if isinstance(fitted, Refusal) else fitted[1]
         return dict(drawing_area=list(st.drawing_area), drawing_centre=list(st.drawing_centre),
                     drawing_digest_in=digest(list(lines)), rest_of=rest_of,
+                    air_mm=float(air_mm),
                     scale=None if rec.fit is None else rec.fit.scale)
 
     def created(rec, job):
@@ -188,14 +194,15 @@ def rest_lines(store: JobStore, jid: str) -> tuple[list, dict] | Refusal:
     return out, rep
 
 
-def submit_rest(st, store: JobStore, jid: str, note: str = "") -> JobRecord | Refusal:
+def submit_rest(st, store: JobStore, jid: str, note: str = "",
+                air_mm: float = 0.0) -> JobRecord | Refusal:
     """A new drawing job of what job `jid` left over."""
     got = rest_lines(store, jid)
     if isinstance(got, Refusal):
         return got
     lines, rep = got
     return submit_draw(st, store, lines, f"rest of {jid}", note or rep.get("note") or "",
-                       rest_of=jid)
+                       rest_of=jid, air_mm=air_mm)
 
 
 def reported_where(st, need_all: bool) -> dict | Refusal:

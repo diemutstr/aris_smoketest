@@ -81,7 +81,9 @@ def _mm(x) -> str:
 
 
 def report_lines(rep: dict) -> list[str]:
-    out = [f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else "")]
+    out = [f"AIR RUN      every draw flown {rep['air_mm']:g} mm above the paper, no contact"] \
+        if rep.get("air_mm") else []
+    out.append(f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else ""))
     if rep.get("kind") == "touchoff":
         ref = rep.get("reference", {})
         out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "
@@ -189,7 +191,7 @@ def _assume(http) -> dict | None:
 
 
 def cmd_draw(a, http) -> int:
-    q = urllib.parse.urlencode(dict(note=a.note)) if a.note else ""
+    q = urllib.parse.urlencode({k: v for k, v in (("note", a.note), ("air_mm", a.air)) if v})
     if a.rest_of:
         if a.drawing:
             return verdict(False, "give a drawing or --rest-of, not both")
@@ -369,7 +371,9 @@ def cmd_plan(a, _http=None) -> int:
     out_dir = Path(a.out or f"out/plans/{time.strftime('%Y%m%d-%H%M%S')}-{Path(a.drawing).stem}")
     rec = JobRecord(out_dir.name, "draw", out_dir, Path(a.drawing).name, time.time())
     rec.lines, rec.fit = fitted
-    job = Job.create(out_dir, runner.job_header(st, rec, dict(scale=rec.fit.scale)))
+    rec.air_mm = float(a.air)
+    job = Job.create(out_dir, runner.job_header(st, rec, dict(scale=rec.fit.scale,
+                                                              air_mm=rec.air_mm)))
     rec.set_state("planning")
     out = pipeline.plan_into(st, job, rec.lines, None, rec)
     bad = out.error or (out.refusal and f"{out.refusal.reason}: {out.refusal.detail}")
@@ -425,6 +429,9 @@ def parser() -> argparse.ArgumentParser:
         s.add_argument("drawing", nargs="?", default=None)
         s.add_argument("--note", default="", help="the material and anything else: kept in "
                        "the job's header and report")
+        s.add_argument("--air", type=float, default=0.0, metavar="MM",
+                       help="an air run: the whole job planned this far above the paper (no "
+                       "contact), to validate the plan's geometry and timing first")
         s.add_argument("--rest-of", default=None, metavar="JOB",
                        help="draw what that finished job left over")
     for name, what in (("calibrate", "touch the paper on a grid: the slot's base calibration"),
@@ -442,6 +449,8 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
     s.add_argument("drawing")
     s.add_argument("--out", default=None, help="the job directory to write")
+    s.add_argument("--air", type=float, default=0.0, metavar="MM",
+                   help="plan an air run: the drawing surface this far above the paper")
     local(s)
     s = sub.add_parser("check", help="check every motion of a job's queues again")
     s.add_argument("job")

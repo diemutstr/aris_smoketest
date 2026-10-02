@@ -206,6 +206,30 @@ def test_leftovers_are_a_report_not_a_failure():
     assert not cli.job_passed(dict(done, state="stopped", passed=False))
 
 
+@pytest.mark.slow
+def test_an_air_run_flies_every_draw_30_mm_up(tmp_path, capsys):
+    from aris.execute import Job
+    from aris.rig import Rig
+    out = tmp_path / "air"
+    assert cli.main(["plan", str(SMALL), "--out", str(out), "--air", "30"] + QUICK) == 0
+    text = capsys.readouterr().out
+    assert "AIR RUN" in text and text.strip().splitlines()[-1].startswith("PASS")
+    rig = Rig.load(CONFIG)
+    job = Job(out)
+    assert job.header()["air_mm"] == 30.0
+    rep = json.loads((out / "report.json").read_text())
+    assert rep["air_mm"] == 30.0 and rep["drawn_m"] == pytest.approx(rep["length_m"])
+    draws = 0
+    for phase, _ in job.phases():
+        for a in phase.active:
+            for e in job.queue(phase.name, a).read():
+                if e.motion.kind == "draw":
+                    z = rig.to_table(a, e.motion.tip_base)[:, 2] - rig.paper_z
+                    assert np.all(np.abs(z - 0.030) < 1e-4), (a, z.min(), z.max())
+                    draws += 1
+    assert draws == 2
+
+
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_plan_and_check_commands(tmp_path, capsys):
     out = tmp_path / "plan"

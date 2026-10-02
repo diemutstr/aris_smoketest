@@ -15,7 +15,7 @@ from __future__ import annotations
 import queue as queue_mod
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from aris.server.verify import CheckVerify
@@ -39,10 +39,24 @@ class Outcome:
 # --------------------------------------------------------------------------- the stream
 
 
-def _pump(st, lines, arm_configs, rep, stop, box, verify) -> None:
+def job_rules(st, rec):
+    """The drawing rules of this job: rig.json's, with the drawing surface raised `air_mm`
+    above the paper for an air run (a negative press: every draw flown that high, no contact)."""
+    air = float(getattr(rec, "air_mm", 0.0) or 0.0)
+    return st.rules if air <= 0.0 else replace(st.rules, press=-air * 1e-3)
+
+
+def surface_z(st, rec) -> float | None:
+    """The drawing surface's table height the checker holds the pen to on an air run; None:
+    the checker's own (the paper less the pen's press)."""
+    air = float(getattr(rec, "air_mm", 0.0) or 0.0)
+    return None if air <= 0.0 else st.rig.paper_z + air * 1e-3
+
+
+def _pump(st, lines, arm_configs, rep, stop, box, verify, rules) -> None:
     """The planner, in its own thread: every item goes into `box`, then ("end", value)."""
     try:
-        gen = system_plan(st.rig, lines, st.rules, arm_configs, st.cache_dir, st.workers,
+        gen = system_plan(st.rig, lines, rules, arm_configs, st.cache_dir, st.workers,
                           st.settings, rep, verify)
         while True:
             if stop.is_set():
@@ -76,8 +90,9 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
     box: queue_mod.Queue = queue_mod.Queue()
     stop = threading.Event()
     t0 = time.perf_counter()
-    verify = CheckVerify(Path(st.config_dir), job.dir / "refused")
-    pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box, verify),
+    verify = CheckVerify(Path(st.config_dir), job.dir / "refused", surface_z(st, rec))
+    pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box, verify,
+                                                job_rules(st, rec)),
                             daemon=True, name=f"planner {rec.id}")
     pump.start()
     phase, queues = None, {}

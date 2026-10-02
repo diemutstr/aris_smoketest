@@ -89,6 +89,7 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
     left = list(out.leftovers) + [Leftover(p, rest, "queued, not run") for p in not_run]
     acc = account(rec.lines, ran, left, rest, st.rules.min_piece)
     rep = dict(state=state, why=why, kind="draw", name=rec.name, note=rec.note,
+               air_mm=rec.air_mm,
                rest_of=rec.rest_of, pen=st.pen().get("name"), tracking=st.tracking,
                drawing=dict(lines=len(rec.lines), scale=rec.fit.scale if rec.fit else 1.0,
                             bbox_in=rec.fit.bbox_in if rec.fit else None,

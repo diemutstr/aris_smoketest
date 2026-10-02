@@ -87,16 +87,16 @@ def create_app(st) -> FastAPI:
 
     @app.post("/jobs")
     async def submit(request: Request, name: str = "drawing.json", note: str = "",
-                     rest_of: str = ""):
+                     rest_of: str = "", air_mm: float = 0.0):
         if rest_of:                      # the leftovers of a finished job, as a new drawing
-            rec = runner.submit_rest(st, store, rest_of, note)
+            rec = runner.submit_rest(st, store, rest_of, note, air_mm)
             if isinstance(rec, Refusal):
                 return _refused(409, rec)
             return plain(dict(id=rec.id, state=rec.state, why=rec.why))
         lines = drawing.parse(await request.body())
         if isinstance(lines, Refusal):
             return _refused(400, lines)
-        rec = runner.submit_draw(st, store, lines, name, note)
+        rec = runner.submit_draw(st, store, lines, name, note, air_mm=air_mm)
         if isinstance(rec, Refusal):
             return _refused(409, rec)
         return plain(dict(id=rec.id, state=rec.state, why=rec.why))

@@ -14,6 +14,31 @@ import numpy as np
 
 
 @dataclass(frozen=True)
+class Tolerances:
+    """The checker's own numerical allowances (rig.json `checker`; these defaults when the block
+    is missing).  None of them relaxes a limit of the rig; each says how finely it is judged."""
+    step: float = 1e-3            # m, most any capsule point moves between two clearance samples
+    tol: float = 2.5e-4           # m, how far under the true minimum a reported clearance may lie
+    rate_tol: float = 0.05        # 1 kHz vs 4 kHz readings may differ this much: catches corners
+    tip_height_tol: float = 5e-4  # m, tip off the drawing surface (draw; lower/lift/touch ends)
+    line_tol: float = 2e-4        # m, tip off the planned line while drawing
+    back_tol: float = 1e-5        # m, numerical allowance on "the pen never goes backwards"
+    speed_tol: float = 0.03       # tip may run this share over the pen's speed (timing overshoot)
+    stop_speed: float = 2.5e-4    # m/s, slower than this mid-line along the line is a stop
+
+
+_TOL_KEYS = dict(step="step_m", tol="clearance_tol_m", rate_tol="rate_tol",
+                 tip_height_tol="tip_height_tol_m", line_tol="line_tol_m",
+                 back_tol="back_tol_m", speed_tol="speed_tol",
+                 stop_speed="stop_speed_m_per_s")
+
+
+def _tolerances(cfg) -> Tolerances:
+    block = cfg.get("checker", {})
+    return Tolerances(**{f: float(block[k]) for f, k in _TOL_KEYS.items() if k in block})
+
+
+@dataclass(frozen=True)
 class SlotMount:
     slot: str
     T_table_base: np.ndarray       # (4,4), the calibrated pose when the base part passed
@@ -42,6 +67,7 @@ class RigData:
     notes: tuple = ()              # anything the verdict should say about how rig.json was read
     fences: tuple = ()             # (name, point, unit normal), table frame: planes every arm
                                    # stays on the normal's side of, in every phase (rig.json)
+    tolerances: Tolerances = Tolerances()   # rig.json `checker`
 
     @property
     def surface_z(self) -> float:
@@ -103,7 +129,7 @@ def read_rig(config_dir) -> RigData:
                    tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
                    float(cfg["table"]["paper_surface_z_m"]), float(speed), press, pen_name,
                    float(pen["tip_length_nominal_m"]), float(pen["capsule_radius_m"]),
-                   tuple(notes), tuple(fences))
+                   tuple(notes), tuple(fences), _tolerances(cfg))
 
 
 def _current_pen(cfg):

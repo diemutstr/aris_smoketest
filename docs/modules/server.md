@@ -97,6 +97,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 |---|---|
 | `aris serve [--host --port --driver sim\|robot --tracking position\|impedance --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
 | `aris draw <drawing> [--note ...] [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
+| `aris draw <drawing> --air 30` | an air run, the validation every first drawing on the hardware starts with: the whole job planned and checked with the drawing surface 30 mm above the paper (the planner gets a press of −30 mm, the checker `surface_z` = paper + 30 mm), so every draw is flown in the air; the header says `air_mm`, the report starts with AIR RUN; `aris plan --air` too. |
 | `aris draw --rest-of <job id>` | draw what that stopped or finished job left over: its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
 | `aris calibrate <slot>` | touch the paper on a grid with that slot's arm: the `base` part of its calibration file |

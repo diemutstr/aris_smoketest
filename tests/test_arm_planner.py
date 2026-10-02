@@ -302,3 +302,33 @@ def test_lines_on_the_drawing_surface_below_the_paper():
     if refused and all("tip on paper" in x.detail for x in refused):
         pytest.skip("the checker does not know the press yet: " + refused[0].detail)
     assert not refused and len(vms) == len(ms)
+
+
+def test_an_air_run_draws_every_piece_with_lifts_above_the_surface():
+    """An air run: the drawing surface 30 mm ABOVE the paper (press -0.030).  Every piece is
+    drawn, and each lift-off ends the pen clearance + 2 mm above the surface."""
+    from dataclasses import replace
+    from aris.sequencer import TourOptions
+    from aris.sequencer.lift import lift_height
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    rules = replace(rules, press=-0.030)
+    x, y = RIG.T_table_base("2L")[:2, 3]
+    z = RIG.paper_z + 0.030
+    lines = [RIG.to_base("2L", Line(i, np.array(p), "table")) for i, p in (
+        ("a", [[x - 0.15, y - 0.25, z], [x, y - 0.25, z]]),
+        ("b", [[x + 0.10, y + 0.25, z], [x + 0.10, y + 0.40, z]]))]
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    n = np.asarray(paper.normal) / np.linalg.norm(paper.normal)
+    above = lambda q: arm.tip(np.atleast_2d(q)) @ n - paper.offset
+    q0 = RIG.park_q("2L")
+    ms, left = plan_all(arm, lines, obs, q0, rules)
+    assert not left and {m.piece.line_id for m in ms if m.kind == "draw"} == {"a", "b"}
+    top = lift_height(paper, TourOptions().lift_extra)
+    for m in ms:
+        if m.kind == "draw":
+            assert np.allclose(above(m.traj.q), 0.030, atol=2e-4)
+        if m.kind == "lift":
+            assert abs(above(m.q_end)[0] - (0.030 + top)) < 1e-6
+        if m.kind == "lower":
+            assert abs(above(m.q_end)[0] - 0.030) < 1e-6
+    assert_tour(arm, obs, rules, ms, q0, q0)

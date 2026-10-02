@@ -5,11 +5,30 @@ motion exactly as the arm will fly it and says pass or fail, with every number i
 shares no code with the planners, so the two can only agree by both being right. In the old code
 every serious bug was found because an independent check disagreed with the planner.
 
-**In.** `check(config_dir, slot, motion, phase, q_before=None, standing={})`: the rig's `config/`
-folder, which arm by its slot on the frame (`"2R"`; the old robot ids mean nothing here), one
-`Motion` (draw, free, lower, lift or touch), the `Phase` it runs in (who moves, who stands parked, which
-walls, all by slot), and where the arm is before it starts. Optional keywords set the tolerances
-in the table below.
+**In.** `check(config_dir, slot, motion, phase, q_before=None, standing=None, surface_z=None)`: the rig's
+`config/` folder, which arm by its slot on the frame (`"2R"`; the old robot ids mean nothing
+here), one `Motion` (draw, free, lower, lift or touch), the `Phase` it runs in (who moves, who
+stands parked, which walls, all by slot), where the arm is before it starts, and the arms that
+stand still away from their park (`{slot: 7 joints}`). `surface_z` (table frame, metres)
+replaces the drawing surface (paper less the pen's press) as the height every drawing tip, lower
+end and lift start must sit on: the air run (`aris draw --air 30`) flies the whole plan 30 mm
+above the paper and passes paper + 0.030. The pen-depth floor moves with it; links, tool, lifted
+pen and touches still answer to the real paper.
+
+The checker's own numerical allowances (how finely it judges, never a relaxed limit) are the
+`checker` block of rig.json, read into a `Tolerances`; its defaults apply when the block is
+missing. Tests may pass `tolerances=Tolerances(...)` instead, the one keyword beyond the contract.
+
+| rig.json `checker` | value | what it catches |
+|---|---|---|
+| `step_m` | 0.001 | most any capsule point moves between two clearance samples: a contact between samples |
+| `clearance_tol_m` | 0.00025 | how far under the truth a reported clearance may lie |
+| `rate_tol` | 0.05 | 1 kHz vs 4 kHz readings: a corner in the trajectory |
+| `tip_height_tol_m` | 0.0005 | tip off the drawing surface (or the paper end of a lower, lift, touch): a pen that floats or digs |
+| `line_tol_m` | 0.0002 | tip off the planned line |
+| `back_tol_m` | 0.00001 | numerical allowance on "never backwards" |
+| `speed_tol` | 0.03 | tip faster than the pen's speed by more than this share |
+| `stop_speed_m_per_s` | 0.00025 | slower than this mid-line is a stop |
 
 **Out.** A `Verdict`: `passed`, the list of measurements (name, value, limit, pass or fail, and
 where it happened), `tightest` (the measurement that uses most of its allowance, or the worst
@@ -169,6 +188,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | drawing 1.5 % over its timing / 4 % over | tip speed 20.33 mm/s passes / 20.83 fails (limit 20.6) |
 | lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
 | a touch down to the paper and back, press 3.5 mm / the same touch planned to the drawing surface | passes / fails `tip on paper` (3.5 mm) and pen depth |
+| air run: a line drawn 30 mm above the paper and the lower onto it, with `surface_z` = paper + 30 mm / without | pass (tip 0.03 mm and 0.00 mm off) / fail their tip rows (33.5 mm) |
 | a drawn line on the drawing surface (3.5 mm below the paper), checked with the press of 3.5 mm and with a press of 0 | passes (tip 0.01 mm from the surface) / fails `tip on paper` (3.51 mm); the tool and link clearances are the same in both |
 | the two calibration parts on slot 2R: base only, pen part for another pen, pen part only (base failed), both | each part applied exactly when it should; the notes name what stayed nominal and why; capsule ends against the planners' rig on the same files 5e-16 m |
 | hanger of a calibrated slot (base moved 8 mm, -6 mm) | its struts, plate and clamp move by the same x and y, as in the planners' rig; nobody else's steel moves; link 1 to its own strut 61.9 to 60.4 mm |

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from aris.check import check, check_phase_end
+from aris.check import Tolerances, check, check_phase_end
 from aris.check import geometry as cgeo
 from aris.check.config import read_rig
 from aris.check.model import capsules, frames, load_model
@@ -681,6 +681,24 @@ def test_drawing_speed_allowance(good_draw):
         assert v.get("tip speed").passed == ok
 
 
+def test_tolerances_from_rig_json(good_draw, tmp_path):
+    """The checker's allowances come from rig.json `checker` (the dataclass defaults when the
+    block is missing); `tolerances=` replaces them, for tests.  A drawing 1.5 % over its speed
+    passes at the 3 % allowance and fails at 1 %, set either way."""
+    assert read_rig(CONFIG).tolerances == Tolerances()
+    assert read_rig(_config_copy(tmp_path / "a", lambda cfg, pen: cfg.pop("checker"))
+                    ).tolerances == Tolerances()
+    tr = good_draw.traj
+    fast = Motion("draw", Trajectory(tr.t / 1.015, tr.q, tr.qd * 1.015), good_draw.piece,
+                  good_draw.tip_base)
+    q0 = good_draw.q_start
+    assert check(CONFIG, "2L", fast, phase_of("2L"), q0).get("tip speed").passed
+    tight = Tolerances(speed_tol=0.01)
+    _fails(check(CONFIG, "2L", fast, phase_of("2L"), q0, tolerances=tight), "tip speed")
+    cfg = _config_copy(tmp_path / "b", lambda c, pen: c["checker"].update(speed_tol=0.01))
+    _fails(check(cfg, "2L", fast, phase_of("2L"), q0), "tip speed")
+
+
 def _down(depth, n=60):
     """Tip straight down from 10 mm above the paper to `depth` (negative: into it)."""
     z = np.linspace(0.010, depth, n)
@@ -742,6 +760,29 @@ def test_touch_probes_the_real_paper():
     assert abs(w.get("tip on paper").value - PRESS) < 1e-6
     flat = Motion("touch", Trajectory(good.traj.t[:2], good.traj.q[:2], good.traj.qd[:2]))
     _fails(check(CONFIG, "2L", flat, ph), "well formed")
+
+
+@pytest.mark.slow  # IK for a line and a descent, about 5 s
+def test_air_run_surface_z():
+    """The air run flies the plan 30 mm above the paper: with `surface_z` = paper + 30 mm a line
+    drawn there and the lower onto it pass; without it they fail their tip rows."""
+    ph, air = phase_of("2L"), MINE.paper_z + 0.030
+    draw = draw_motion("2L", line_table((-0.62, 0.05), (-0.50, 0.30), z=0.030))
+    n = 40
+    Q, _ = ik_path("2L", np.column_stack([np.full(n, -0.62), np.full(n, 0.05),
+                                          np.linspace(0.045, 0.030, n)]))
+    lower = free_motion("2L", Q)
+    lower = Motion("lower", lower.traj)
+    for m in (draw, lower):
+        row = "tip on paper" if m.kind == "draw" else "tip on surface (lower, lift)"
+        up = check(CONFIG, "2L", m, ph, m.q_start, surface_z=air)
+        print(f"\n{m.kind} at {air * 1e3:.0f} mm: {up.get(row).value * 1e3:.3f} mm "
+              f"({up.get(row).detail})")
+        assert up.passed, up.failed
+        plain = check(CONFIG, "2L", m, ph, m.q_start)
+        _fails(plain, row)
+        assert abs(plain.get(row).value - 0.0335) < 5e-4
+    _fails(check(CONFIG, "2L", draw, ph, draw.q_start, surface_z=float("nan")), "well formed")
 
 
 def test_press_is_where_the_tip_draws(good_draw, tmp_path):

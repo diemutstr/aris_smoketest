@@ -199,5 +199,25 @@
     "source": "what the executor checks before it runs a motion (orchestrator, 2026-09-30)",
     "start_tolerance_rad": 0.005,
     "start_tolerance_note": "per joint: what a joint trajectory controller accepts before it starts; the executor refuses a motion whose start is further than this from the measured configuration in any joint"
+  },
+
+  "checker": {
+    "source": "the independent checker's own numerical allowances (aris/check/config.py Tolerances; read by aris/check only). None relaxes a limit of the rig; each says how finely it is judged. Orchestrator, 2026-10-02, from the values the checker used as defaults.",
+    "step_m": 0.001,
+    "step_note": "the most any capsule point moves between two clearance samples; with the bound between samples, a contact anywhere along the motion is found",
+    "clearance_tol_m": 0.00025,
+    "clearance_tol_note": "how far under the true minimum a reported clearance may lie; intervals that could hide more are halved and measured again",
+    "rate_tol": 0.05,
+    "rate_tol_note": "the 1 kHz and 4 kHz readings of velocity, acceleration and jerk may differ this much; more means a corner in the trajectory the driver would feel",
+    "tip_height_tol_m": 0.0005,
+    "tip_height_tol_note": "the tip off the drawing surface while drawing, and at the paper end of a lower, lift or touch: catches a pen that floats or digs",
+    "line_tol_m": 0.0002,
+    "line_tol_note": "the tip off the planned line while drawing: catches a drawing that leaves its line",
+    "back_tol_m": 0.00001,
+    "back_tol_note": "numerical allowance on 'the pen never goes backwards along its line'",
+    "speed_tol": 0.03,
+    "speed_tol_note": "the tip may run this share over the pen's speed on the paper (the timing overshoots by up to 2.9 % where it speeds up or slows down): catches a drawing timed too fast",
+    "stop_speed_m_per_s": 0.00025,
+    "stop_speed_note": "slower than this along the line mid-way is a stop: catches a pen that halts on the paper. Absolute, not a share of the drawing speed: a sharp corner slows the pen to about 1 mm/s at any speed, a real stop reads 1e-7 m/s"
   }
 }
