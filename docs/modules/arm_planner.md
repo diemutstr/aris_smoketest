@@ -65,12 +65,12 @@ call. Planning CPU counts the workers.
 
 | arm, case | first motion, all at once / batches | planning CPU | planning wall | pen-up share | pen-up time | time on the rig |
 |---|---|---|---|---|---|---|
-| 13 word | 1.08 / 0.96 s | 6.7 / 6.2 s | 2.0 / 1.9 s | 0.262 / 0.262 | same | same |
-| 13 100 lines | 5.41 / 3.12 s | 44.6 / 50.6 s | 12.6 / 11.9 s | 0.091 / 0.092 | +1.5 % | +0.1 % |
-| 13 1 000 lines | 19.44 / 1.60 s | 184.6 / 221.2 s | 67.1 / 62.6 s | 0.141 / 0.163 | +18.8 % | +2.8 % |
-| 31 word | 1.17 / 1.05 s | 7.2 / 6.5 s | 2.0 / 1.9 s | 0.277 / 0.277 | same | same |
-| 31 100 lines | 5.87 / 3.23 s | 50.4 / 54.2 s | 14.2 / 13.2 s | 0.092 / 0.098 | +6.7 % | +0.7 % |
-| 31 1 000 lines | 21.41 / 1.20 s | 203.5 / 225.3 s | 73.7 / 62.9 s | 0.146 / 0.165 | +15.9 % | +2.2 % |
+| 1L word | 1.08 / 0.96 s | 6.7 / 6.2 s | 2.0 / 1.9 s | 0.262 / 0.262 | same | same |
+| 1L 100 lines | 5.41 / 3.12 s | 44.6 / 50.6 s | 12.6 / 11.9 s | 0.091 / 0.092 | +1.5 % | +0.1 % |
+| 1L 1 000 lines | 19.44 / 1.60 s | 184.6 / 221.2 s | 67.1 / 62.6 s | 0.141 / 0.163 | +18.8 % | +2.8 % |
+| 2L word | 1.17 / 1.05 s | 7.2 / 6.5 s | 2.0 / 1.9 s | 0.277 / 0.277 | same | same |
+| 2L 100 lines | 5.87 / 3.23 s | 50.4 / 54.2 s | 14.2 / 13.2 s | 0.092 / 0.098 | +6.7 % | +0.7 % |
+| 2L 1 000 lines | 21.41 / 1.20 s | 203.5 / 225.3 s | 73.7 / 62.9 s | 0.146 / 0.165 | +15.9 % | +2.2 % |
 
 - The first motion no longer grows with the drawing: 1.0 to 3.2 s for any size here (with the
   kinematic table already on disk; building it the first time adds about 5 s).
@@ -78,11 +78,11 @@ call. Planning CPU counts the workers.
   sent every time) was 8 to 20 % higher. The pool is now `local.LinePool`: the arm, obstacles,
   rules, gates, settings and kinematic table go to each worker once, when it starts, and a job
   is only the line; it gives the same bunches as `local.plan` (digest test). What is left:
-  1 000 lines, arm 13, load 12 to 13: 234.7 s all at once, 256.3 s in batches; of that, the
+  1 000 lines, arm 1L, load 12 to 13: 234.7 s all at once, 256.3 s in batches; of that, the
   tour 53.7 against 67.4 s (its free-space moves are longer: 1 090 against 841 s of moves) and
   the local planner 181 against 189 s. Between runs of the same case the CPU moves by up to
   25 % with the machine's load.
-- Pen-up time: more than 5 % over all-at-once on arm 31's 100 lines (+6.7 %) and on both 1 000
+- Pen-up time: more than 5 % over all-at-once on arm 2L's 100 lines (+6.7 %) and on both 1 000
   line sets (+16 to 19 %); the drawing time is the same, so the time on the rig grows 0.7 to
   2.8 %.
 
@@ -93,10 +93,10 @@ Pen-up time and time on the rig against all at once; first motion wall time.
 
 | arm, case | all at once: first motion | refill 32 | refill 64 | refill 128 |
 |---|---|---|---|---|
-| 13 100 lines | 5.5 s | 2.8 s; pen up +1.5 %, rig +0.1 % | 4.7 s; +0.6 %, 0.0 % | 5.0 s; +0.1 %, 0.0 % |
-| 13 1 000 lines | 19.5 s | 1.8 s; +18.8 %, +2.8 % | 3.0 s; +12.2 %, +1.7 % | 4.2 s; +5.5 %, +0.8 % |
-| 31 100 lines | 7.1 s | 4.1 s; +6.7 %, +0.7 % | 5.0 s; -0.5 %, +0.5 % | 6.6 s; 0.0 %, 0.0 % |
-| 31 1 000 lines | 24.1 s | 1.0 s; +15.9 %, +2.2 % | 2.1 s; +20.2 %, +2.9 % | 3.9 s; +4.9 %, +0.5 % |
+| 1L 100 lines | 5.5 s | 2.8 s; pen up +1.5 %, rig +0.1 % | 4.7 s; +0.6 %, 0.0 % | 5.0 s; +0.1 %, 0.0 % |
+| 1L 1 000 lines | 19.5 s | 1.8 s; +18.8 %, +2.8 % | 3.0 s; +12.2 %, +1.7 % | 4.2 s; +5.5 %, +0.8 % |
+| 2L 100 lines | 7.1 s | 4.1 s; +6.7 %, +0.7 % | 5.0 s; -0.5 %, +0.5 % | 6.6 s; 0.0 %, 0.0 % |
+| 2L 1 000 lines | 24.1 s | 1.0 s; +15.9 %, +2.2 % | 2.1 s; +20.2 %, +2.9 % | 3.9 s; +4.9 %, +0.5 % |
 
 Refill 128 keeps the first motion under 5 s on 1 000 lines and the pen-up cost at 5.5 % or less
 (under 1 % of the time on the rig). It is the default (chosen by the orchestrator 2026-09-30:
@@ -110,12 +110,12 @@ park, kinematic table on (full table of cases in sequencer.md):
 
 | arm, case | lines | planning CPU / wall s | first motion, wall s | motion on the rig s | pen-up share |
 |---|---|---|---|---|---|
-| 31 word | 13 | 7.6 / 2.2 | 1.3 | 196.6 | 0.371 |
-| 31 scatter | 27 | 12.8 / 3.5 | 1.6 | 263.3 | 0.438 |
-| 31 lines | 100 | 58.6 / 14.6 | 6.6 | 2626.7 | 0.162 |
-| 13 word | 13 | 6.7 / 2.0 | 1.1 | 185.4 | 0.339 |
-| 13 hatch | 43 | 26.7 / 6.9 | 3.2 | 1670.6 | 0.092 |
-| 13 lines | 100 | 46.0 / 12.2 | 5.1 | 2627.7 | 0.163 |
+| 2L word | 13 | 7.6 / 2.2 | 1.3 | 196.6 | 0.371 |
+| 2L scatter | 27 | 12.8 / 3.5 | 1.6 | 263.3 | 0.438 |
+| 2L lines | 100 | 58.6 / 14.6 | 6.6 | 2626.7 | 0.162 |
+| 1L word | 13 | 6.7 / 2.0 | 1.1 | 185.4 | 0.339 |
+| 1L hatch | 43 | 26.7 / 6.9 | 3.2 | 1670.6 | 0.092 |
+| 1L lines | 100 | 46.0 / 12.2 | 5.1 | 2627.7 | 0.163 |
 
 - Planning wall time is under 1 % of the motion's duration; the arm never waits for the planner
   after the first motion.
@@ -123,12 +123,12 @@ park, kinematic table on (full table of cases in sequencer.md):
   pen-up time about the same, every motion passes the checker. Motion times include the finer
   flown check (2026-09-30) and the set-down at the 10 mm/s landing speed (2026-10-01, about +2 s
   per piece); planning times are from the run before them.
-- **Word, arm 31, against the old planner:** planned in 2.2 s wall (7.6 s of CPU over 8
+- **Word, arm 2L, against the old planner:** planned in 2.2 s wall (7.6 s of CPU over 8
   workers; 2.6 s in one process) against 66.8 s; first motion after 1.3 s. At 20 mm/s the motion
   takes 196.6 s (170.8 s before the 10 mm/s landing); the old planner drew at 80 mm/s and took 67.8 s. 13 pen lifts; 0.173 m of the
   last "n" lies beyond the arm's reach.
 
-Tests: `tests/test_arm_planner.py`. Quick: two lines for arm 31 end to end (every motion joined,
+Tests: `tests/test_arm_planner.py`. Quick: two lines for arm 2L end to end (every motion joined,
 timed, holdable; the same bits from a fresh process); the first motion is handed out while the
 second piece is still unplanned. Slow: the word for both arms with every motion through the
 independent checker (all must pass: 53 motions each); ceilings from the numbers above. `tests/arm_cases.py` plans and

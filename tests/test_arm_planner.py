@@ -1,7 +1,7 @@
 """Tests of the arm planner (aris/arm_planner.py) with the sequencer inside it.
 
 Quick set: `../.venv/bin/python -m pytest tests/test_arm_planner.py -m "not slow" -q`.
-Slow set: the word "unknown" for arms 31 and 13, every motion through the independent checker,
+Slow set: the word "unknown" for arms 2L and 1L, every motion through the independent checker,
 with the numbers measured on 2026-09-30 as floors and ceilings (see docs/modules/sequencer.md).
 Run with -s to see the numbers.
 """
@@ -30,7 +30,7 @@ DEPLOY = Path(__file__).resolve().parents[1]
 RIG = Rig.load(ac.CONFIG)
 
 
-def two_lines(arm_id: int = 31) -> list[Line]:
+def two_lines(arm_id: str = "2L") -> list[Line]:
     """Two short lines under the arm, table frame -> base frame."""
     x, y = RIG.T_table_base(arm_id)[:2, 3]
     lines = [Line("a", np.array([[x - 0.15, y - 0.25, 0.0], [x, y - 0.25, 0.0]]), "table"),
@@ -67,16 +67,16 @@ def _digest(motions, leftovers) -> str:
 
 
 def _fresh() -> str:
-    arm, obs, rules, _ = lc.problem(RIG, 31)
-    return _digest(*plan_all(arm, two_lines(), obs, RIG.park_q(31), rules))
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    return _digest(*plan_all(arm, two_lines(), obs, RIG.park_q("2L"), rules))
 
 
 # --------------------------------------------------------------------------- quick
 
 
 def test_two_lines_end_to_end_and_the_same_in_a_fresh_process(tmp_path):
-    arm, obs, rules, _ = lc.problem(RIG, 31)
-    q0 = RIG.park_q(31)
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    q0 = RIG.park_q("2L")
     motions, leftovers, st = plan_detailed(arm, two_lines(), obs, q0, rules)
     assert leftovers == []
     kinds = [m.kind for m in motions]
@@ -98,9 +98,9 @@ def test_two_lines_end_to_end_and_the_same_in_a_fresh_process(tmp_path):
 
 
 def test_the_first_motion_comes_before_the_tour_is_decided():
-    arm, obs, rules, _ = lc.problem(RIG, 31)
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
     st = PlanStats()
-    gen = plan(arm, two_lines(), obs, RIG.park_q(31), rules, stats=st)
+    gen = plan(arm, two_lines(), obs, RIG.park_q("2L"), rules, stats=st)
     first = next(gen)
     assert first.kind == "free"
     # One piece is planned (move, set-down, drawing, lift-off); the other one not yet.
@@ -114,9 +114,9 @@ def test_the_first_motion_comes_before_the_tour_is_decided():
 # Measured 2026-09-30 on branch aris3 with the two lift rules (turns allowed) and a 20 mm pen clearance
 # (docs/modules/sequencer.md): every motion of the word passes the checker.
 # Pen-up share ceilings raised 2026-10-01 for the set-down at the landing speed (10 mm/s, about
-# 2.3 s per piece instead of 0.3): measured 0.371 (arm 31) and 0.339 (arm 13).
-WORD = {31: dict(checked=53, motions=53, share=0.42, cpu=2.4),
-        13: dict(checked=53, motions=53, share=0.40, cpu=4.3)}
+# 2.3 s per piece instead of 0.3): measured 0.371 (arm 2L) and 0.339 (arm 1L).
+WORD = {"2L": dict(checked=53, motions=53, share=0.42, cpu=2.4),
+        "1L": dict(checked=53, motions=53, share=0.40, cpu=4.3)}
 
 
 @pytest.mark.slow
@@ -158,13 +158,13 @@ def test_word_with_the_checker_in_the_loop(arm_id, tmp_path_factory):
     assert len(ms) == len(ms0) and st.tour.verified == len(ms)
     for a, b in zip(ms0, ms):
         assert np.array_equal(a.traj.q, b.traj.q)
-    assert cpu <= 10 * 8.0                  # measured 7.9 s (arm 13, load 21)
+    assert cpu <= 10 * 8.0                  # measured 7.9 s (arm 1L, load 21)
 
 
 # --------------------------------------------------------------------------- batches
 
 
-def _lines_near(arm_id: int, n: int, seed: int = 5):
+def _lines_near(arm_id: str, n: int, seed: int = 5):
     """n short random lines within the arm's reach, base frame (deterministic)."""
     axis = RIG.T_table_base(arm_id)[:2, 3]
     rng = np.random.default_rng(seed)
@@ -181,10 +181,10 @@ def _lines_near(arm_id: int, n: int, seed: int = 5):
 
 def test_nearest_first_orders_by_distance_from_the_pen():
     from aris.arm_planner import nearest_first
-    arm = RIG.arm(31)
-    lines = _lines_near(31, 12)
-    order = nearest_first(arm, lines, RIG.park_q(31))
-    tip = arm.tip(RIG.park_q(31)[None])[0]
+    arm = RIG.arm("2L")
+    lines = _lines_near("2L", 12)
+    order = nearest_first(arm, lines, RIG.park_q("2L"))
+    tip = arm.tip(RIG.park_q("2L")[None])[0]
     d = [np.min(np.linalg.norm(np.linspace(x.points[0], x.points[1], 200) - tip, axis=1))
          for x in (lines[i] for i in order)]
     assert sorted(order) == list(range(12)) and np.all(np.diff(d) >= -1e-4)
@@ -203,9 +203,9 @@ def _slowed(monkeypatch, pause):
 
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_batches_give_the_same_tour_with_1_or_8_workers_and_a_slow_feeder(monkeypatch):
-    arm, obs, rules, _ = lc.problem(RIG, 31)
-    lines = _lines_near(31, 14)
-    q0 = RIG.park_q(31)
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    lines = _lines_near("2L", 14)
+    q0 = RIG.park_q("2L")
     kw = dict(batch=4)
     one = _digest(*plan_all(arm, lines, obs, q0, rules, workers=1, **kw))
     many = _digest(*plan_all(arm, lines, obs, q0, rules, workers=8, **kw))
@@ -221,17 +221,17 @@ def test_batches_give_the_same_tour_with_1_or_8_workers_and_a_slow_feeder(monkey
 
 @pytest.mark.slow
 def test_first_motion_of_1000_lines_comes_within_seconds(tmp_path_factory):
-    """1 000 lines of tests/big_cases.big() within arm 13's reach, 8 workers, batches of 32.
+    """1 000 lines of tests/big_cases.big() within arm 1L's reach, 8 workers, batches of 32.
     Measured 2026-09-30 at load 8: first motion after 1.6 s (all at once: 19.4 s), 3 881
     motions, pen-up share 0.163 (all at once 0.141)."""
     cache = tmp_path_factory.getbasetemp() / "kinematic_table"
-    lines = ac.big_lines(RIG, 13, 1000)
-    ms, left, st, load = ac.plan_case(RIG, 13, lines, cache, 8)
-    print(f"\n1 000 lines, arm 13, load {load:.0f}: first motion after {st.first_wall:.2f} s, "
+    lines = ac.big_lines(RIG, "1L", 1000)
+    ms, left, st, load = ac.plan_case(RIG, "1L", lines, cache, 8)
+    print(f"\n1 000 lines, arm 1L, load {load:.0f}: first motion after {st.first_wall:.2f} s, "
           f"planning wall {st.wall:.1f} s, CPU {st.cpu:.1f} s, pen-up share "
           f"{st.tour.penup_share:.3f}, {st.batches} batches")
-    arm, obs, rules, _ = lc.problem(RIG, 13)
-    assert_tour(arm, obs, rules, ms, RIG.park_q(13), RIG.park_q(13))
+    arm, obs, rules, _ = lc.problem(RIG, "1L")
+    assert_tour(arm, obs, rules, ms, RIG.park_q("1L"), RIG.park_q("1L"))
     assert st.batches == 32 and st.first_wall < 15.0         # 5 s wanted at load under 20
     # raised from 0.20 on 2026-10-01: set-down at the landing speed, measured 0.290
     assert st.tour.penup_share <= 0.33
@@ -242,8 +242,8 @@ def test_first_motion_of_1000_lines_comes_within_seconds(tmp_path_factory):
 def test_the_line_pool_gives_the_same_bunches_as_the_local_planner():
     from aris import local
     from test_local import _digest as local_digest
-    arm, obs, rules, _ = lc.problem(RIG, 31)
-    lines = _lines_near(31, 6)
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    lines = _lines_near("2L", 6)
     want = local_digest(local.plan(arm, lines, obs, rules))
     pool = local.LinePool(arm, obs, rules, workers=3)
     try:
@@ -254,3 +254,50 @@ def test_the_line_pool_gives_the_same_bunches_as_the_local_planner():
     one_by_one = ([b for r in got for b in r[0]], [x for r in got for x in r[1]])
     assert local_digest(one_by_one) == want
     assert local_digest(together[:2]) == want
+
+
+# --------------------------------------------------------------------------- the drawing surface
+
+
+def test_lines_on_the_drawing_surface_below_the_paper():
+    """The system planner hands lines at z = paper - press (the drawing surface).  The pen
+    draws on that surface, each lift-off ends the pen clearance + 2 mm above the REAL paper
+    (so it rises the press further), and each set-down lands on the surface."""
+    from aris.sequencer import TourOptions
+    from aris.sequencer.lift import lift_height
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    assert rules.press > 0.0
+    x, y = RIG.T_table_base("2L")[:2, 3]
+    z = RIG.paper_z - rules.press
+    lines = [RIG.to_base("2L", Line(i, np.array(p), "table")) for i, p in (
+        ("a", [[x - 0.15, y - 0.25, z], [x, y - 0.25, z]]),
+        ("b", [[x + 0.10, y + 0.25, z], [x + 0.10, y + 0.40, z]]))]
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    n = np.asarray(paper.normal) / np.linalg.norm(paper.normal)
+    above = lambda q: arm.tip(np.atleast_2d(q)) @ n - paper.offset          # over the paper
+    q0 = RIG.park_q("2L")
+    ms, left = plan_all(arm, lines, obs, q0, rules)
+    assert not left and [m.kind for m in ms].count("draw") == 2
+    top = lift_height(paper, TourOptions().lift_extra)
+    for m in ms:
+        if m.kind == "draw":
+            assert np.allclose(above(m.traj.q), -rules.press, atol=2e-4)   # on the surface
+        if m.kind == "lift":
+            assert abs(above(m.q_end)[0] - top) < 1e-6                     # clearance + 2 mm
+            assert abs(above(m.q_start)[0] + rules.press) < 1e-6
+        if m.kind == "lower":
+            assert abs(above(m.q_end)[0] + rules.press) < 1e-6             # lands on the surface
+    assert_tour(arm, obs, rules, ms, q0, q0)
+    # the same through the real checker as `verify`
+    verify = ac.checker_verify("2L")
+    word = verify(ms[0], q0)
+    if not word["passed"] and "cannot read the rig" in word["detail"]:
+        pytest.skip("the checker cannot read this rig.json yet: " + word["detail"])
+    vms, vleft = plan_all(arm, lines, obs, q0, rules, verify=verify)
+    refused = [x for x in vleft if x.reason == "failed_check"]
+    print("\non the drawing surface, through the checker: "
+          f"{len(vms)} motions handed on, {len(refused)} pieces refused"
+          + "".join(f"\n  {x.detail}" for x in refused))
+    if refused and all("tip on paper" in x.detail for x in refused):
+        pytest.skip("the checker does not know the press yet: " + refused[0].detail)
+    assert not refused and len(vms) == len(ms)

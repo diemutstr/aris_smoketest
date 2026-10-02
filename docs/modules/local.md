@@ -125,26 +125,26 @@ path, which is charged against the clearance), is not returned.
 Fixed set (`tests/local_cases.py`), 2026-09-29: the word "unknown" placed under the arm, the
 five old corpus drawings cut to 0.80 m from the arm's axis, 200 random lines and 100 random
 curves inside the reach (0.784 m; lines under the base and along the rim included). Arm 31 in
-phase 2, arm 13 in phase 1, obstacles from `rig.obstacles_for`. CPU seconds on a machine at load
+phase 2, arm 1L in phase 1, obstacles from `rig.obstacles_for`. CPU seconds on a machine at load
 40-70. The old planner is `stroke_api.plan_stroke` (lateral holder, 15 degree tilt), offered the
 rest of a line again after each refusal; it knows no walls and no parked arms.
 
 | arm, set | length | drawn | drawn, only the paper | old planner | whole in one piece (lines / length) | blocked by | CPU s per line, median / p95 | old s per line, median / p95 |
 |---|---|---|---|---|---|---|---|---|
-| 31 word | 2.6 m | 0.929 | 0.929 | 0.679 | 92 % / 92 % | – | 0.43 / 0.81 | 0.3 / 121 |
-| 31 corpus | 33.8 m | 0.889 | 0.982 | 0.733 | 44 % / 26 % | walls 3.08 m, arm 71 0.03 m | 1.61 / 4.86 | 7.1 / 388 |
-| 31 lines | 90.0 m | 0.951 | 1.000 | 0.932 | 74 % / 71 % | walls 4.33 m | 1.25 / 6.13 | 1.4 / 134 |
-| 31 curves | 60.7 m | 0.822 | 1.000 | 0.857 | 68 % / 59 % | walls 10.73 m | 1.77 / 5.39 | 4.6 / 253 |
-| 13 word | 2.6 m | 0.926 | 0.929 | 0.679 | 92 % / 92 % | arm 17 0.01 m | 0.37 / 0.65 | 1.7 / 130 |
-| 13 corpus | 41.1 m | 0.951 | 0.991 | 0.947 | 80 % / 80 % | wall 1.56 m, arm 17 0.01 m | 1.61 / 2.13 | 4.4 / 80 |
-| 13 lines | 82.6 m | 0.955 | 1.000 | 0.929 | 81 % / 75 % | wall 3.70 m | 0.77 / 4.58 | 1.5 / 94 |
-| 13 curves | 51.7 m | 0.877 | 1.000 | 0.848 | 77 % / 70 % | wall 6.34 m | 1.00 / 3.81 | 1.4 / 340 |
+| 2L word | 2.6 m | 0.929 | 0.929 | 0.679 | 92 % / 92 % | – | 0.43 / 0.81 | 0.3 / 121 |
+| 2L corpus | 33.8 m | 0.889 | 0.982 | 0.733 | 44 % / 26 % | walls 3.08 m, arm 2R 0.03 m | 1.61 / 4.86 | 7.1 / 388 |
+| 2L lines | 90.0 m | 0.951 | 1.000 | 0.932 | 74 % / 71 % | walls 4.33 m | 1.25 / 6.13 | 1.4 / 134 |
+| 2L curves | 60.7 m | 0.822 | 1.000 | 0.857 | 68 % / 59 % | walls 10.73 m | 1.77 / 5.39 | 4.6 / 253 |
+| 1L word | 2.6 m | 0.926 | 0.929 | 0.679 | 92 % / 92 % | arm 1R 0.01 m | 0.37 / 0.65 | 1.7 / 130 |
+| 1L corpus | 41.1 m | 0.951 | 0.991 | 0.947 | 80 % / 80 % | wall 1.56 m, arm 1R 0.01 m | 1.61 / 2.13 | 4.4 / 80 |
+| 1L lines | 82.6 m | 0.955 | 1.000 | 0.929 | 81 % / 75 % | wall 3.70 m | 0.77 / 4.58 | 1.5 / 94 |
+| 1L curves | 51.7 m | 0.877 | 1.000 | 0.848 | 77 % / 70 % | wall 6.34 m | 1.00 / 3.81 | 1.4 / 340 |
 
 - With only the paper as obstacle the planner draws everything inside the reach; what is left
   is the band between 0.78 and 0.80 m (corpus) and the last "n" of the word at the rim. It
   draws at least what the old planner draws on every line of every set, and more on 246 of 765.
 - With the real obstacles every line where it draws less than the old planner is a stretch it
-  reports as blocked by a wall (17-31 and 31-97 for arm 31, 13-71 for arm 13) or a parked arm,
+  reports as blocked by a wall (1R-2L and 2L-3R for arm 2L, 1L-2R for arm 1L) or a parked arm,
   which the old planner does not know.
 - The lean is used on 1 to 44 lines per set, up to 15 degrees.
 - Leftovers other than "blocked" (real obstacles): unreachable 0.02 to 0.62 m per set (the rim).
@@ -154,9 +154,9 @@ rest of a line again after each refusal; it knows no walls and no parked arms.
 - Alternatives: 4 plans for 78 % of the 795 pieces, at least 2 for 95 %.
 - **Kinematic table** (`cache_dir`): 181 MB, built in 14 s of CPU once. Share drawn against the
   live solve: 0.9238 / 0.9290 (word; 13 mm at the rim), 0.8874 / 0.8892, 0.9514 / 0.9510,
-  0.8202 / 0.8218 for arm 31; 0.9177 / 0.9255 (word; 20 mm), 0.9491 / 0.9511, 0.9547 / 0.9552,
-  0.8768 / 0.8769 for arm 13. CPU per line, median, table / live: 0.35 / 0.43, 1.10 / 1.61,
-  0.95 / 1.25, 1.38 / 1.77 (arm 31); 0.32 / 0.37, 1.07 / 1.61, 0.50 / 0.77, 0.73 / 1.00 (arm 13).
+  0.8202 / 0.8218 for arm 2L; 0.9177 / 0.9255 (word; 20 mm), 0.9491 / 0.9511, 0.9547 / 0.9552,
+  0.8768 / 0.8769 for arm 1L. CPU per line, median, table / live: 0.35 / 0.43, 1.10 / 1.61,
+  0.95 / 1.25, 1.38 / 1.77 (arm 2L); 0.32 / 0.37, 1.07 / 1.61, 0.50 / 0.77, 0.73 / 1.00 (arm 1L).
   IK poses per line drop from 8 000-26 000 to 450-1 800. What is left of the graph's time is the
   check of every surviving node against the obstacles.
 
@@ -168,9 +168,9 @@ rest of a line again after each refusal; it knows no walls and no parked arms.
   arms, with the same leftovers. But with today's collision kernel (graph time down 1.5 to 4
   times since the numbers above) it is not faster: it checks 4 to 6 times fewer nodes, and needs
   up to 66 searches on lines along a wall. CPU per line, median, with the table, checking every
-  node / lazy: 0.14 / 0.16, 0.39 / 0.57, 0.30 / 0.35, 0.40 / 0.44 (arm 31); 0.14 / 0.12, 0.40 /
-  0.37, 0.22 / 0.22, 0.29 / 0.29 (arm 13). Without the table, checking every node: 0.15, 0.44,
-  0.37, 0.53 (arm 31); 0.13, 0.61, 0.28, 0.39 (arm 13).
+  node / lazy: 0.14 / 0.16, 0.39 / 0.57, 0.30 / 0.35, 0.40 / 0.44 (arm 2L); 0.14 / 0.12, 0.40 /
+  0.37, 0.22 / 0.22, 0.29 / 0.29 (arm 1L). Without the table, checking every node: 0.15, 0.44,
+  0.37, 0.53 (arm 2L); 0.13, 0.61, 0.28, 0.39 (arm 1L).
 
 Tests: `pytest tests/test_local.py -m "not slow"` (under a minute): degenerate lines, the search
 on a toy graph, a simple line, same answer with 1 and 8 workers and from a fresh process. Slow:

@@ -1,13 +1,13 @@
 """The acceptance cases of the arm planner, and the script that measures them.
 
-For arm 31 (phase 2 obstacles) and arm 13 (phase 1), from the park configuration back to it:
+For arm 2L (phase 2 obstacles) and arm 1L (phase 1), from the park configuration back to it:
   word          the word "unknown", placed under the arm as in tests/local_cases.py
   corpus:<name> each of the five old corpus drawings, cut to 0.80 m from the arm's axis
   lines         100 random straight lines (every second one of local_cases.random_lines)
 Every motion goes through the independent checker (`aris.check.check`) with the arm's phase.
 
 Run from the repository root:
-    ../.venv/bin/python tests/arm_cases.py [--arms 31,13] [--cases word,...] [--figure]
+    ../.venv/bin/python tests/arm_cases.py [--arms 2L,1L] [--cases word,...] [--figure]
 It prints the numbers of docs/modules/sequencer.md and arm_planner.md.
 """
 from __future__ import annotations
@@ -30,20 +30,30 @@ DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
 ARMS = lc.ARMS                                    # arm -> the phase in which it leads
 FIGURE = DEPLOY / "docs" / "modules" / "figures" / "arm_word_31.png"
-OLD_WORD_31 = dict(plan_s=66.8, motion_s=67.8)    # the old planner, word, arm 31
+DRAW_SPEED = Rig.load(CONFIG).rules().draw_speed
+OLD_WORD_2L = dict(plan_s=66.8, motion_s=67.8)    # the old planner, word, arm 2L
 
 
-def case_lines(rig: Rig, arm_id: int) -> dict:
-    """{case name: table-frame lines}."""
+def on_surface(rig: Rig, lines) -> list:
+    """The lines on the drawing surface, as the system planner hands them: z = paper - press."""
+    from aris.types import Line
+    z = rig.paper_z - rig.rules().press
+    return [Line(x.id, np.column_stack([np.asarray(x.points, float)[:, :2],
+                                        np.full(len(x.points), z)]), "table", x.intensity)
+            for x in lines]
+
+
+def case_lines(rig: Rig, arm_id: str) -> dict:
+    """{case name: table-frame lines on the drawing surface}."""
     axis = rig.T_table_base(arm_id)[:2, 3]
     out = {"word": lc.word(axis, rig.T_table_base(lc.WORD_ARM)[:2, 3])}
     for line in lc.corpus(axis):
         out.setdefault("corpus:" + line.id.split(":")[1], []).append(line)
-    out["lines"] = lc.random_lines(axis, arm_id)[::2]
-    return out
+    out["lines"] = lc.random_lines(axis, lc.SEED[arm_id])[::2]
+    return {k: on_surface(rig, v) for k, v in out.items()}
 
 
-def plan_case(rig: Rig, arm_id: int, lines_table, cache_dir=None, workers: int = 1,
+def plan_case(rig: Rig, arm_id: str, lines_table, cache_dir=None, workers: int = 1,
               draw_speed=None, **kw):
     """-> (motions, leftovers, stats, machine load at the start)."""
     from dataclasses import replace
@@ -58,15 +68,17 @@ def plan_case(rig: Rig, arm_id: int, lines_table, cache_dir=None, workers: int =
     return motions, leftovers, st, load
 
 
-def _verify(config_dir, arm_id: int, phase_n: int, motion, q_before) -> dict:
+def _verify(config_dir, arm_id: str, phase_n: int, motion, q_before) -> dict:
     """The independent checker as the planners' `verify`: -> {"passed", "tightest", ...}."""
     from aris.check import check
     v = check(config_dir, arm_id, motion, Rig.load(config_dir).phase(phase_n), q_before)
+    worst = next((m for m in v.measurements if m.name == v.tightest), None)
     return {"passed": bool(v.passed), "tightest": str(v.tightest),
+            "detail": "" if worst is None else str(worst.detail),
             "min_clearance": float(v.min_clearance)}
 
 
-def checker_verify(arm_id: int):
+def checker_verify(arm_id: str):
     """`verify` for one arm in the phase it leads: the independent checker, picklable."""
     from functools import partial
     return partial(_verify, CONFIG, arm_id, ARMS[arm_id])
@@ -91,7 +103,7 @@ def _check_one(job):
     return v.passed, failed, row, v.min_clearance, slowest
 
 
-def save_motion(path, arm_id: int, motion, q_before, note: str = "") -> None:
+def save_motion(path, arm_id: str, motion, q_before, note: str = "") -> None:
     """One motion as an npz, for the checker's tests (trajectory, tips, piece, q_before)."""
     p = motion.piece
     np.savez_compressed(path, arm_id=arm_id, kind=motion.kind, t=motion.traj.t,
@@ -102,7 +114,7 @@ def save_motion(path, arm_id: int, motion, q_before, note: str = "") -> None:
                         intensity=motion.intensity, note=note)
 
 
-def check_all(rig: Rig, arm_id: int, motions, workers: int = 16, draw_speed=None) -> list:
+def check_all(rig: Rig, arm_id: str, motions, workers: int = 16, draw_speed=None) -> list:
     """Every motion through the checker, q_before = where the previous one ended.
     -> [(passed, failed rows, tightest row, min clearance)] in order."""
     from aris.types import DrawRules
@@ -144,10 +156,11 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
         slow = sorted((c[4], m.piece.line_id) for m, c in zip(motions, checks)
                       if m.kind == "draw" and c[4] is not None)
         if slow:
-            under = [x for x in slow if x[0] < 0.0049]      # below 5 mm/s, beyond rounding
+            floor = 0.245 * DRAW_SPEED       # a quarter of the draw speed, less the rounding
+            under = [x for x in slow if x[0] < floor]
             out.append(f"  slowest mid-line pen speed per drawing: lowest {slow[0][0] * 1e3:.2f} "
                        f"mm/s ({slow[0][1]}), median {slow[len(slow) // 2][0] * 1e3:.1f} mm/s; "
-                       f"{len(under)} of {len(slow)} under 4.9 mm/s"
+                       f"{len(under)} of {len(slow)} under {floor * 1e3:.2f} mm/s"
                        + ("".join(f"; {i} {v * 1e3:.2f}" for v, i in under[:6])))
         fails = {}
         for r, c in zip(rl, checks):
@@ -158,7 +171,7 @@ def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -
     return out
 
 
-def big_lines(rig: Rig, arm_id: int, n: int = 1000) -> list:
+def big_lines(rig: Rig, arm_id: str, n: int = 1000) -> list:
     """The first n lines of tests/big_cases.big() that lie wholly within 0.80 m of the arm's
     axis (table frame)."""
     import big_cases
@@ -171,10 +184,10 @@ def big_lines(rig: Rig, arm_id: int, n: int = 1000) -> list:
             out.append(Line(x["id"], np.column_stack([xy, np.zeros(len(xy))]), "table"))
             if len(out) == n:
                 break
-    return out
+    return on_surface(rig, out)
 
 
-def compare_batches(rig: Rig, arm_id: int, name: str, lines, cache=None, workers=8,
+def compare_batches(rig: Rig, arm_id: str, name: str, lines, cache=None, workers=8,
                     batch=32, refills=(32,)) -> list[str]:
     """The same case planned all at once and in batches (8 workers), for each refill."""
     rows = []
@@ -192,7 +205,7 @@ def compare_batches(rig: Rig, arm_id: int, name: str, lines, cache=None, workers
     return out
 
 
-def compare_verify(rig: Rig, arm_id: int, name: str, lines, cache=None) -> list[str]:
+def compare_verify(rig: Rig, arm_id: str, name: str, lines, cache=None) -> list[str]:
     """The same case planned without and with the checker in the loop."""
     ms0, left0, st0, load = plan_case(rig, arm_id, lines, cache)
     ms1, left1, st1, _ = plan_case(rig, arm_id, lines, cache, verify=checker_verify(arm_id))
@@ -209,7 +222,7 @@ def compare_verify(rig: Rig, arm_id: int, name: str, lines, cache=None) -> list[
     return out
 
 
-def figure(rig: Rig, arm_id: int, motions, path=FIGURE) -> None:
+def figure(rig: Rig, arm_id: str, motions, path=FIGURE) -> None:
     """Top view of a tour: drawing in one colour, free moves in another, numbered in order."""
     import matplotlib
     matplotlib.use("Agg")
@@ -253,7 +266,7 @@ def figure(rig: Rig, arm_id: int, motions, path=FIGURE) -> None:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="plan and check the arm planner's cases")
-    ap.add_argument("--arms", default="31,13")
+    ap.add_argument("--arms", default="2L,1L")
     ap.add_argument("--cases", default="")
     ap.add_argument("--workers", type=int, default=1, help="local planner processes")
     ap.add_argument("--check-workers", type=int, default=16)
@@ -269,7 +282,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
     rig = Rig.load(CONFIG)
     cache = a.cache or None
-    for arm_id in (int(x) for x in a.arms.split(",")):
+    for arm_id in a.arms.split(","):
         cases = case_lines(rig, arm_id)
         if a.big:
             cases[f"big{a.big}"] = big_lines(rig, arm_id, a.big)
@@ -294,5 +307,5 @@ if __name__ == "__main__":
                 path = DEPLOY / "tests" / "data" / f"arm_stop_{arm_id}_{name.replace(':', '_')}_{k}.npz"
                 save_motion(path, arm_id, ms[i], q_before[i], checks[i][2])
                 print(f"  saved the motion that fails 'never stops' to {path}")
-            if a.figure and arm_id == 31 and name == "word":
+            if a.figure and arm_id == "2L" and name == "word":
                 figure(rig, arm_id, ms)

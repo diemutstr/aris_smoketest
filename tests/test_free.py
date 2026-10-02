@@ -29,7 +29,8 @@ from aris.types import Box, Motion, Obstacles, Refusal  # noqa: E402
 DEPLOY = Path(__file__).resolve().parents[1]
 
 # Solve-rate floors on the fixed set, reached 2026-09-29 (see docs/modules/free.md).
-FLOOR = {31: 1000, 13: 1000}
+# 2026-10-02: the set rebuilt on the rig of that day (slots, 22 mm lift-offs, walls 40 mm, fences)
+FLOOR = {"2L": 998, "1L": 998}       # each: 2 refused "no_free_path" (was 1000 of 1000)
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +81,7 @@ def spread(n_per_group: int):
 
 def test_motions_are_free_timed_and_exact(scenes, cases):
     rows = []
-    for a in (31, 13):
+    for a in ("2L", "1L"):
         arm, obs, rules = scenes[a]
         d = cases[a]
         for i in spread(2):
@@ -90,16 +91,16 @@ def test_motions_are_free_timed_and_exact(scenes, cases):
             rows.append((a, i, st.method, st.duration, c, s, p, st.cpu))
     print("\narm case method  duration  clearance at 1 kHz  self  path bound  cpu")
     for a, i, m, dur, c, s, p, cpu in rows:
-        print(f"{a:3d} {i:4d} {m:8s} {dur:6.2f} s  {c * 1e3:6.2f} mm  {s * 1e3:6.1f} mm "
+        print(f"{a:>3s} {i:4d} {m:8s} {dur:6.2f} s  {c * 1e3:6.2f} mm  {s * 1e3:6.1f} mm "
               f"{p * 1e3:6.2f} mm  {cpu * 1e3:5.0f} ms")
     assert {"straight", "tree"} <= {r[2] for r in rows}
 
 
 def test_lift_keeps_the_hand_and_rises_along_the_normal(scenes, cases):
-    arm, obs, rules = scenes[31]
+    arm, obs, rules = scenes["2L"]
     paper = paper_plane(obs)
     done = 0
-    for q in cases[31]["q_start"][:20]:
+    for q in cases["2L"]["q_start"][:20]:
         path = lift_path(arm, q, paper, 0.06)
         if path is None:
             continue
@@ -124,8 +125,8 @@ sys.path.insert(0, {tests!r})
 import free_cases
 from aris.free import plan
 from aris.rig import Rig
-arm, obs, rules = free_cases.scene(Rig.load(free_cases.CONFIG), {arm})
-d = free_cases.load({arm})
+arm, obs, rules = free_cases.scene(Rig.load(free_cases.CONFIG), {arm!r})
+d = free_cases.load({arm!r})
 m = plan(arm, d["q_start"][{i}], d["q_goal"][{i}], obs, rules)
 h = hashlib.sha256()
 for a in (m.traj.t, m.traj.q, m.traj.qd):
@@ -142,8 +143,8 @@ def _digest(m: Motion) -> str:
 
 
 def test_same_question_same_answer_in_any_process(scenes, cases):
-    arm, obs, rules = scenes[31]
-    d = cases[31]
+    arm, obs, rules = scenes["2L"]
+    d = cases["2L"]
     i = next(i for i in spread(4) if plan_detailed(arm, d["q_start"][i], d["q_goal"][i], obs,
                                                    rules)[1].rounds > 0)
     first = plan(arm, d["q_start"][i], d["q_goal"][i], obs, rules)
@@ -151,7 +152,7 @@ def test_same_question_same_answer_in_any_process(scenes, cases):
     assert _digest(first) == _digest(again)
     env = dict(os.environ, PYTHONHASHSEED="12345")
     out = subprocess.run([sys.executable, "-c", _DIGEST_SCRIPT.format(
-        tests=str(DEPLOY / "tests"), arm=31, i=i)], env=env, capture_output=True, text=True,
+        tests=str(DEPLOY / "tests"), arm="2L", i=i)], env=env, capture_output=True, text=True,
         cwd=DEPLOY, check=True)
     assert out.stdout.strip() == _digest(first)
     other = plan(arm, d["q_start"][i], d["q_goal"][i], obs, rules, seed_extra=b"another")
@@ -183,8 +184,8 @@ def fence(gap: float = 0.2, z_split: float = 0.5, margin: float = 0.05) -> tuple
 
 
 def test_refusals(rig, scenes, cases):
-    arm, obs, rules = scenes[31]
-    d = cases[31]
+    arm, obs, rules = scenes["2L"]
+    d = cases["2L"]
     q0, q1 = d["q_start"][0], d["q_goal"][0]
 
     # the start inside an obstacle: a box around the pen holder
@@ -208,8 +209,8 @@ def test_refusals(rig, scenes, cases):
     assert isinstance(r, Refusal) and r.reason == "bad_input"
 
     # two ends on either side of a wall with no way round
-    walled = Obstacles(rig.obstacles(31).boxes + fence(), rig.obstacles(31).planes)
-    q, _, _ = free_cases.pool(rig, 31, 7)
+    walled = Obstacles(rig.obstacles("2L").boxes + fence(), rig.obstacles("2L").planes)
+    q, _, _ = free_cases.pool(rig, "2L", 7)
     q = q[collide.clearance_q(collide.arm_tables(arm), q, walled) >= 0.0]
     side = arm.tip(q)[:, 1]
     a, b = q[side < -0.2][0], q[side > 0.2][0]

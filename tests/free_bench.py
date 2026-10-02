@@ -1,7 +1,7 @@
 """Measure the free-space planner on the fixed test set (tests/data/free_cases_<arm>.npz).
 
     OMP_NUM_THREADS=1 ../.venv/bin/python tests/free_bench.py [--workers 16] [--no-lift]
-        [--cap 20000] [--arms 31 13] [--out tests/data/free_bench.npz]
+        [--cap 20000] [--arms 2L 1L] [--out tests/data/free_bench.npz]
 
 Times are per plan on one core (workers run in parallel, one plan each at a time).
 """
@@ -98,7 +98,7 @@ def main():
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--no-lift", action="store_true")
     ap.add_argument("--cap", type=int, default=None)
-    ap.add_argument("--arms", type=int, nargs="+", default=[31, 13])
+    ap.add_argument("--arms", nargs="+", default=["2L", "1L"])
     ap.add_argument("--cases", type=int, nargs="*", default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--package", default="aris.free",

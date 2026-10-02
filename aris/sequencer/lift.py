@@ -1,8 +1,9 @@
 """The lift-off at an end of a piece, and the set-down (the same motion flown backwards).
 
 Two rules (Pete and the orchestrator, 2026-09-30), nothing else:
-1. A piece starts and ends with the pen rising straight up along the paper normal by the pen
-   clearance plus `extra` (2 mm), following at every `step` (2 mm) the nearest IK answer that
+1. A piece starts and ends with the pen rising straight up along the paper normal until it is
+   the pen clearance plus `extra` (2 mm) above the real paper (from a drawing surface below the
+   paper, the press, the rise is that much longer), following at every `step` (2 mm) the nearest IK answer that
    passes the gates (at most `max_jump`, 0.15 rad, from the last), with the hand's spin about
    the normal and joint 7 changing evenly over the rise by the smallest amounts, each within
    0.5 rad, that let every sample pass; the timed motion is checked as flown.
@@ -37,7 +38,7 @@ class Lift:
 
 
 def lift_height(paper: Plane, extra: float) -> float:
-    """The pen clearance plus `extra`."""
+    """How high above the real paper a lift-off ends: the pen clearance plus `extra`."""
     pen = paper.pen_margin if paper.pen_margin is not None else paper.margin
     return float(pen) + extra
 
@@ -45,15 +46,20 @@ def lift_height(paper: Plane, extra: float) -> float:
 def rise_path(arm, guard: Guard, q: np.ndarray, paper: Plane, height: float, step: float,
               max_jump: float, gates, spin: float = 0.0, turn7: float = 0.0):
     """Rule 1's joint path for one choice of turns: from q (first row, exactly) the pen straight
-    up by `height`, the hand turning by `spin` about the normal through the tip and joint 7 by
+    up until its tip is `height` above the real paper (the plane `paper`; a drawing surface
+    below it, the press, makes the rise that much longer), the hand turning by `spin` about the normal through the tip and joint 7 by
     `turn7`, both evenly over the rise; at every `step` the IK answer nearest the last one that
     passes the gates (joint-limit margin, singular value, clearance with the pen exempt from
     the paper), at most `max_jump` from it.  -> path or why not."""
     n = np.asarray(paper.normal, float)
-    n = n / np.linalg.norm(n)
-    k = int(np.ceil(height / step)) + 1
+    nn = np.linalg.norm(n)
+    n = n / nn
     T0 = arm.fk(q[None])[0]
     tip0 = arm.tip(q[None])[0]
+    height = height - (float(np.asarray(paper.normal, float) @ tip0) - paper.offset) / nn
+    if height <= 0.0:
+        return "the pen is already above the lift height"
+    k = int(np.ceil(height / step)) + 1
     rise = np.linspace(0.0, 1.0, k)
     T = np.repeat(T0[None], k, axis=0)
     T[:, :3, :3] = _about(n, spin * rise) @ T0[:3, :3]

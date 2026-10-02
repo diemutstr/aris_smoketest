@@ -3,7 +3,7 @@
 Four sets per arm:
   word     the word "unknown" (assets/site/h0970/unknown_strokes.json: old canvas frame, metres,
            scale 1; 1.10 m wide, x-height 0.12 m, baseline on the seam line y = 1.8153, which is
-           arm 31's row).  For another arm it is moved by the difference of the two arms' axes,
+           arm 2L's row).  For another arm it is moved by the difference of the two arms' axes,
            so it sits the same way under that arm.
   corpus   the five drawings of the old bench (aris_sixarm/bench: hatch, scatter, starburst,
            spiral, duotone), old canvas frame, cut to the parts within 0.80 m of the arm's axis.
@@ -32,12 +32,14 @@ WORD_FILE = ROOT / "assets" / "site" / "h0970" / "unknown_strokes.json"
 CORPUS_FILE = DATA / "local_corpus.npz"
 OLD_TO_TABLE = np.array([-0.9017, -1.81532])       # table = old canvas + this
 CANVAS_HALF = np.array([0.9017, 1.81532])
-ARMS = {31: 2, 13: 1}                               # arm -> the phase in which it leads
+ARMS = {"2L": 2, "1L": 1}                               # arm -> the phase in which it leads
 SETS = ("word", "corpus", "lines", "curves")
 CORPUS = ("hatch", "scatter", "starburst", "spiral", "duotone")
 CORPUS_RADIUS = 0.80
 RANDOM_RADIUS = 0.78
-WORD_ARM = 31                                       # the arm the word file was laid out for
+# The random sets were seeded with the arms' old numeric ids; the seeds stay, so the sets stay.
+SEED = {"1L": 13, "1R": 17, "2L": 31, "2R": 71, "3L": 2, "3R": 97}
+WORD_ARM = "2L"                                       # the arm the word file was laid out for
 FIGURE_LINE = "line:any:18"                          # the example of docs/modules/local.md
 
 
@@ -200,20 +202,20 @@ def random_curves(axis_xy, seed) -> list[Line]:
 # --------------------------------------------------------------------------- all of it
 
 
-def cases(rig, arm_id: int) -> dict[str, list[Line]]:
+def cases(rig, arm_id: str) -> dict[str, list[Line]]:
     """Every test line for one arm, table frame, by set."""
     axis = rig.T_table_base(arm_id)[:2, 3]
     word_axis = rig.T_table_base(WORD_ARM)[:2, 3]
     return {"word": word(axis, word_axis), "corpus": corpus(axis),
-            "lines": random_lines(axis, arm_id), "curves": random_curves(axis, arm_id)}
+            "lines": random_lines(axis, SEED[arm_id]), "curves": random_curves(axis, SEED[arm_id])}
 
 
-def base_cases(rig, arm_id: int) -> dict[str, list[Line]]:
+def base_cases(rig, arm_id: str) -> dict[str, list[Line]]:
     """The same lines in the arm's base frame, ready for the local planner."""
     return {k: [rig.to_base(arm_id, x) for x in v] for k, v in cases(rig, arm_id).items()}
 
 
-def problem(rig, arm_id: int):
+def problem(rig, arm_id: str):
     """(arm, obstacles, rules, gates) for an arm leading in its phase, all from the rig."""
     rules = rig.rules()
     return (rig.arm(arm_id), rig.obstacles_for(arm_id, rig.phase(ARMS[arm_id])), rules,
@@ -258,7 +260,7 @@ def per_line(lines, bunches, leftovers, stats) -> dict:
     return rows
 
 
-def run(rig, arm_id: int, workers: int, sets=SETS, obstacles=None, cache_dir=None,
+def run(rig, arm_id: str, workers: int, sets=SETS, obstacles=None, cache_dir=None,
         settings=None):
     """Plan every set for one arm.  -> {set: (lines, bunches, leftovers, stats, wall seconds)}."""
     import time
@@ -281,7 +283,7 @@ def _pct(x, p):
     return float(np.percentile(x, p)) if len(x) else float("nan")
 
 
-def report(arm_id: int, results: dict, ref=None) -> list[str]:
+def report(arm_id: str, results: dict, ref=None) -> list[str]:
     """The acceptance numbers, one block per set."""
     out = []
     for name, (lines, bunches, leftovers, stats, wall) in results.items():
@@ -335,7 +337,7 @@ def report(arm_id: int, results: dict, ref=None) -> list[str]:
     return out
 
 
-def figure(rig, arm_id: int, line_table: Line, path) -> None:
+def figure(rig, arm_id: str, line_table: Line, path) -> None:
     """docs/modules/figures/local_example.png: the graph of one line and the route through it."""
     import matplotlib
     matplotlib.use("Agg")
@@ -353,7 +355,7 @@ def figure(rig, arm_id: int, line_table: Line, path) -> None:
     lat = Lattice(arm, Judge(arm, obs, gates),
                   polyline.at(pts, s_pts, s), s, rules.lean_max, cfg)
     route = best_route(lat, cfg.lift_cost, cfg.gap_cost)
-    fig, (top, graph) = plt.subplots(1, 2, figsize=(13, 5.2), width_ratios=(1, 1.6))
+    fig, (top, graph) = plt.subplots(1, 2, figsize=("1L", 5.2), width_ratios=(1, 1.6))
     axis = rig.T_table_base(arm_id)[:2, 3]
     xy = np.asarray(line_table.points)[:, :2]
     top.add_patch(plt.Rectangle(-CANVAS_HALF, *(2 * CANVAS_HALF), fc="#f4f1ea", ec="#999"))
@@ -400,13 +402,13 @@ def figure(rig, arm_id: int, line_table: Line, path) -> None:
     fig.savefig(path, dpi=130)
 
 
-def paper_only(rig, arm_id: int):
+def paper_only(rig, arm_id: str):
     from aris.types import Obstacles
     obs = problem(rig, arm_id)[1]
     return Obstacles(planes=tuple(p for p in obs.planes if p.kind == "paper"))
 
 
-def explain(arm_id: int, alone: dict, real: dict, ref) -> list[str]:
+def explain(arm_id: str, alone: dict, real: dict, ref) -> list[str]:
     """Every line the new planner (paper only) draws less of than the old one, with what the
     new planner says about the missing stretch."""
     if ref is None or f"a{arm_id}_ids" not in ref:
@@ -433,20 +435,20 @@ if __name__ == "__main__":
     from aris.rig import Rig
     ap = argparse.ArgumentParser(description="plan the fixed set, print the acceptance numbers")
     ap.add_argument("--workers", type=int, default=16)
-    ap.add_argument("--arms", default="31,13")
+    ap.add_argument("--arms", default="2L,1L")
     ap.add_argument("--sets", default=",".join(SETS))
     ap.add_argument("--figure", action="store_true", help="draw the module page's figure only")
     a = ap.parse_args()
     rig = Rig.load(ROOT / "config")
     if a.figure:
-        example = [x for x in random_lines(rig.T_table_base(31)[:2, 3], 31)
+        example = [x for x in random_lines(rig.T_table_base("2L")[:2, 3], "2L")
                    if x.id == FIGURE_LINE][0]
-        figure(rig, 31, example, ROOT / "docs" / "modules" / "figures"
+        figure(rig, "2L", example, ROOT / "docs" / "modules" / "figures"
                / "local_example.png")
         raise SystemExit
     ref_file = DATA / "local_reference.npz"
     ref = np.load(ref_file) if ref_file.exists() else None
-    for arm_id in (int(x) for x in a.arms.split(",")):
+    for arm_id in a.arms.split(","):
         res = run(rig, arm_id, a.workers, a.sets.split(","))
         print("\n".join(report(arm_id, res, ref)), flush=True)
         paper = paper_only(rig, arm_id)

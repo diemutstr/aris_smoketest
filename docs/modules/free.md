@@ -7,7 +7,7 @@ other arms: walls, parked arms, steel and the paper all arrive as geometry.
 
 Files: `aris/free/planner.py` (the seven steps), `check.py` (what "free" means, in batches),
 `lift.py`, `rrt.py`, `shortcut.py`, `flown.py` (the final verdict). Tests: `tests/test_free.py`;
-the fixed test set: `tests/free_cases.py` builds `tests/data/free_cases_{31,13}.npz`;
+the fixed test set: `tests/free_cases.py` builds `tests/data/free_cases_{2L,1L}.npz`;
 measurement: `tests/free_bench.py` (`--package` measures another copy side by side).
 
 ## In and out
@@ -67,6 +67,11 @@ obstacle array and `seed_extra`. The test re-plans in a fresh process with anoth
 gets a bit-identical trajectory. The compiled and the numpy collision engines give bit-identical
 trajectories too (100 of 100 compared).
 
+**2026-10-02, the rig with slots** (walls 40 mm from each arm until x/y are calibrated, the
+fences of the switched-off rows), the set rebuilt from the local planner's lift-offs at the
+22 mm lift: 998 of 1 000 solved for arm 2L and 998 for arm 1L (each refuses 2 as "no free
+path"); CPU per plan median 46 / 32 ms, 95 % 173 / 91 ms.
+
 ## What it cannot do
 
 - On a quiet machine it meets the 0.1 s target (tree moves 48 and 75 ms median, 118 and 177 ms
@@ -91,9 +96,9 @@ trajectories too (100 of 100 compared).
 
 ## Measured (2026-09-29, compiled collision engine, one core per plan, 16 plans in parallel)
 
-The fixed set: 1 000 pairs of lift-off configurations for arm 31 (phase 2 obstacles: parked
-arms 2, 13, 71, walls 17-31 and 31-97, steel, paper) and 1 000 for arm 13 (phase 1: parked 17,
-31, wall 13-71); tips 25 mm above the paper, random spin, no lean; four groups of 250: near
+The fixed set: 1 000 pairs of lift-off configurations for arm 2L (phase 2 obstacles: parked
+arms 3L, 1L, 2R, walls 1R-2L and 2L-3R, steel, paper) and 1 000 for arm 1L (phase 1: parked 1R,
+2L, wall 1L-2R); tips 25 mm above the paper, random spin, no lean; four groups of 250: near
 (tips under 0.15 m apart), far (over 0.6 m), same IK branch, different IK branch.
 
 CPU time per plan, milliseconds. Before (the first version: its own halving loop in numpy) and
@@ -102,14 +107,14 @@ now were run back to back on the same kernel and rig at machine load 62 and 58 o
 
 | arm | version | solved | straight / raised / tree | all: median, 95 % | straight: median, 95 % | raised | tree: median, 95 % | edges checked (tree) | length / straight | flown duration median, 95 % |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 13 | before, load 62 | 1000 | 310 / 62 / 628 | 221, 476 | 36, 73 | 163 | 279, 528 | (1 998 configurations) | 1.03 | 4.6, 7.0 s |
-| 13 | now, load 58 | 1000 | 306 / 60 / 634 | 74, 227 | 11, 26 | 33 | 106, 252 | 45 | 1.08 | 4.9, 8.2 s |
-| 13 | now, load 8 | 1000 | 306 / 60 / 634 | 37, 103 | 9, 16 | 18 | 48, 118 | 45 | 1.08 | 4.9, 8.0 s |
-| 31 | before, load 62 | 999 | 265 / 75 / 659 | 321, 694 | 48, 113 | 217 | 387, 822 | (2 131 configurations) | 1.04 | 4.4, 7.9 s |
-| 31 | now, load 58 | 1000 | 261 / 75 / 664 | 133, 424 | 17, 46 | 42 | 191, 470 | 65 | 1.12 | 5.0, 9.2 s |
-| 31 | now, load 8 | 1000 | 261 / 75 / 664 | 53, 154 | 12, 20 | 20 | 75, 177 | 65 | 1.11 | 5.0, 9.0 s |
+| 1L | before, load 62 | 1000 | 310 / 62 / 628 | 221, 476 | 36, 73 | 163 | 279, 528 | (1 998 configurations) | 1.03 | 4.6, 7.0 s |
+| 1L | now, load 58 | 1000 | 306 / 60 / 634 | 74, 227 | 11, 26 | 33 | 106, 252 | 45 | 1.08 | 4.9, 8.2 s |
+| 1L | now, load 8 | 1000 | 306 / 60 / 634 | 37, 103 | 9, 16 | 18 | 48, 118 | 45 | 1.08 | 4.9, 8.0 s |
+| 2L | before, load 62 | 999 | 265 / 75 / 659 | 321, 694 | 48, 113 | 217 | 387, 822 | (2 131 configurations) | 1.04 | 4.4, 7.9 s |
+| 2L | now, load 58 | 1000 | 261 / 75 / 664 | 133, 424 | 17, 46 | 42 | 191, 470 | 65 | 1.12 | 5.0, 9.2 s |
+| 2L | now, load 8 | 1000 | 261 / 75 / 664 | 53, 154 | 12, 20 | 20 | 75, 177 | 65 | 1.11 | 5.0, 9.0 s |
 
-- Split of a tree plan, quiet (wall medians, arm 13 / arm 31): search 21 / 32 ms, shortening
+- Split of a tree plan, quiet (wall medians, arm 1L / arm 2L): search 21 / 32 ms, shortening
   20 / 31, timing 2 / 2, flown check 4 / 5. A straight move: 7 / 10 ms to check the ends and the
   edge, 1.5 ms timing, 0.2 ms flown check. 94 % of a tree plan's time is inside the kernel's
   edge call.
@@ -120,7 +125,7 @@ now were run back to back on the same kernel and rig at machine load 62 and 58 o
   held, ends exact.
 - The first version: with 20 times its cap every then-unsolved pair was found (22 000 to 43 000
   configurations); the numpy collision engine gave the same trajectories, 4 times slower.
-- **Raising the ends** (first version, cap 20 000 configurations): arm 13 solved 998 either
-  way, arm 31 994 raised against 990 not; raised-straight replaces the tree for 6 to 14 % of
+- **Raising the ends** (first version, cap 20 000 configurations): arm 1L solved 998 either
+  way, arm 2L 994 raised against 990 not; raised-straight replaces the tree for 6 to 14 % of
   pairs; flown duration 0.1 s shorter; planning time not better. A raise fails for a quarter of
   the ends, for example where the lifted arm would come within 0.15 rad of a joint limit.

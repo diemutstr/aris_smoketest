@@ -82,6 +82,12 @@ paper on its way to or from it). A step of more than 0.15 rad is a change of arm
 to a fold of the IK, where two arm shapes meet, a straight lift moves 30 to 90 rad per metre of
 rise, continuously.
 
+**The drawing surface.** The system planner hands lines on the drawing surface, the press
+(`rules.press`, 3.5 mm) below the real paper. The pen draws there; the lift is measured from the
+real paper (the paper plane among the obstacles), so it ends the pen clearance + 2 mm above the
+paper and rises the press further than from the paper itself; the set-down lands on the surface
+at the landing speed. Tested with lines 3.5 mm below the paper (`test_arm_planner`).
+
 A piece where rule 2 runs out at an end in every alternative and direction becomes a leftover
 `no_free_path`, "no lift-off at its start/end", with rule 1's reason.
 
@@ -137,10 +143,10 @@ Measured 2026-09-30 with smooth timing, the real checker as `verify` (`tests/arm
 
 | arm, case | motions | planning CPU without / with | wall without / with | inside verify | failed_check |
 |---|---|---|---|---|---|
-| 31 word | 53 | 2.6 / 8.6 s | 2.6 / 8.6 s | 6.1 s | 0 |
-| 31 random lines | 421 | 41.5 / 81.3 s | 42.7 / 81.5 s | 41.3 s | 0 |
-| 13 word | 53 | 2.3 / 6.9 s | 2.3 / 6.9 s | 4.5 s | 0 |
-| 13 random lines | 421 | 57.5 / 92.3 s | 100.2 / 93.5 s | 54.2 s | 0 |
+| 2L word | 53 | 2.6 / 8.6 s | 2.6 / 8.6 s | 6.1 s | 0 |
+| 2L random lines | 421 | 41.5 / 81.3 s | 42.7 / 81.5 s | 41.3 s | 0 |
+| 1L word | 53 | 2.3 / 6.9 s | 2.3 / 6.9 s | 4.5 s | 0 |
+| 1L random lines | 421 | 57.5 / 92.3 s | 100.2 / 93.5 s | 54.2 s | 0 |
 
 - Every motion handed on carries `checked["passed"]` True; the tours are the same motions as
   without `verify`.
@@ -172,68 +178,68 @@ re-measured since the checker's stop limit changed).
 
 ## Measured (2026-10-01, branch aris3, smooth timing, set-down landing at 10 mm/s, 22 mm lift, 8 workers, batches of 32 with refill 128, machine load 6 to 17)
 
-From park back to park; obstacles of the arm's leading phase (arm 31 phase 2, arm 13 phase 1);
+From park back to park; obstacles of the arm's leading phase (arm 2L phase 2, arm 1L phase 1);
 kinematic table on; drawing speed 20 mm/s. Drawings, set-downs and lifts are timed in the
 retimer's smooth mode (commit d8895c8). Planning CPU counts the 8 local-planner workers; first
 motion is wall time. "Slowest" is the checker's slowest mid-line pen speed over the case's
 drawings. Pen-up time is every motion that is not drawing. No hatch lines lie within 0.80 m of
-arm 31.
+arm 2L.
 
 | arm, case | lines | pieces drawn | planning CPU / wall s | first motion s | drawing s | pen up s | pen-up share | longest free s | leftovers (m) | checker | slowest mm/s |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 31 word | 13 | 13 | 8.1 / 2.7 | 1.4 | 123.6 | 72.9 | 0.371 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
-| 31 scatter | 27 | 24 | 11.4 / 3.9 | 1.4 | 147.9 | 115.4 | 0.438 | 9.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 | 5.01 |
-| 31 starburst | 24 | 28 | 22.7 / 6.7 | 2.7 | 722.2 | 140.0 | 0.162 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
-| 31 spiral | 3 | 7 | 15.6 / 8.9 | 7.5 | 450.9 | 42.3 | 0.086 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
-| 31 duotone | 5 | 4 | 9.0 / 2.9 | 2.1 | 198.6 | 30.3 | 0.133 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
-| 31 lines | 100 | 105 | 64.3 / 20.1 | 6.9 | 2202.4 | 424.3 | 0.162 | 7.5 | blocked 2.325, no path 0.087, unreachable 0.015 | 421 / 421 | 4.99 |
-| 13 word | 13 | 13 | 6.8 / 2.1 | 1.1 | 122.5 | 62.9 | 0.339 | 5.5 | no path 0.010, unreachable 0.185 | 53 / 53 | 1.35 |
-| 13 hatch | 43 | 43 | 33.2 / 9.2 | 3.9 | 1517.0 | 153.6 | 0.092 | 6.8 | none | 173 / 173 | 5.09 |
-| 13 scatter | 24 | 23 | 9.7 / 2.8 | 1.2 | 142.9 | 107.1 | 0.428 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
-| 13 starburst | 5 | 5 | 6.3 / 1.9 | 1.6 | 54.0 | 23.0 | 0.299 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
-| 13 spiral | 3 | 3 | 4.0 / 2.1 | 1.8 | 72.6 | 16.6 | 0.186 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
-| 13 duotone | 5 | 7 | 8.6 / 3.5 | 2.3 | 188.4 | 49.6 | 0.208 | 7.2 | blocked 0.452, no path 0.011, unreachable 0.015 | 29 / 29 | 4.99 |
-| 13 lines | 100 | 105 | 53.1 / 16.8 | 5.6 | 2198.3 | 429.4 | 0.163 | 6.1 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 | 4.99 |
+| 2L word | 13 | 13 | 8.1 / 2.7 | 1.4 | 123.6 | 72.9 | 0.371 | 9.6 | unreachable 0.173 | 53 / 53 | 1.30 |
+| 2L scatter | 27 | 24 | 11.4 / 3.9 | 1.4 | 147.9 | 115.4 | 0.438 | 9.6 | blocked 0.374, too short 0.002, unreachable 0.025 | 97 / 97 | 5.01 |
+| 2L starburst | 24 | 28 | 22.7 / 6.7 | 2.7 | 722.2 | 140.0 | 0.162 | 7.8 | blocked 1.204, unreachable 0.023 | 113 / 113 | 5.00 |
+| 2L spiral | 3 | 7 | 15.6 / 8.9 | 7.5 | 450.9 | 42.3 | 0.086 | 5.7 | blocked 1.388, no path 0.012, unreachable 0.024 | 29 / 29 | 5.02 |
+| 2L duotone | 5 | 4 | 9.0 / 2.9 | 2.1 | 198.6 | 30.3 | 0.133 | 5.3 | blocked 0.567, unreachable 0.011 | 17 / 17 | 5.05 |
+| 2L lines | 100 | 105 | 64.3 / 20.1 | 6.9 | 2202.4 | 424.3 | 0.162 | 7.5 | blocked 2.325, no path 0.087, unreachable 0.015 | 421 / 421 | 4.99 |
+| 1L word | 13 | 13 | 6.8 / 2.1 | 1.1 | 122.5 | 62.9 | 0.339 | 5.5 | no path 0.010, unreachable 0.185 | 53 / 53 | 1.35 |
+| 1L hatch | 43 | 43 | 33.2 / 9.2 | 3.9 | 1517.0 | 153.6 | 0.092 | 6.8 | none | 173 / 173 | 5.09 |
+| 1L scatter | 24 | 23 | 9.7 / 2.8 | 1.2 | 142.9 | 107.1 | 0.428 | 5.2 | blocked 0.164 | 93 / 93 | 5.00 |
+| 1L starburst | 5 | 5 | 6.3 / 1.9 | 1.6 | 54.0 | 23.0 | 0.299 | 3.1 | blocked 0.623, unreachable 0.015 | 21 / 21 | 4.99 |
+| 1L spiral | 3 | 3 | 4.0 / 2.1 | 1.8 | 72.6 | 16.6 | 0.186 | 3.1 | blocked 0.613, unreachable 0.015 | 13 / 13 | 4.99 |
+| 1L duotone | 5 | 7 | 8.6 / 3.5 | 2.3 | 188.4 | 49.6 | 0.208 | 7.2 | blocked 0.452, no path 0.011, unreachable 0.015 | 29 / 29 | 4.99 |
+| 1L lines | 100 | 105 | 53.1 / 16.8 | 5.6 | 2198.3 | 429.4 | 0.163 | 6.1 | blocked 1.643, no path 0.022, unreachable 0.014 | 421 / 421 | 4.99 |
 
 - **Every one of the 1 533 motions passes the independent checker.**
 - **Slowest mid-line pen speed:** 5.0 mm/s or more on every drawing (the median drawing's
   slowest point is 5.1 mm/s), except word:10, the "w" of the word, which has a real 148-degree
-  corner: 1.30 mm/s on arm 31, 1.35 mm/s on arm 13.
+  corner: 1.30 mm/s on arm 2L, 1.35 mm/s on arm 1L.
 - **Against corner timing** (the table before, same lift rules, one process): time on the rig
-  0.2 to 2.5 % shorter (arm 31 word 170.8 against 171.2 s; 31 random lines 2 428 against
+  0.2 to 2.5 % shorter (arm 2L word 170.8 against 171.2 s; 31 random lines 2 428 against
   2 470 s; 13 random lines 2 416 against 2 451 s; 31 starburst 806 against 827 s); pen-up time
-  about the same (the word, arm 31: 47.2 against 47.4 s).
+  about the same (the word, arm 2L: 47.2 against 47.4 s).
 - **The flown check, 4 times finer** (`Guard.flown`, 2026-09-30): the timed curve is checked
   at its samples plus 3 points of the same cubic between each two, and the cubic's sag is charged
-  on that finer gap. Before, arm 31's scatter lost a 72 mm piece (corpus:scatter:38:0): the
+  on that finer gap. Before, arm 2L's scatter lost a 72 mm piece (corpus:scatter:38:0): the
   finger was 0.76 mm beyond the planning margin at the samples, and the bounds over the 50 ms
   gaps took 0.77 mm; it is drawn now (24 pieces). The check stays a lower bound against the
   planning margins. Candidates it no longer refuses change a few tours: pen-up time on the word,
-  arm 13, 37.5 s instead of 43.0; arm 31's 100 lines 212.8 s instead of 225.8; arm 13's 100
+  arm 1L, 37.5 s instead of 43.0; arm 2L's 100 lines 212.8 s instead of 225.8; arm 1L's 100
   lines 219.1 instead of 218.5; the other cases are the same motions. It costs 8 to 20 ms of
   CPU per checked lift or drawing instead of 6 to 12 ms (0.1 to 2.9 s more per case).
-- **"No path": 0.131 m in all**, every bit of it cut off at a piece end by rule 2 (spiral arm 31
-  12 mm, word arm 13 10 mm, random lines 87 and 22 mm); no whole piece is lost. With the arm's
+- **"No path": 0.131 m in all**, every bit of it cut off at a piece end by rule 2 (spiral arm 2L
+  12 mm, word arm 1L 10 mm, random lines 87 and 22 mm); no whole piece is lost. With the arm's
   shape held (the first version of rule 1, same day) it was 3.53 m, 1.85 m of it one piece of
   the spiral; with the five-rung ladder (earlier the same day, 5 mm lift) nothing.
 - **The landing speed** (2026-10-01): every set-down takes 2.29 to 2.31 s instead of the lift's
-  0.26 to 0.33 s, and the pen never exceeds 9.98 mm/s on it. The word's time on the rig: arm 31
-  196.6 s instead of 170.8 (+15 %), arm 13 185.3 s instead of 160.0 (+16 %); pen-up share 0.371
-  and 0.339. On 100 lines pen-up time roughly doubles (424 against 213 s, arm 31), 8 % of the
+  0.26 to 0.33 s, and the pen never exceeds 9.98 mm/s on it. The word's time on the rig: arm 2L
+  196.6 s instead of 170.8 (+15 %), arm 1L 185.3 s instead of 160.0 (+16 %); pen-up share 0.371
+  and 0.339. On 100 lines pen-up time roughly doubles (424 against 213 s, arm 2L), 8 % of the
   time on the rig. The checker passes every set-down (its pen-speed rule is for drawings).
-  One alternative changes: arm 13 duotone loses 11 mm more at a piece end.
-- **Pen-up time on the word, before the landing speed:** arm 31, 47.2 s (shape held 43.5 s,
-  ladder 40.0 s); arm 13, 37.5 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
+  One alternative changes: arm 1L duotone loses 11 mm more at a piece end.
+- **Pen-up time on the word, before the landing speed:** arm 2L, 47.2 s (shape held 43.5 s,
+  ladder 40.0 s); arm 1L, 37.5 s (37.4 s, 29.5 s). Drawing time 123.6 and 122.5 s: more of the word is drawn than with
   the shape held. The 22 mm lift and its turns cost a few seconds over the ladder's 5 to 25 mm.
 - The sequencer's own CPU (lift-offs, timing the drawings, the moves, the checks) is 1.0 s for
   the word, 7.2 to 8.2 s for 100 lines; the rest is the local planner.
 - Free-space planner: 0 refusals.
-- **Against the old planner, word, arm 31.** Old: planned in 66.8 s, its motion took 67.8 s (it
+- **Against the old planner, word, arm 2L.** Old: planned in 66.8 s, its motion took 67.8 s (it
   drew at 80 mm/s). New: planned in 2.2 s wall, 7.6 s of CPU over 8 workers (2.6 s in one
   process), first motion after 1.3 s; at 20 mm/s the motion takes 170.8 s (123.6 drawing, 47.2
   pen up).
 
-![the tour of the word for arm 31](figures/arm_word_31.png)
+![the tour of the word for arm 2L](figures/arm_word_31.png)
 
 Tests: `tests/test_sequencer.py` (the price, the lift-off going straight up and the set-down
 being the same backwards, one piece being one drawing motion, an empty drawing, a start nothing can leave, a

@@ -26,7 +26,7 @@ from aris.sequencer.lift import reverse  # noqa: E402
 
 @pytest.fixture(scope="module")
 def problem():
-    arm, obs, rules, _ = lc.problem(RIG, 31)
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
     bunches, left = local.plan(arm, two_lines(), obs, rules)
     assert len(bunches) == 2 and not left
     return arm, obs, rules, bunches
@@ -117,7 +117,7 @@ def test_one_piece_is_one_drawing_motion(problem):
 
 def test_empty_drawing_is_only_the_move_to_q_end(problem):
     arm, obs, rules, _ = problem
-    q0 = RIG.park_q(31)
+    q0 = RIG.park_q("2L")
     q1 = q0.copy()
     q1[0] -= 0.3
     ms, left, rep = tour_all(arm, [], q0, obs, rules, q_end=q1)
@@ -130,10 +130,10 @@ def test_empty_drawing_is_only_the_move_to_q_end(problem):
 
 def test_a_piece_nothing_can_fly_to_is_a_leftover_with_the_reason(problem):
     arm, obs, rules, bunches = problem
-    q_bad = RIG.park_q(31).copy()
+    q_bad = RIG.park_q("2L").copy()
     q_bad[3] = arm.limits.q_max[3] - 0.01                        # inside the gate's margin
     rep = TourReport()
-    gen = tour(arm, bunches, q_bad, obs, rules, q_end=RIG.park_q(31), report=rep)
+    gen = tour(arm, bunches, q_bad, obs, rules, q_end=RIG.park_q("2L"), report=rep)
     motions = []
     try:
         while True:
@@ -152,16 +152,16 @@ def test_a_piece_under_a_box_is_a_leftover_and_the_rest_is_drawn(problem):
     from aris.types import Box, Obstacles
     # A flat box 20 to 40 mm above line b, known to the sequencer only: no alternative of b
     # can be lifted off (nor drawn); line a is drawn as before.
-    x, y = RIG.T_table_base(31)[:2, 3]
+    x, y = RIG.T_table_base("2L")[:2, 3]
     T = np.eye(4)
     T[:3, 3] = [x + 0.10, y + 0.325, 0.030]
-    box = Box("lid", RIG.T_base_table(31) @ T, np.array([0.05, 0.12, 0.010]), 0.0)
+    box = Box("lid", RIG.T_base_table("2L") @ T, np.array([0.05, 0.12, 0.010]), 0.0)
     lid = Obstacles(obs.boxes + (box,), obs.planes, obs.capsules)
-    ms, left, rep = tour_all(arm, bunches, RIG.park_q(31), lid, rules)
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), lid, rules)
     assert rep.pieces == 1 and len(left) == 1
     assert left[0].piece.line_id == "b" and left[0].reason in ("no_free_path", "unreachable")
     assert left[0].detail
-    assert_tour(arm, lid, rules, ms, RIG.park_q(31), RIG.park_q(31))
+    assert_tour(arm, lid, rules, ms, RIG.park_q("2L"), RIG.park_q("2L"))
 
 
 # --------------------------------------------------------------------------- the checker in the loop
@@ -185,7 +185,7 @@ class _Refuse:
 @pytest.mark.parametrize("kind", ["free", "lower", "draw", "lift"])
 def test_a_refused_motion_leaves_its_piece_over_and_the_tour_goes_on(problem, kind):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q(31)
+    park = RIG.park_q("2L")
     plain, _, _ = tour_all(arm, bunches, park, obs, rules)
     fake = _Refuse(kind)
     ms, left, rep = tour_all(arm, bunches, park, obs, rules, verify=fake)
@@ -209,7 +209,7 @@ def test_a_refused_motion_leaves_its_piece_over_and_the_tour_goes_on(problem, ki
 
 def test_without_verify_nothing_changes(problem):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q(31)
+    park = RIG.park_q("2L")
     a, la, _ = tour_all(arm, bunches, park, obs, rules)
     b, lb, rep = tour_all(arm, bunches, park, obs, rules,
                           verify=lambda m, q: {"passed": True, "tightest": ""})
@@ -221,7 +221,7 @@ def test_without_verify_nothing_changes(problem):
 
 def test_a_refused_move_home_is_the_end_refusal(problem):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q(31)
+    park = RIG.park_q("2L")
     n = len(tour_all(arm, bunches, park, obs, rules)[0])
     calls = []
 

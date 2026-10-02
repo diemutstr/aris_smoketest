@@ -1,5 +1,5 @@
 """The fixed test set of the free-space planner: 1 000 pairs of lift-off configurations for arm
-31 (phase 2) and 1 000 for arm 13 (phase 1).
+2L (phase 2) and 1 000 for arm 1L (phase 1).
 
 Run `../.venv/bin/python tests/free_cases.py [cache_dir]` from the repository root to (re)build
 `tests/data/free_cases_<arm>.npz` (cache_dir: the local planner's kinematic table).  Everything
@@ -32,21 +32,21 @@ from aris.types import DrawRules  # noqa: E402
 DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
 DATA = DEPLOY / "tests" / "data"
-ARMS = {31: 2, 13: 1}                  # arm -> the phase in which it moves (leads)
+ARMS = {"2L": 2, "1L": 1}                  # arm -> the phase in which it moves (leads)
 GROUPS = ("near", "far", "same_branch", "other_branch")
 PER_GROUP = 250
 N_POSES = 12_000                        # candidate tip poses per arm
 REACH_XY = 1.0                          # m, tips are drawn within this of the arm's axis
 
 
-def scene(rig: Rig, arm_id: int):
+def scene(rig: Rig, arm_id: str):
     """(arm, obstacles, rules) of `arm_id` in the phase it leads."""
     phase = rig.phase(ARMS[arm_id])
     rules = DrawRules(gates=rig.gates())
     return rig.arm(arm_id), rig.obstacles_for(arm_id, phase), rules
 
 
-def pool(rig: Rig, arm_id: int, seed: int):
+def pool(rig: Rig, arm_id: str, seed: int):
     """Gated, free lift-off configurations: q (P,7), tip_table (P,3), branch (P,)."""
     arm, obs, rules = scene(rig, arm_id)
     g = rules.gates
@@ -75,7 +75,7 @@ def pool(rig: Rig, arm_id: int, seed: int):
     return q[keep], tip_table[m[keep]], b[keep]
 
 
-def pool_local(rig: Rig, arm_id: int, cache_dir=None):
+def pool_local(rig: Rig, arm_id: str, cache_dir=None):
     """The other source of the pool: the lift-off configurations the sequencer finds at both
     ends of every alternative plan of the local planner on its fixed set (word, corpus, the
     random lines; tests/local_cases.py).  -> q (P,7), tip_table (P,3), branch (P,) as `pool`.
@@ -122,20 +122,21 @@ def pairs(q, tip, branch, seed: int):
         while len(got) < PER_GROUP:
             i = rng.integers(0, n, 20_000)
             j = rng.integers(0, n, 20_000)
-            good = (i != j) & tests[name](i, j)
+            good = (i != j) & tests[name](i, j) & (np.abs(q[i] - q[j]).max(axis=1) > 1e-6)
             got += list(zip(i[good], j[good]))
         out += got[:PER_GROUP]
         group += [gi] * PER_GROUP
     return np.array(out), np.array(group)
 
 
-def build(arm_id: int, seed: int = 20260929, source: str = "local", cache_dir=None) -> Path:
+def build(arm_id: str, seed: int = 20260929, source: str = "local", cache_dir=None) -> Path:
     """`source` "local" (`pool_local`, the default set free_cases_<arm>.npz) or "random" (the
     random poses of `pool`, written to free_cases_random_<arm>.npz)."""
     rig = Rig.load(CONFIG)
-    q, tip, branch = pool(rig, arm_id, seed + arm_id) if source == "random" else \
+    from local_cases import SEED
+    q, tip, branch = pool(rig, arm_id, seed + SEED[arm_id]) if source == "random" else \
         pool_local(rig, arm_id, cache_dir)
-    ij, group = pairs(q, tip, branch, seed + 1000 + arm_id)
+    ij, group = pairs(q, tip, branch, seed + 1000 + SEED[arm_id])
     path = DATA / _name(arm_id, source)
     np.savez_compressed(
         path, arm_id=arm_id, phase=ARMS[arm_id], groups=np.array(GROUPS),
@@ -145,11 +146,11 @@ def build(arm_id: int, seed: int = 20260929, source: str = "local", cache_dir=No
     return path
 
 
-def _name(arm_id: int, source: str) -> str:
+def _name(arm_id: str, source: str) -> str:
     return f"free_cases_{arm_id}.npz" if source == "local" else f"free_cases_random_{arm_id}.npz"
 
 
-def load(arm_id: int, source: str = "local") -> dict:
+def load(arm_id: str, source: str = "local") -> dict:
     with np.load(DATA / _name(arm_id, source)) as f:
         return {k: f[k] for k in f.files}
 
@@ -160,9 +161,9 @@ if __name__ == "__main__":
     source, cache = "local", None
     if args and args[0] == "--random":
         source, args = "random", args[1:]
-    if args and not args[0].isdigit():
+    if args and args[0] not in ARMS:
         cache, args = args[0], args[1:]
-    for aid in (ARMS if not args else [int(a) for a in args]):
+    for aid in (ARMS if not args else args):
         p = build(aid, source=source, cache_dir=cache)
         d = load(aid, source)
         dist = np.linalg.norm(d["tip_start_table"] - d["tip_goal_table"], axis=1)
