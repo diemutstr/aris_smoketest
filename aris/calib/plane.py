@@ -14,12 +14,11 @@ pen meets the paper).  See docs/modules/calib.md.
 """
 from __future__ import annotations
 
-import datetime
-import json
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, replace
 
 import numpy as np
+
+from aris.types import Slot
 
 # The pass rule.  Each limit catches one kind of fault; the sentence for it is in `_verdict`.
 MIN_POINTS = 9            # fewer touches cannot tell a tilt from one bad touch
@@ -38,7 +37,7 @@ HEIGHT_MAX_M = 0.030      # the paper is far above or below where rig.json puts 
 class PlaneCalibration:
     """Everything step 1 found for one arm.  Lengths in metres, angles in radians; the file
     written from it uses millimetres and degrees for the human-facing numbers."""
-    arm_id: int
+    slot: Slot
     passed: bool
     why: str                           # "" when passed
     n_points: int
@@ -56,6 +55,10 @@ class PlaneCalibration:
     points_table: np.ndarray           # (N,3) touches in the calibrated table frame: the
                                        # height map; z - paper_z is each touch's residual
     residuals: np.ndarray              # (N,) signed, + is above the plane (toward the arm)
+    # The pen the touches were made with and the tip the rig gave it (hand frame): the height
+    # found includes that pen's length error against this tip.
+    pen: str = ""
+    tip_hand: np.ndarray | None = None
 
 
 def fit_plane(points) -> tuple[np.ndarray, float, np.ndarray]:
@@ -103,8 +106,8 @@ def _rotvec_to_matrix(v: np.ndarray) -> np.ndarray:
     return np.eye(3) + np.sin(a) * K + (1.0 - np.cos(a)) * (K @ K)
 
 
-def _refusal(arm_id, T_nom, n_points, why) -> PlaneCalibration:
-    return PlaneCalibration(arm_id, False, why, n_points, T_nom.copy(), T_nom.copy(), None,
+def _refusal(slot, T_nom, n_points, why) -> PlaneCalibration:
+    return PlaneCalibration(slot, False, why, n_points, T_nom.copy(), T_nom.copy(), None,
                             float("nan"), float("nan"), float("nan"), float("nan"),
                             float("nan"), float("nan"), float("nan"), -1, np.zeros((0, 3)),
                             np.zeros(0))
@@ -131,26 +134,33 @@ def _verdict(n, rms, worst, k, tilt, dz) -> str:
     return "; ".join(why)
 
 
-def calibrate_plane(rig, arm_id: int, contacts_q) -> PlaneCalibration:
-    """The paper plane under `arm_id` from its contact configurations (N,7), in touch order.
+def calibrate_plane(rig, slot: Slot, contacts_q) -> PlaneCalibration:
+    """The paper plane under `slot` from its contact configurations (N,7), in touch order.
 
-    Never raises on bad data: too few touches, unreadable joints or touches on a line come back
-    as a refusal (`passed` False, `why` set, the nominal pose kept)."""
-    T_nom = rig.T_table_base(arm_id)
+    "Nominal" is the pose the rig has now (rig.json's, or an earlier base part's): the touches
+    were planned and are read with it.  Never raises on bad data: too few touches, unreadable
+    joints or touches on a line come back as a refusal (`passed` False, `why` set, the pose the
+    rig has kept)."""
+    return replace(_fit(rig, slot, contacts_q), pen=rig.pen_name,
+                   tip_hand=rig.arm(slot).tool.tip_hand.copy())
+
+
+def _fit(rig, slot: Slot, contacts_q) -> PlaneCalibration:
+    T_nom = rig.T_table_base(slot)
     Q = np.asarray(contacts_q, float)
     if Q.size == 0:
-        return _refusal(arm_id, T_nom, 0, "no touches")
+        return _refusal(slot, T_nom, 0, "no touches")
     if Q.ndim != 2 or Q.shape[1] != 7:
-        return _refusal(arm_id, T_nom, len(Q), f"contacts must be N x 7 joints, got {Q.shape}")
+        return _refusal(slot, T_nom, len(Q), f"contacts must be N x 7 joints, got {Q.shape}")
     if not np.all(np.isfinite(Q)):
         bad = int(np.nonzero(~np.all(np.isfinite(Q), axis=1))[0][0])
-        return _refusal(arm_id, T_nom, len(Q), f"touch {bad} has no joint reading")
+        return _refusal(slot, T_nom, len(Q), f"touch {bad} has no joint reading")
     if len(Q) < 3:
-        return _refusal(arm_id, T_nom, len(Q),
+        return _refusal(slot, T_nom, len(Q),
                         f"only {len(Q)} touches, at least {MIN_POINTS} needed")
-    p_base = rig.arm(arm_id).tip(Q)
+    p_base = rig.arm(slot).tip(Q)
     if _spread(p_base) < MIN_SPREAD_M:
-        return _refusal(arm_id, T_nom, len(Q), "the touches lie on a line (or one spot): they "
+        return _refusal(slot, T_nom, len(Q), "the touches lie on a line (or one spot): they "
                         "define no plane, touch a grid")
     n, c, res = fit_plane(p_base)
 
@@ -168,59 +178,19 @@ def calibrate_plane(rig, arm_id: int, contacts_q) -> PlaneCalibration:
     tilt = float(np.linalg.norm(v))
     why = _verdict(len(Q), rms, float(abs(res[k])), k, tilt, dz)
     return PlaneCalibration(
-        arm_id=arm_id, passed=not why, why=why, n_points=len(Q), T_table_base=T,
+        slot=slot, passed=not why, why=why, n_points=len(Q), T_table_base=T,
         T_table_base_nominal=T_nom.copy(), normal_base=n, offset_base=c,
         roll=float(v[0]), pitch=float(v[1]), tilt=tilt, height_change=dz, rms=rms,
         max_residual=float(abs(res[k])), worst_index=k,
         points_table=p_base @ T[:3, :3].T + T[:3, 3], residuals=res)
 
 
-def calibration_from_events(rig, arm_id: int, rows) -> PlaneCalibration:
-    """`calibrate_plane` on the contact rows of `arm_id` in an event list, in their order."""
+def calibration_from_events(rig, slot: Slot, rows) -> PlaneCalibration:
+    """`calibrate_plane` on the contact rows of `slot` in an event list, in their order."""
     Q = []
     for r in rows:
-        if r.get("event") == "contact" and r.get("arm") == arm_id:
+        if r.get("event") == "contact" and r.get("arm") == slot:
             q = r.get("q")
             ok = isinstance(q, (list, tuple)) and len(q) == 7
             Q.append(np.asarray(q, float) if ok else np.full(7, np.nan))
-    return calibrate_plane(rig, arm_id, np.array(Q).reshape(-1, 7))
-
-
-def calibration_dict(result: PlaneCalibration, date: str | None = None) -> dict:
-    """The file's content: what `aris/rig.py` reads plus what a person wants to see."""
-    r = result
-    mm = lambda x: None if not np.isfinite(x) else round(float(x) * 1e3, 4)
-    deg = lambda x: None if not np.isfinite(x) else round(float(np.rad2deg(x)), 5)
-    out = {
-        "arm_id": int(r.arm_id),
-        "date": date or datetime.date.today().isoformat(),
-        "step": "plane (DESIGN.md section 6, step 1)",
-        "passed": bool(r.passed),
-        "T_table_base": np.asarray(r.T_table_base, float).tolist(),
-        "convention": ("rotation = R(v) @ nominal rotation, v = (roll, pitch, 0) a rotation "
-                       "vector in the table frame (the smallest turn, about a horizontal axis "
-                       "through the base origin); base table z = nominal + height_change; x, y "
-                       "and the turn about the vertical are nominal. The pen tip is the rig's "
-                       "nominal one: its length error is inside the height."),
-        "T_table_base_nominal": np.asarray(r.T_table_base_nominal, float).tolist(),
-        "n_points": int(r.n_points),
-        "rms_mm": mm(r.rms),
-        "max_residual_mm": mm(r.max_residual),
-        "worst_point": int(r.worst_index),
-        "roll_deg": deg(r.roll),
-        "pitch_deg": deg(r.pitch),
-        "tilt_deg": deg(r.tilt),
-        "height_change_mm": mm(r.height_change),
-        "height_map_table_m": np.round(r.points_table, 7).tolist(),
-    }
-    if not r.passed:
-        out["why"] = r.why
-    return out
-
-
-def write_calibration(result: PlaneCalibration, path, date: str | None = None) -> Path:
-    """Write the calibration file (config/calibration/<arm_id>.json) for `aris/rig.py`."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(calibration_dict(result, date), indent=1) + "\n")
-    return path
+    return calibrate_plane(rig, slot, np.array(Q).reshape(-1, 7))
