@@ -5,15 +5,18 @@ motion exactly as the arm will fly it and says pass or fail, with every number i
 shares no code with the planners, so the two can only agree by both being right. In the old code
 every serious bug was found because an independent check disagreed with the planner.
 
-**In.** `check(config_dir, arm_id, motion, phase, q_before=None)`: the rig's `config/` folder,
-which arm, one `Motion` (draw, free, lower or lift), the `Phase` it runs in (who moves, who stands parked,
-which walls), and where the arm is before it starts. Optional keywords set the tolerances in the
-table below.
+**In.** `check(config_dir, slot, motion, phase, q_before=None, fields=())`: the rig's `config/`
+folder, which arm by its slot on the frame (`"2R"`; the old robot ids mean nothing here), one
+`Motion` (draw, free, lower, lift or touch), the `Phase` it runs in (who moves, who stands parked, which
+walls, all by slot), and where the arm is before it starts. Optional keywords set the tolerances
+in the table below.
 
 **Out.** A `Verdict`: `passed`, the list of measurements (name, value, limit, pass or fail, and
 where it happened), `tightest` (the measurement that uses most of its allowance, or the worst
 failing one), and `min_clearance`, the smallest clearance beyond the demanded one over every
-obstacle, in metres. `print(verdict)` gives a short table. Bad input (an empty motion, NaN, an
+obstacle, in metres, and `notes`: how the rig was read, i.e. every part that fell back to its
+nominal value and why (a slot without a passing calibration, a pen part for another pen, a pen
+without a speed). `print(verdict)` gives a short table with the notes under it. Bad input (an empty motion, NaN, an
 arm that does not move in this phase, an unreadable rig) is a failed verdict with the reason,
 never an exception.
 
@@ -32,22 +35,25 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 4 | `clearance steel`: every box of rig.json and every arm's struts, plate and clamp (its own included) | 0.050 m |
 | 4 | `clearance paper (links)`: the arm's moving links | 0.020 m (`body_to_paper_m`) |
 | 4 | `clearance paper (tool)`: everything bolted to the flange except the pen (gripper, blades, holder, pencil tail) | `tool_to_paper_m`; if rig.json lacks it, `body_to_paper_m`, and the verdict says so |
-| 4 | `clearance walls`: the phase's walls that have this arm on one side | 0.025 m |
+| 4 | `clearance walls`: the phase's walls that have this arm on one side, and the fences of rig.json (every phase) | `wall_m`, 0.040 m until x and y are calibrated |
 | 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, base included | 0.050 m |
 | 4 | `clearance footprints`: other arms' footprints over the phase (distance fields), passed as `check(..., fields=...)` in this arm's base frame, as the planners get them in `Obstacles.fields` (`Phase` has no fields) | 0.050 m (the demanded arm-to-arm clearance, not the field's own margin) |
 | 5 | `clearance self`: the capsule pairs at least four joints apart | 0.020 m |
 | 6 | all of 4 and 5 hold between the samples too (below) | |
-| 7 | drawing: `tip on paper` (before the controller presses) | 0.5 mm |
+| 7 | drawing: `tip on paper`: the tip against the **drawing surface**, which lies the current pen's press (`pens.table.<pen>.press_m`, 3.5 mm for the 4H graphite) below the paper; the planned points lie there, and the press is the same number the planners get from `rig.rules().press` | 0.5 mm |
 | 7 | drawing: `tip on line`: distance from the planned tips (`motion.tip_base`) and the line through them, at 1 kHz | 0.2 mm |
 | 7 | drawing: `never backwards`: progress along the line (below) never falls back (a numerical allowance) | 0.01 mm |
 | 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 0.25 mm/s, whatever the drawing speed (a sharp corner slows the pen to about 1 mm/s at any drawing speed; a real stop reads 1e-7 m/s) |
-| 7 | drawing: `tip speed` | drawing speed (rig.json `drawing.draw_speed_m_per_s`, the number the planners read) + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
-| 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip | 0.003 m (`pen_lifted_to_paper_m`) |
-| 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may touch the paper at one end, where its round end reads up to 1.3 mm into the paper plane; it may never go deeper. Everything else as for a free motion | -0.002 m |
+| 7 | drawing: `tip speed` | the current pen's speed on the paper (`speed_m_per_s`, 15 mm/s; the number the planners read; a pen without one falls back to `drawing.draw_speed_m_per_s`, with a note) + 3 % (the timing step overshoots by up to 2.9 % where it speeds up or slows down) |
+| 8 | free: `clearance paper (pen)`: the pen capsule, whose surface ends exactly at the tip, against the real paper | `pen_lifted_to_paper_m` (0.020 m) |
+| 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may reach the drawing surface at one end, where its round end reads up to 1.3 mm below the tip; it may never go 2 mm deeper than the surface. Everything else as for a free motion | 2 mm below the drawing surface: -0.0055 m against the paper today |
+| 8 | lower, lift: `tip on surface (lower, lift)`: a lower ends, a lift starts, with the tip on the drawing surface (a lower that stops on the paper itself fails: the pen would not press) | 0.5 mm |
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
+| 10 | touch (the calibration's probe for the real paper): the motion is split at its bottom (the sample furthest, in joints, from the first); the descent is checked as a lower and the climb as a lift, against the **paper itself** (no press: the touch looks for the paper, it does not draw). `tip on paper`: the descent ends, the climb starts, with the tip on the paper. The extra depth the arm may go on for in reality is not part of the planned path and is not checked. One verdict: each row from the half where it is tighter, its detail saying which | 0.5 mm; pen depth -0.002 m |
 
 The clearances are the **demanded** ones of rig.json (`clearances`), not the planning allowance
-on top. Capsules bolted to the base (link 0) are not checked against obstacles (they hang inside
+on top. The links, the tool and the lifted pen clear the **real paper**; only the pen's own
+rows (drawing, setting down, taking up) know the press. Capsules bolted to the base (link 0) are not checked against obstacles (they hang inside
 the mount), only against the arm itself. One more exception is data in rig.json
 (`hanger.exempt_links`, today `["link1"]`): an arm's link 1 is not checked against its **own**
 struts, plate and clamp, because it only turns about the base axis and a rig test settles that
@@ -74,11 +80,11 @@ exact distance to the body the field was built from.
 
 ## Before the next phase: `check_phase_end`
 
-`check_phase_end(config_dir, phase, q_by_arm)` takes where every arm stands (active arms at the
+`check_phase_end(config_dir, phase, q_by_slot)` takes where every arm stands, by slot (active arms at the
 end of their queues; a parked arm left out stands at its park configuration; an active arm left
 out fails). Everything stands still, so it checks one configuration per arm: every one of the 15
 pairs of arms against each other, whole bodies with their bases, at `arm_to_arm_m` (one row per
-pair, `arms 31 and 71`), and every arm against the steel, the paper (links, tool, pen) and itself
+pair, `arms 2L and 2R`), and every arm against the steel, the paper (links, tool, pen) and itself
 (one row per arm, the tightest of those). No walls: the pairs are measured directly. The
 coordinator calls it before it starts the next phase.
 
@@ -116,10 +122,30 @@ consecutive samples, then a ball per capsule, then the exact distance.
   box and the segment against the box's twelve edges, zero if the segment enters the box (the
   planners walk the piecewise-quadratic distance along the segment). The obstacles stay in the
   table frame, where the steel is axis-aligned (the planners work in each arm's base frame).
-- The rig (`config.py`): its own reader of rig.json and of passing calibration files. Every
-  number the checker takes from the rig, the drawing speed included, comes from there, never
-  from a default in `aris.types`, so the checker and the planners read the same numbers. The
-  struts, plate and clamp of each arm are placed from the words in rig.json, not from `rig.py`.
+- The rig (`config.py`): its own reader of rig.json and of the calibration files. Every
+  number the checker takes from the rig, the press and the drawing speed included, comes from
+  there, never from a default in `aris.types`, so the checker and the planners read the same
+  numbers. The struts, plate and clamp of each slot are placed from the words in rig.json, not
+  from `rig.py`.
+- Slots: `rig.json slots.list`, one entry per slot (`"slot": "2R"`, axis, height, turn, park
+  configuration, `mounted`). A slot whose arm is not mounted keeps its hanger steel and nothing
+  else. Parked arms appear in the verdict as `parked2R:link3.0`, hanger boxes as `strut2R_plus_x`,
+  `plate2R`, `clamp2R`.
+- The calibration file `config/calibration/<slot>.json` has two parts, each applied on its own:
+  `base` (the slot's pose) when it passed; `pen` (the measured tip in the hand frame) when it
+  passed **and** names the pen that is in (`pens.current`). Otherwise the nominal value, and a
+  note in the verdict. A file written for another slot, or a pose that is not rigid, is a broken
+  install: every verdict fails "well formed".
+- The pen: without a measured tip the model's tip moves along the pen axis by the current pen's
+  `tip_length_nominal_m` against the length the model was built for (`fr3.json`
+  `tool.pen_length_m`, 0.020); the pen capsule takes the pen's `capsule_radius_m`. A moved pen
+  capsule keeps its direction: it lies on the line through the tip along the pen axis and its
+  surface ends exactly at the tip (the same rule as the planners' `with_tip`; a test compares
+  the capsule ends with the planners' rig on the same calibration files).
+- The hanger follows the calibrated axis: the arm is bolted to its plate, so a slot's struts,
+  plate and clamp move across the table with the calibrated base position (x and y; the heights
+  are the frame's). They are shifted, not turned: the boxes stay axis aligned, and a few
+  milliradians of turn move a plate corner well under a millimetre.
 - Data is shared, code is not: the capsules, limits, tool and self-collision rule are a copy in
   `aris/check/fr3.json`.
 
@@ -145,23 +171,28 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | kinematics against Drake (URDF from assets), 1000 configurations, 9 frames | 2e-11 (the URDF writes pi/2 as 1.57079632679) |
 | agreement with the planners, 10 000 random configurations per arm, six arms | capsule end points 9e-16 m; steel 4e-16, paper 6e-16, pen 5e-16, walls 6e-16, parked 5e-16, self 6e-16 m. Nothing above 1e-6 m to explain |
 | distances against dense sampling, parallel and point cases | never above, within the sampling error |
-| pen tip over the 4 687 frames of the old hover run of arm 71 against the old code | 5e-16 m |
+| pen tip over the 4 687 frames of the old hover run of arm 71 (slot 2R) against the old code | 5e-16 m |
 | faults caught, one test each | strut, pen 1 mm into the paper (reads -1.5 mm), wall, parked neighbour, self, corner (jerk 2.2 at 1 kHz, 9.0 at 4 kHz, of the limit), velocity 1 % over (reads 1.010; 0.99 passes), tip off the line by 0.5 mm (reads 0.51), stop halfway, empty motion, motion that does not move, start not at q_before, end not at rest, arm not moving in the phase |
 | same motion at 100 Hz, 1 kHz, 4 kHz and as retimed | same verdict; tightest clearance within 0.5 mm |
 | a drawn V turning 150 degrees | passes; slowest along the line 1.6 mm/s at the corner |
 | the sequencer's word at 80 mm/s, corner turning 130 + 18 degrees (`tests/data/arm_stop_31_word_0.npz`) | the pen really slows there: 1.03 mm/s along the line at 1 kHz, 0.83 mm/s tip speed at 10 kHz; not a stop. It failed the old limit (5 % of 80 mm/s = 4 mm/s) and passes the absolute 0.25 mm/s; a real stop halfway reads 7e-8 m/s |
 | drawing 1.5 % over its timing / 4 % over | tip speed 20.33 mm/s passes / 20.83 fails (limit 20.6) |
-| lower (10 mm above to the tip on the paper) and the same reversed as lift | pass; pen depth -0.65 mm. As a free motion it fails the pen's 3 mm; lowered to 3 mm into the paper it fails pen depth (-3.6 mm) |
+| lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
+| a touch down to the paper and back, press 3.5 mm / the same touch planned to the drawing surface | passes / fails `tip on paper` (3.5 mm) and pen depth |
+| a drawn line on the drawing surface (3.5 mm below the paper), checked with the press of 3.5 mm and with a press of 0 | passes (tip 0.01 mm from the surface) / fails `tip on paper` (3.51 mm); the tool and link clearances are the same in both |
+| the two calibration parts on slot 2R: base only, pen part for another pen, pen part only (base failed), both | each part applied exactly when it should; the notes name what stayed nominal and why; capsule ends against the planners' rig on the same files 5e-16 m |
+| hanger of a calibrated slot (base moved 8 mm, -6 mm) | its struts, plate and clamp move by the same x and y, as in the planners' rig; nobody else's steel moves; link 1 to its own strut 61.9 to 60.4 mm |
+| drawing speed from the pen: 15 mm/s; pen set to 10 mm/s; pen without a speed (falls back to `drawing.draw_speed_m_per_s`, 10 mm/s) | limit 15.45 mm/s, passes / 10.30, fails / 10.30, fails, with a note |
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
 | reported against the truth (planners' kernel on a 20 kHz sampling) | never above, within 0.25 mm (78.35 reported, 78.60 true) |
-| good free motions (arms 13, 31, 97) | pass |
-| footprint of arm 71 at park (2 cm cells) seen by arm 31, 3 000 random configurations | both readings below the exact distance everywhere; within 10 cm, exact minus reading: checker 45 mm median, 65 mm at most; kernel 38 / 68 mm |
-| the motion that touches parked arm 71, with 71 given only as its footprint | fails `clearance footprints` (-45 mm) |
-| phase end: all arms at park | pass; tightest arm 31, link 6 against the west seam bar, 128.6 mm (demanded 50) |
-| own-hanger exemption, arm 71 at park | without it the closest steel is link1.0, 61.9 mm from its own minus-x strut; with it link2.2, 201.4 mm from the plus-x strut |
+| good free motions (slots 1L, 2L, 3R) | pass |
+| footprint of slot 2R at park (2 cm cells) seen by slot 2L, 3 000 random configurations | both readings below the exact distance everywhere; within 10 cm, exact minus reading: checker 45 mm median, 65 mm at most; kernel 38 / 68 mm |
+| the motion that touches parked slot 2R, with 2R given only as its footprint | fails `clearance footprints` (-95 mm with the 40 mm walls: another test motion is found) |
+| phase end: all arms at park | pass; tightest slot 2L, link 6 against the west seam bar, 128.6 mm (demanded 50) |
+| own-hanger exemption, slot 2R at park | without it the closest steel is link1.0, 61.9 mm from its own minus-x strut; with it link2.2, 201.4 mm from the plus-x strut |
 | phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
-| phase end: arm 71 into parked arm 31; an active arm missing | caught |
-| speed, CPU time, one core, 62 capsules | 6.8 s free motion 200 ms; 60 s drawing motion 635 ms (with the first 40-capsule model: 145 and 650 ms) |
+| phase end: slot 2R into parked slot 2L; an active arm missing | caught |
+| speed, CPU time, one core, 62 capsules | 6.8 s free motion 191 ms; the same 1.2 m circle, now 81 s at 15 mm/s, 878 ms (at 20 mm/s, 60 s: 635 ms) |
 
 Where the time goes (60 s drawing motion): about 10 000 clearance samples, then the 1 kHz and
 4 kHz readings (240 000 samples of the cubic) and the pen at 1 kHz. Drake is not used at run
@@ -173,14 +204,16 @@ native code), or a tighter bound on how far a capsule moves.
 
 - **The tool and the paper.** The tool keeps its own clearance to the paper (`tool_to_paper_m`,
   provisionally 0: it must not touch). With the refitted tool capsules (62 capsules in all,
-  2026-09-29) a straight line drawn by arm 31 passes: tool 14.5 mm above the paper with the hand
+  2026-09-29) a straight line drawn by slot 2L passes: tool 14.5 mm above the paper with the hand
   square, 8.1 mm at the worst 15 degree lean; links 112.5 mm (a lower bound) and 84.2 mm.
   (The hanging struts follow the technical drawing since 2026-09-30: outer faces 171.75 mm to
   table -x and 222.05 mm to +x of each axis, plate 25.15 mm toward +x, and 30 mm longer than
   the old model, ending 65 mm below the plate.)
-- The old hover run of arm 71 (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
+- The old hover run of arm 71, now slot 2R (lesson L44) fails here: acceleration 218 rad/s² at 1 kHz on the
   flown curve (the old code read 89 at 48 Hz), jerk and the 1 kHz/4 kHz comparison, and link 6
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).
+- The hanger follows a calibrated base by shifting; a turn of the base is not applied to the
+  (axis-aligned) boxes.
 - Parked arms are checked at their park configurations from rig.json only. Arms moving at the
   same time are kept apart by the walls; the checker does not compare two moving arms.
 - A class far above the tightest one is reported as "at least" that value.

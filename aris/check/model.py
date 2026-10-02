@@ -50,8 +50,12 @@ class ArmModel:
     travel: np.ndarray         # (7,K) metres a capsule point can move per radian of joint j
 
 
-def load_model(tip_hand=None) -> ArmModel:
-    """The arm from `fr3.json`; `tip_hand` replaces the pen tip (a calibrated tool)."""
+def load_model(tip_hand=None, pen_length=None, pen_radius=None) -> ArmModel:
+    """The arm from `fr3.json`.  `tip_hand` replaces the pen tip (a measured tip); without it,
+    `pen_length` (the pen's nominal length, rig.json) moves the model's tip along the pen axis.
+    `pen_radius` replaces the pen capsule's radius.  A moved pen capsule keeps its direction:
+    it lies on the line through the tip along the pen axis, its far end where the model's
+    projects onto that line, its surface reaching exactly to the tip."""
     d = json.loads(DATA.read_text())
     joints = d["chain"]["joints"]
     joint_R = np.array([_rpy(*j["rpy"]) for j in joints])
@@ -61,14 +65,26 @@ def load_model(tip_hand=None) -> ArmModel:
         hand_t = hand_t + hand_R @ np.asarray(f["xyz"], float)
         hand_R = hand_R @ _rpy(*f["rpy"])
 
-    tip = np.asarray(d["tool"]["tip_hand"] if tip_hand is None else tip_hand, float)
     lean = np.deg2rad(d["tool"]["pen_lean_deg"])
     pen_axis = np.array([np.sin(lean), 0.0, np.cos(lean)])
+    model_tip = np.asarray(d["tool"]["tip_hand"], float)
+    if tip_hand is not None:
+        tip = np.asarray(tip_hand, float).reshape(3)
+    elif pen_length is not None:
+        tip = model_tip + (float(pen_length) - d["tool"]["pen_length_m"]) * pen_axis
+    else:
+        tip = model_tip
     rows = d["capsules"]["rows"]
     names = tuple(r[0] for r in rows)
-    radius = np.array([r[4] for r in rows], float)
+    radius = np.array([pen_radius if r[3] == "tip" and pen_radius is not None else r[4]
+                       for r in rows], float)
     cap_a = np.array([r[2] for r in rows], float)
-    cap_b = np.array([tip - r[4] * pen_axis if r[3] == "tip" else r[3] for r in rows], float)
+    cap_b = np.array([tip - radius[k] * pen_axis if r[3] == "tip" else r[3]
+                      for k, r in enumerate(rows)], float)
+    if not np.array_equal(tip, model_tip):        # the model as built is left unrounded
+        for k, r in enumerate(rows):
+            if r[3] == "tip":
+                cap_a[k] = cap_b[k] - max(float((cap_b[k] - cap_a[k]) @ pen_axis), 0.0) * pen_axis
     cap_frame = np.array([r[1] for r in rows], int)
 
     lim = d["limits"]

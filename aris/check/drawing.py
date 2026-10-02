@@ -1,7 +1,8 @@
 """The pen on the paper during a drawing motion.
 
 Read at the driver's rate (1 kHz) on the flown curve:
-  height     how far the tip is from the paper plane (before the controller presses)
+  height     how far the tip is from the drawing surface: the paper less the current pen's
+             press, where the planned points lie (the pen is pressed by planning it there)
   off line   how far the tip is from the line it was asked to draw (`motion.tip_base`, the
              polyline through the planned tips), and how far each sample's tip is from its
              own planned point
@@ -24,7 +25,7 @@ GOING = 0.25          # of the fastest speed along the line: the pen "is going" 
 
 @dataclass(frozen=True)
 class PenReport:
-    height: float        # m, largest |tip z - paper z|
+    height: float        # m, largest |tip z - surface z|
     off_line: float      # m, largest distance from the planned line
     backwards: float     # m
     slowest: float       # m/s along the line, between getting going and the final stop
@@ -56,7 +57,7 @@ def _progress(knots, s_at, i, x):
     return s_at[i] + u * (s_at[i + 1] - s_at[i])
 
 
-def pen_report(model: ArmModel, T_table_base, paper_z, traj, tip_base, t_rate, q_rate,
+def pen_report(model: ArmModel, T_table_base, surface_z, traj, tip_base, t_rate, q_rate,
                window: int = 2) -> PenReport:
     """`t_rate`, `q_rate`: the flown curve sampled at the driver's rate (holding samples at the
     ends included).  The line is followed locally: a sample between planned points i and i+1
@@ -64,7 +65,7 @@ def pen_report(model: ArmModel, T_table_base, paper_z, traj, tip_base, t_rate, q
     P = np.asarray(tip_base, float)
     tip_base_now = tip(model, q_rate, np.eye(4))
     tip_table = tip_base_now @ T_table_base[:3, :3].T + T_table_base[:3, 3]
-    height = float(np.max(np.abs(tip_table[:, 2] - paper_z)))
+    height = float(np.max(np.abs(tip_table[:, 2] - surface_z)))
 
     seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
     s_at = np.concatenate([[0.0], np.cumsum(seg)])

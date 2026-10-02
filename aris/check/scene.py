@@ -64,18 +64,25 @@ class Clearance:
         return self.label[cls](p) if p >= 0 else ""
 
 
-def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
+def model_of(rig: RigData, slot: str) -> ArmModel:
+    """The slot's arm with the pen that is in: its measured tip where the slot's calibration has
+    one for this pen, else the pen's nominal length; the pen's capsule radius."""
+    return load_model(rig.mounts[slot].tip_hand, rig.pen_length, rig.pen_radius)
+
+
+def build_scene(rig: RigData, slot: str, walls, parked, drawing: bool,
                 pen_floor: float | None = None, fields=()) -> Scene:
-    """`pen_floor` replaces the pen's lifted clearance to the paper (a negative number lets the
-    pen touch the paper, for setting it down and taking it up).  `fields`: `types.Field`s in
+    """`slot`: the arm, by its slot ("2R"); `parked`: slots.  `pen_floor` replaces the pen's
+    lifted clearance to the (real) paper; a negative number lets the pen into it, for setting it
+    down on the drawing surface and taking it up.  `fields`: `types.Field`s in
     this arm's base frame; each is held to the demanded arm-to-arm clearance of rig.json (the
     field's own margin is the planner's business)."""
-    mount = rig.mounts[arm_id]
-    model = load_model(mount.tip_hand)
+    mount = rig.mounts[slot]
+    model = model_of(rig, slot)
     base = mount.T_table_base[:3, 3]
     names, n, d = [], [], []
     for w in walls:
-        if arm_id not in w.arms:
+        if slot not in w.arms:
             continue
         normal = np.asarray(w.normal_table, float)
         normal = normal / np.linalg.norm(normal)
@@ -88,7 +95,7 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
     o_names, o_a, o_b, o_r = [], [], [], []
     for p in parked:
         other = rig.mounts[p]
-        m = load_model(other.tip_hand)
+        m = model_of(rig, p)
         a, b = capsules(m, other.park_q[None], other.T_table_base)
         o_names += [f"parked{p}:{x}" for x in m.names]
         o_a.append(a[0]), o_b.append(b[0]), o_r.append(m.radius)
@@ -98,7 +105,7 @@ def build_scene(rig: RigData, arm_id: int, walls, parked, drawing: bool,
                   walls=c["wall_m"],
                   parked=c["arm_to_arm_m"], fields=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
-    own = np.array([o == arm_id for o in rig.box_owner], bool)
+    own = np.array([o == slot for o in rig.box_owner], bool)
     return Scene(model, mount.T_table_base, drawing, margin, rig.box_names, rig.box_lo,
                  rig.box_hi, own, rig.own_exempt, tuple(names), np.array(n, float).reshape(-1, 3),
                  np.array(d, float), rig.paper_z, tuple(o_names), cat(o_a, (3,)),

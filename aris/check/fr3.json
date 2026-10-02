@@ -102,6 +102,8 @@
     "source": "aris/kernel/tool.py: tip = (pen_lat, 0, 0.1034 + pen_ext) with pen_lat 0.0860369, pen_ext 0.0460262; the pen leans 23 deg off hand z toward hand +x",
     "tip_hand": [0.0860369, 0.0, 0.1494262],
     "pen_lean_deg": 23.0,
+    "pen_length_m": 0.020,
+    "pen_length_note": "the pen length this tip is built for: how far the graphite stands past the cap's outer face (aris/rig.py MODEL_TIP_LENGTH). A pen of another nominal length (rig.json pens.table.<pen>.tip_length_nominal_m) moves the tip along the pen axis by the difference",
     "pen": ["pen"],
     "tool_bodies": ["hand", "finger_left", "finger_right", "holder", "pen_tail"],
     "tool_note": "the tool is everything bolted to the flange except the pen; against the paper it keeps clearances.tool_to_paper_m"

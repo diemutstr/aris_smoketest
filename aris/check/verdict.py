@@ -52,6 +52,7 @@ class Verdict:
     tightest: str               # the measurement that uses most of its allowance (or fails)
     min_clearance: float        # m beyond the demanded clearance, over every obstacle class
     min_clearance_at: str       # which class and which pair
+    notes: tuple = ()           # how the rig was read: what fell back to nominal, and why
 
     def get(self, name: str) -> Measurement:
         for m in self.measurements:
@@ -72,14 +73,17 @@ class Verdict:
             sign = "<=" if m.kind == "max" else ">="
             rows.append(f"{'  ' if m.passed else '! '}{m.name:32}{m.value:12.5g}"
                         f"{sign:>3}{m.limit:9.4g}  {m.unit}  {m.detail}")
+        rows += [f"note: {n}" for n in self.notes]
         return "\n".join(rows)
 
 
-def verdict(measurements, min_clearance=float("nan"), min_clearance_at="") -> Verdict:
+def verdict(measurements, min_clearance=float("nan"), min_clearance_at="",
+            notes=()) -> Verdict:
     ms = tuple(measurements)
     failed = [m for m in ms if not m.passed]
     ranked = [m for m in ms if m.ranked and not np.isnan(m.used)]
     pool = failed or ranked
     tight = max(pool, key=lambda m: m.used if not np.isnan(m.used) else np.inf).name \
         if pool else ""
-    return Verdict(not failed and bool(ms), ms, tight, float(min_clearance), min_clearance_at)
+    return Verdict(not failed and bool(ms), ms, tight, float(min_clearance), min_clearance_at,
+                   tuple(notes))
