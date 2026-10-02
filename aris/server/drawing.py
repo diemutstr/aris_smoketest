@@ -11,8 +11,8 @@ is accepted as a `.npz` file (`lines` an object array of such dicts, or of (N, 2
 the ids in `ids`); a `.npz` is read only from a local file, never from the network, because
 object arrays are pickles.
 
-`fit` scales a drawing that does not lie inside the drawing area uniformly about the table
-centre until it does.  A drawing that fits is not touched; one that would have to shrink below
+`fit` scales a drawing that does not lie inside the drawing area uniformly about the area's
+centre (`Rig.drawing_area_centre_m`) until it does.  A drawing that fits is not touched; one that would have to shrink below
 half its size is refused.
 """
 from __future__ import annotations
@@ -36,7 +36,8 @@ class Fit:
     scale: float
     bbox_in: tuple
     bbox_out: tuple
-    area: tuple                      # (width along x, width along y), centred on the table
+    area: tuple                      # (width along x, width along y)
+    centre: tuple = (0.0, 0.0)       # the drawing area's centre, table frame
 
 
 def load(path) -> list[Line] | Refusal:
@@ -121,22 +122,36 @@ def bbox(lines) -> tuple:
     return (float(lo[0]), float(lo[1]), float(hi[0]), float(hi[1]))
 
 
-def fit(lines, area) -> tuple[list[Line], Fit] | Refusal:
-    """Scale about the table centre so every point lies inside the area (full widths along x
-    and y, centred on the table).  A drawing inside is returned as it is (scale 1)."""
-    half = 0.5 * np.asarray(area, float)
-    p = np.concatenate([np.asarray(x.points, float)[:, :2] for x in lines])
+def fit(lines, area, centre=(0.0, 0.0)) -> tuple[list[Line], Fit] | Refusal:
+    """Scale about the drawing area's centre (`centre`, table frame) so every point lies inside
+    the area (full widths along x and y around that centre).  A drawing inside is returned as
+    it is (scale 1)."""
+    half, c = 0.5 * np.asarray(area, float), np.asarray(centre, float).reshape(2)
+    p = np.concatenate([np.asarray(x.points, float)[:, :2] for x in lines]) - c
     ext = np.abs(p).max(axis=0)
     ratio = [h / e for h, e in zip(half, ext) if e > 0.0]
     scale = min([1.0] + ratio)
     box = bbox(lines)
+    area_t, centre_t = tuple(float(a) for a in area), tuple(float(x) for x in c)
     if scale >= 1.0:
-        return list(lines), Fit(1.0, box, box, tuple(float(a) for a in area))
+        return list(lines), Fit(1.0, box, box, area_t, centre_t)
     if scale < MIN_SCALE:
         return Refusal("too_large", f"the drawing reaches {ext[0]:.3f} x {ext[1]:.3f} m from "
-                       f"the table centre; to fit the drawing area {area[0]:.2f} x "
-                       f"{area[1]:.2f} m it would shrink to {scale:.2f} of its size "
-                       f"(the least allowed is {MIN_SCALE})")
-    k = np.array([scale, scale, 1.0])
-    out = [Line(x.id, np.asarray(x.points, float) * k, "table", x.intensity) for x in lines]
-    return out, Fit(float(scale), box, bbox(out), tuple(float(a) for a in area))
+                       f"the centre of the drawing area ({c[0]:.3f}, {c[1]:.3f}); to fit the "
+                       f"area {area[0]:.2f} x {area[1]:.2f} m it would shrink to {scale:.2f} "
+                       f"of its size (the least allowed is {MIN_SCALE})")
+    out = []
+    for x in lines:
+        q = np.asarray(x.points, float).copy()
+        q[:, :2] = c + scale * (q[:, :2] - c)
+        out.append(Line(x.id, q, "table", x.intensity))
+    return out, Fit(float(scale), box, bbox(out), area_t, centre_t)
+
+
+def stretch(line: Line, s0: float, s1: float, lid: str) -> Line:
+    """The part of a polyline from arc length s0 to s1, as a new line `lid`."""
+    p = np.asarray(line.points, float)
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))])
+    at = lambda u: np.array([np.interp(u, s, p[:, k]) for k in range(p.shape[1])])
+    inner = p[(s > s0) & (s < s1)]
+    return Line(lid, np.vstack([at(s0), inner, at(s1)]), line.frame, line.intensity)

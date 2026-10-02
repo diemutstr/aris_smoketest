@@ -18,6 +18,7 @@ import numpy as np
 from aris.execute.drivers import Result, Driver
 from aris.execute.log import EventLog
 from aris.execute.queue import End, Queue
+from aris.types import Slot
 
 REST_QD = 1e-3          # rad/s, "standing still" for the parked test
 
@@ -25,7 +26,7 @@ REST_QD = 1e-3          # rad/s, "standing still" for the parked test
 @dataclass(frozen=True)
 class ArmRun:
     """How one arm's queue went."""
-    arm_id: int
+    arm_id: Slot
     phase: str
     status: str             # "finished", "failed" or "stopped"
     done: int               # motions run to the end
@@ -44,7 +45,7 @@ def start_tolerance(rig_or_value) -> float:
 
 
 class Executor:
-    def __init__(self, arm_id: int, driver: Driver, log: EventLog, start_tol):
+    def __init__(self, arm_id: Slot, driver: Driver, log: EventLog, start_tol):
         """`start_tol`: the Rig (its `execution().start_tolerance`) or that value in rad: the
         largest joint difference allowed between where the arm stands and a motion's start."""
         self.arm_id, self.driver, self.log = arm_id, driver, log

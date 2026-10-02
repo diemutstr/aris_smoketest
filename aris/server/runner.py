@@ -56,9 +56,11 @@ def job_header(st, rec, extra) -> dict:
     h = header_for(st.rig, rec.lines, st.rules) if rec.lines else dict(
         rig_digest=st.digests()["rig_digest"],
         calibration_digest=st.digests()["calibration_digest"], rules=None)
-    # the pen's force rules travel with the job: the operator PC applies the header's values
-    h.update(pen=st.rig.pen(), kind=rec.kind, name=rec.name, uncalibrated=st.uncalibrated,
-             driver=st.driver_kind, speed=str(st.speed), **extra)
+    # The job describes itself: the pen that is in (its entry of rig.json's pens table, with
+    # its name and press), the tracking mode, and the person's note (the material, ...).  The
+    # operator PC applies the header's values.
+    h.update(pen=st.pen(), tracking=st.tracking, note=rec.note, kind=rec.kind, name=rec.name,
+             uncalibrated=st.uncalibrated, driver=st.driver_kind, speed=str(st.speed), **extra)
     return h
 
 
@@ -80,17 +82,23 @@ def _plain(o):
 # --------------------------------------------------------------------------- drawing
 
 
-def submit_draw(st, store: JobStore, lines, name: str = "") -> JobRecord | Refusal:
-    """Admit a drawing job and start it.  A drawing that cannot be fitted is a failed job."""
+def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
+                rest_of: str | None = None) -> JobRecord | Refusal:
+    """Admit a drawing job and start it.  A drawing that cannot be fitted is a failed job.
+    `rest_of`: the job whose leftovers these lines are (already in place: not refitted)."""
     rec = store.admit("draw", name)
     if isinstance(rec, Refusal):
         return rec
-    fitted = drawing.fit(lines, st.drawing_area)
+    rec.note, rec.rest_of = note, rest_of
+    fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
     rec.lines = list(lines) if isinstance(fitted, Refusal) else fitted[0]
     rec.fit = None if isinstance(fitted, Refusal) else fitted[1]
     job = Job.create(rec.dir, job_header(st, rec, dict(
-        drawing_area=list(st.drawing_area), drawing_digest_in=digest(list(lines)),
+        drawing_area=list(st.drawing_area), drawing_centre=list(st.drawing_centre),
+        drawing_digest_in=digest(list(lines)), rest_of=rest_of,
         scale=None if rec.fit is None else rec.fit.scale)))
+    # the drawing as it is planned, so its leftovers can be drawn again later (--rest-of)
+    (job.dir / "drawing.json").write_text(json.dumps(drawing.to_dict(rec.lines)))
     rec.set_state("received", lines=len(lines), received=rec.t_received)
     if isinstance(fitted, Refusal):
         rec.report = dict(state="failed", why=f"{fitted.reason}: {fitted.detail}",
@@ -103,6 +111,42 @@ def submit_draw(st, store: JobStore, lines, name: str = "") -> JobRecord | Refus
     rec.thread.start()
     announce(st, rec)
     return rec
+
+
+def rest_lines(store: JobStore, jid: str) -> tuple[list, dict] | Refusal:
+    """The leftovers of a finished drawing job as lines of a new drawing (`<line>#rest`, then
+    `#rest2`, ... when a line has several), from its directory: the drawing as it was planned
+    (drawing.json) and the report's leftover stretches.  -> (lines, the old report)."""
+    rec = store.get(jid)
+    if rec is not None and not rec.finished:
+        return Refusal("running", f"job {jid} is still {rec.state}; stop it or let it end first")
+    d = store.root / jid
+    if "/" in jid or ".." in jid or not (d / "report.json").exists():
+        return Refusal("no_job", f"no finished job {jid}")
+    rep = json.loads((d / "report.json").read_text())
+    if rep.get("kind") != "draw" or rep.get("state") not in ("done", "stopped") \
+            or not (d / "drawing.json").exists():
+        return Refusal("not_a_drawing", f"job {jid} is not a drawing that ran to its end or "
+                       f"was stopped ({rep.get('kind')}, {rep.get('state')})")
+    if not rep.get("leftovers"):
+        return Refusal("nothing_left", f"job {jid} left nothing over")
+    by_id = {x.id: x for x in drawing.parse((d / "drawing.json").read_bytes())}
+    out, count = [], {}
+    for x in rep["leftovers"]:
+        n = count[x["line"]] = count.get(x["line"], 0) + 1
+        lid = f"{x['line']}#rest" + ("" if n == 1 else str(n))
+        out.append(drawing.stretch(by_id[x["line"]], float(x["s0"]), float(x["s1"]), lid))
+    return out, rep
+
+
+def submit_rest(st, store: JobStore, jid: str, note: str = "") -> JobRecord | Refusal:
+    """A new drawing job of what job `jid` left over."""
+    got = rest_lines(store, jid)
+    if isinstance(got, Refusal):
+        return got
+    lines, rep = got
+    return submit_draw(st, store, lines, f"rest of {jid}", note or rep.get("note") or "",
+                       rest_of=jid)
 
 
 def reported_where(st, need_all: bool) -> dict | Refusal:
@@ -222,7 +266,7 @@ def robot_run(rec: JobRecord):
     end = rec.robot_final
     if end is not None:
         run.status, run.why = end["event"].split(" ", 1)[1], end.get("why", "")
-        run.where = {int(a): np.asarray(q, float) for a, q in end.get("where", {}).items()}
+        run.where = {str(a): np.asarray(q, float) for a, q in end.get("where", {}).items()}
     return run
 
 

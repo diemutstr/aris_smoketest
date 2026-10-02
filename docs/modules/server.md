@@ -14,11 +14,22 @@ app). `aris/cli.py` is the command.
 
 ## Before it starts
 
-It loads the rig. If any arm has no passing calibration file (today: none has), it refuses to
-start unless it is started with `--uncalibrated`; then every job report says
-"UNCALIBRATED: every arm runs on its nominal pose and pen". Only the simulated arm driver is
+Arms are named by their slot on the frame, `1L 1R 2L 2R 3L 3R` (row 1 at the −y end, L at −x):
+in queue names, event rows (`"arm": "2R"`), endpoints, commands and reports. The old robot ids
+map 13→1L, 17→1R, 31→2L, 71→2R, 2→3L, 97→3R.
+
+It loads the rig. If any slot's calibration is not applied in both parts (base and pen; today
+none is), it refuses to start unless it is started with `--uncalibrated`; then every job report
+says "UNCALIBRATED: every arm runs on its nominal pose and pen". Only the simulated arm driver is
 built (`--driver sim`, the default); `--speed` sets how many times faster than real time the
 simulated arms play.
+
+**Tracking.** `--tracking position` (mode A, the default): the operator PC flies every motion
+through the joint-trajectory controller and the press is geometric (the drawing surface lies
+the pen's press below the paper). `--tracking impedance` (mode B): the pen-force controller.
+The mode is written into every job header with the pen that is in (`rig.pen()`: its entry of
+rig.json's pens table with its name and press) and the person's note (`aris draw --note
+"4H on 120 g paper"`), so a job describes itself on both machines; the report repeats them.
 
 **`--driver robot`**: the arms are on the operator PC (`robot/`). The server then runs no
 executors: it plans, checks and writes the queues, and the operator PC's runner copies them
@@ -58,35 +69,39 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 
 | endpoint | what it does |
 |---|---|
-| `POST /jobs?name=...` | the drawing file (JSON) as the body; answers the job id; 409 if a job runs, 400 if the file is bad |
+| `POST /jobs?name=...&note=...` | the drawing file (JSON) as the body; answers the job id; 409 if a job runs, 400 if the file is bad |
+| `POST /jobs?rest_of=<id>` | a new drawing of what that finished (done or stopped) job left over; 409 while it runs or when nothing is left |
 | `GET /jobs` | every job of this server run |
 | `GET /jobs/{id}` | state; the fitted drawing (bounding box before and after, scale); per phase and arm: motions queued, done, the current motion, what the planner handed back so far, checker refusals; at the end the report |
 | `GET /jobs/{id}/events` | the event log |
 | `POST /jobs/{id}/stop` | stop (409 if already finished) |
 | `POST /park` | park all arms |
-| `GET /rig` | arms (pose, park configuration, calibration state), the drawing area, the rig and calibration digests, driver and speed |
+| `GET /rig` | slots (pose, park configuration, calibration state of both parts, and each file's parts with their dates), the drawing area and its centre, the pen that is in, the rig and calibration digests, tracking, driver and speed |
 | `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, the joints the operator PC last reported, when (its clock), when the server heard it, and the job |
 | `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
 | `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
-| `GET /jobs/{id}/queues/{phase}/{arm}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
+| `GET /jobs/{id}/queues/{phase}/{slot}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
 | `POST /jobs/{id}/events` | the operator PC: `{source, rows: [{seq, ...}]}`; each row appended to the job's log once, in seq order; answers `{accepted, next_seq, stop}` (stop: the job was stopped here) |
-| `POST /calibrate/{arm}` | the calibrate job for one arm (below); 409 if a job runs |
+| `POST /calibrate/{slot}` | the calibrate job for one slot (below): the file's `base` part; 409 if a job runs |
+| `POST /touchoff/{slot}` | the touch-off job (below): the file's `pen` part |
 | `GET /operator/next?wait=30` | the operator PC: the oldest command it has not acknowledged, or 204 after the wait: `run` a job, `recover` an arm, `report` |
 | `POST /operator/ack` | the operator PC: `{"id": n}`, the command was taken (it is given again until then) |
 | `POST /operator/rows` | the operator PC: `{source, rows}`, what it says outside any job (started, where, report, recovered, stack died, ...); kept in `operator.jsonl` beside the jobs; every `where` or `q` updates the arm positions |
 | `GET /operator`, `POST /operator/report` | the commands waiting, when the operator PC was last heard, its stacks, its last rows; ask it to report |
-| `POST /arms/{id}/recover` | release an arm after a fault, once a person has looked: the simulated arm at once; with `--driver robot`, a `recover` command for the operator PC |
-| `GET /calibration`, `GET /calibration/{arm}` | `{"arms": [...], "files": [...]}`: the arms that have a calibration file under the server's config, each file with a digest; one file as it is (404 if none) |
+| `POST /arms/{slot}/recover` | release an arm after a fault, once a person has looked: the simulated arm at once; with `--driver robot`, a `recover` command for the operator PC |
+| `GET /calibration`, `GET /calibration/{slot}` | `{"arms": [...], "files": [...]}`: the slots that have a calibration file under the server's config, each file with a digest and its parts' pass flags and dates; one file as it is (404 if none) |
 
 ## The command
 
 | command | what it does |
 |---|---|
-| `aris serve [--host --port --driver sim\|robot --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
-| `aris draw <drawing> [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
+| `aris serve [--host --port --driver sim\|robot --tracking position\|impedance --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
+| `aris draw <drawing> [--note ...] [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
+| `aris draw --rest-of <job id>` | draw what that stopped or finished job left over: its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
-| `aris calibrate <arm>` | touch the paper with that arm and write its calibration file |
-| `aris recover <arm>` | release an arm after a fault |
+| `aris calibrate <slot>` | touch the paper on a grid with that slot's arm: the `base` part of its calibration file |
+| `aris touchoff <slot>` | one touch at the slot's reference point: the `pen` part (after every pen switch or handling of the pencil) |
+| `aris recover <slot>` | release an arm after a fault |
 | `aris plan <drawing> [--out dir]` | plan and check only, no server, no arms; writes the job directory and prints the report |
 | `aris check <job dir>` | the checker again on every queued motion, one line per motion |
 
@@ -113,16 +128,16 @@ not read in this round.**
 
 ## The fit rule
 
-The drawing area is the rectangle centred on the table that the system planner accepts,
-worked out from its drawable maps (1.56 x 3.56 m at the 2 cm grid). That is the law. rig.json
-carries the same rectangle (`canvas.drawing_area_m`); `/rig` shows both, and the server refuses
-to start when they differ by more than one grid cell ("the rig file is stale"). The check is
-live once `rig.py` reads that entry (as `Rig.drawing_area_m`); until then `/rig` shows it as
-not read. If a point of the drawing lies
-outside it, the whole drawing is scaled uniformly **about the table centre** until it fits;
+The drawing area is rig.json's rectangle (`canvas.drawing_area_m`) around its centre
+(`canvas.drawing_area_centre_m`, `Rig.drawing_area_centre_m`): the system planner refuses
+anything outside it. The server works out the same rectangle from the drawable maps at start
+and refuses to start when rig.json's is larger than that by more than one grid cell ("the rig
+file is stale"); smaller is allowed on purpose. `/rig` shows both and the centre. If a point of
+the drawing lies outside the area, the whole drawing is scaled uniformly **about the area's
+centre** until it fits;
 the scale is in the job state and the report. A drawing that fits is not touched. A drawing
 that would shrink below half its size is refused (the job fails at once). The drawing is not
-moved, only scaled: a small drawing near an edge shrinks toward the centre.
+moved, only scaled: a small drawing near an edge shrinks toward the area's centre.
 
 ## Planning, checking, queueing
 
@@ -145,15 +160,19 @@ offline (it keeps its own `--check-workers`).
 **Park all arms.** From where every arm stands: with the simulated arms, as they report it;
 with `--driver robot`, as the operator PC last reported it (every event row about an arm
 carries its joints, the runner's first and last rows carry every arm's). An arm that never
-reported refuses the park job by name ("no position reported for arm 71"); the runner itself
+reported refuses the park job by name ("no position reported for arm 2R"); the runner itself
 refuses to move an arm that is not at the start of its first motion, so a stale position
 cannot move an arm the wrong way.
 1. An arm whose pen stopped within its clearance of the paper (rig.json's lifted-pen clearance,
    plus 5 mm; as after a stop mid-drawing) first raises it straight up by that clearance plus
-   5 mm (the sequencer's lift-off
-   rule). All such arms rise together in one phase, "lift pens", behind the walls they were
-   drawing behind (every phase-end check fails while any pen is down).
-2. Then one arm at a time in rig order, each in its own phase ("park 13", ...): a free motion
+   5 mm (the sequencer's lift-off rule). A pen stopped between the drawing surface and that
+   height (in the middle of a set-down or a lift-off) is first set down onto the surface at the
+   landing speed, so the lift-off starts where a lift-off starts. A stop can leave an arm closer
+   to a joint limit than planning would choose; if the planning gates refuse the rise, it is
+   tried once more with the joint-limit margin halved (0.075 rad; the checker still holds the
+   real limits). All such arms rise together in one phase, "lift pens", behind the walls they
+   were drawing behind (every phase-end check fails while any pen is down).
+2. Then one arm at a time in rig order, each in its own phase ("park 1L", ...): a free motion
    to its park, planned around the others (parked ones at their parks; ones not yet parked as
    their bodies where they stand, and for the checker as their footprints), checked, queued,
    run. An arm already at its park is left alone. An arm the planners or the checker refuse
@@ -166,7 +185,7 @@ taken to be at its park, and the runner refuses to move it if it is not).
 ## The calibrate job
 
 Step 1 of the calibration (DESIGN.md section 6): the paper under one arm, found with the arm's
-own pen and joints. `aris calibrate 31`.
+own pen and joints. `aris calibrate 2R`.
 
 1. From where every arm stands, as the park job sees it: the arm need not be parked (a pen at
    the paper first rises, as in park); the other arms are parked arms or, where they are not
@@ -179,18 +198,33 @@ own pen and joints. `aris calibrate 31`.
 3. At each point: a free move to a hover 60 mm above the nominal paper, then a `touch`: the
    pen straight down to the nominal paper and back up (an IK answer every 2 mm at the same hand
    orientation, the sequencer's rise rule), 5 mm/s along the line, with 20 mm of extra depth
-   for the paper's uncertainty. Back to the park at the end. One phase, "calibrate 31".
-4. The checker checks every motion; a touch as its descent (a lower) and its climb (a lift),
-   since the checker knows no touch. The extra depth is declared, not checked.
+   for the paper's uncertainty. Back to the park at the end. One phase, "calibrate 2R".
+4. The checker checks every motion, a touch as a touch (its descent to the real paper and its
+   climb; the press is a drawing matter, not a probe matter). The extra depth is declared, not
+   checked.
 5. The arm stops each touch where it meets the paper and logs a "contact" row with its joints.
    The solver (`aris.calib.calibration_from_events`) fits the plane; a passing result is
-   written as `calibration/<arm>.json` under the server's `--config` and the server reloads
-   the rig, so `aris rig` shows the arm calibrated and the next drawing uses it. The report
+   written as the `base` part of `calibration/<slot>.json` under the server's `--config`
+   (`aris.calib.files.write_base`; the `pen` part is kept) and the server reloads the rig, so
+   `aris rig` shows the part and its date and the next drawing uses it. The report
    gives the points touched and dropped, the spin, the residuals (RMS, worst, each), the tilt,
    roll, pitch and height change, and pass or fail.
-6. A touch that meets no paper within the extra depth is skipped and named; the job fails only
-   if fewer than 9 contacts remain. (This needs the executor to log "no contact" and go on;
-   today a missed touch still stops the arm, and the job then fails naming the point.)
+6. A touch that meets no paper within the extra depth is not a fault: the executor logs "no
+   contact" and goes on, the point is named in the report, and the job fails only if fewer
+   than 9 contacts remain.
+
+## The touch-off job
+
+`aris touchoff 2R`, after every pen switch or handling of the pencil: with a geometric press
+the pen's length is the tone. One touch, planned like one point of the calibrate job (hover,
+touch, home), at the slot's reference point: the `reference_touch` in its calibration file when
+the `pen` part exists; else the grid point nearest the slot's axis that the arm can touch (the
+one straight under the shoulder often cannot be), which then becomes the reference. The
+contact goes to the calib solver (`aris.calib.touchoff`), which measures the tip against the
+slot's measured paper; a passing result is written as the file's `pen` part
+(`aris.calib.files.write_pen`; `base` is kept) and the rig reloads. The report gives the
+reference and where it came from, the correction against the nominal pen length, the change
+against the tip before, and the height the tip was believed at.
 
 **The simulated paper.** `aris serve --sim-paper -12,0,1` gives the simulated arms a paper
 12 mm low at the table centre and turned 1 degree about table y. A touch then meets that
@@ -220,11 +254,12 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 
 | file | what is in it |
 |---|---|
-| `job.json` | the header: rig, calibration and drawing digests, rules, the pen's force rules (rig.json `pen`, which the operator PC applies), scale, driver, speed |
+| `job.json` | the header: rig, calibration and drawing digests, rules, the pen that is in (`rig.pen()`: name, press, force rules, which the operator PC applies), the tracking mode, the note, the drawing area and its centre, scale, `rest_of`, driver, speed |
+| `drawing.json` | the drawing as planned (after the fit), so its leftovers can be drawn again (`--rest-of`) |
 | `phases.jsonl` | the phases in the order they run, then an end line |
-| `<phase>__arm<id>.queue` | the checked motions of one arm in one phase (format: execute.md) |
-| `<phase>__arm<id>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
-| `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning: `t`, `q`, `qd`, `tip_base` (drawing), `kind`, `piece` (line id and arc lengths, JSON), `intensity`, `q_before`, the failed measurements and the whole verdict as text |
+| `<phase>__<slot>.queue` | the checked motions of one arm in one phase (format: execute.md) |
+| `<phase>__<slot>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
+| `refused/<phase>__<slot>__<n>.npz` | every motion the checker refused while planning: `t`, `q`, `qd`, `tip_base` (drawing), `kind`, `piece` (line id and arc lengths, JSON), `intensity`, `q_before`, the failed measurements and the whole verdict as text |
 | `operator.jsonl` (beside the job directories) | the operator PC's rows outside any job |
 | `events.jsonl` | every state change: the job's, the coordinator's, each arm's (with `--driver robot`, the operator PC's rows, marked `source: robot`) |
 | `report.json` | the report below |
@@ -234,6 +269,7 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 | field | meaning |
 |---|---|
 | `state`, `why` | done, stopped or failed, and why |
+| `note`, `pen`, `tracking`, `rest_of` | the person's note, the pen that was in, the tracking mode, the job this one drew the rest of |
 | `drawing` | lines, scale, bounding box before and after the fit |
 | `length_m`, `drawn_m` | the fitted drawing's length; what motions that ran to the end drew |
 | `left_m`, `left_by_reason`, `leftovers` | everything not drawn, as stretches of lines with a reason: the planner's (unreachable, blocked, too short, ...), `failed_check`, `stopped` or `failed` (queued and not run, or not planned yet). Drawn plus left over is the whole drawing; on a done job anything else would show as `unaccounted` |
@@ -251,10 +287,10 @@ A park job's report says per arm "parked", "already at its park" or why not.
 - **The word "unknown"** (13 lines, 1.296 m) through `aris draw` against a live `aris serve`
   (subprocess, 8 planner and 8 checker processes, arms at 20 x real time, empty cache): the
   server was up in 15 s (drawable maps built). Job: first motion after **6.6 s**, planning
-  done at 11.4 s, **done at 13.4 s**. All drawn by arm 71 in phase 1; 53 of 53 motions passed
-  the checker; phase-end check passed (tightest: arm 31 against the steel, 78.6 mm beyond the
+  done at 11.4 s, **done at 13.4 s**. All drawn by arm 71 (now slot 2R) in phase 1; 53 of 53 motions passed
+  the checker; phase-end check passed (tightest: arm 31 (2L) against the steel, 78.6 mm beyond the
   demanded clearance); every arm back at its park.
-- Small drawing (two short lines, arms 13 and 71; 5 cm maps, no cache): first motion 7.2 s,
+- Small drawing (two short lines, arms 13 and 71, now 1L and 2R; 5 cm maps, no cache): first motion 7.2 s,
   done at 7.9 s, 10 of 10 motions pass.
 - Park all arms from random configurations up to 0.05 rad from their parks (five arms to move):
   planned and checked in 7.9 s, done at 8.2 s; the standing arms' footprints take most of it
@@ -297,3 +333,10 @@ the area is scaled, and a stop in the middle of drawing leaves every arm stopped
 with the rest left over as "stopped"; a drawing too big to fit makes `aris draw` fail; `aris
 park` parks every arm from a random near-park configuration and `aris check` confirms the park
 queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
+
+This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
+centre; the header's pen, tracking and note; `--rest-of` (a job stopped midway, its leftovers
+drawn as a new drawing, the two drawn lengths adding up to the whole within the shortest
+piece); the touch-off after the calibrate job on the two-arm rig (the pen part written beside
+the base part, the next touch-off at the remembered reference); park after a stop with a pen
+hovering (set down, then lifted).

@@ -154,7 +154,7 @@ def add_routes(app, st, store) -> None:
                                  media_type="application/x-ndjson")
 
     @app.get("/jobs/{jid}/queues/{phase}/{arm}")
-    def queue(jid: str, phase: str, arm: int, offset: int = 0):
+    def queue(jid: str, phase: str, arm: str, offset: int = 0):
         path = job_of(jid).queue(phase, arm).path
         if not path.exists():
             raise HTTPException(404, "not written yet")

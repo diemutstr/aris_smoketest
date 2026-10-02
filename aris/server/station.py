@@ -26,6 +26,7 @@ from aris.types import Refusal
 # "sim": simulated arms in this process.  "robot": the arms are on the operator PC, whose
 # runner copies the queues and posts the events back; the server runs no executors.
 DRIVERS = ("sim", "robot")
+TRACKING = ("position", "impedance")
 
 
 @dataclass
@@ -46,12 +47,24 @@ class Station:
     positions: object = None
     calib_settings: object = None      # calibrate.CalibSettings; None: the defaults
     operator: object = None            # the operator channel (operator.py)
+    # how the operator PC flies the motions: "position" (mode A, the trajectory controller,
+    # the press is geometric) or "impedance" (mode B, the pen-force controller)
+    tracking: str = "position"
+
+    @property
+    def drawing_centre(self) -> tuple:
+        """The drawing area's centre in the table frame (`Rig.drawing_area_centre_m`)."""
+        c = getattr(self.rig, "drawing_area_centre_m", None)
+        return (0.0, 0.0) if c is None else tuple(float(x) for x in np.asarray(c).reshape(2))
+
+    def pen(self) -> dict:
+        """The pen that is in, as the rig has it (`rig.pen()`: its table entry and its name)."""
+        return dict(self.rig.pen()) if hasattr(self.rig, "pen") else {}
 
     def reload(self) -> None:
         """Read the rig again (after a calibration file was written)."""
         self.rig = Rig.load(self.config_dir)
-        self.uncalibrated = any(not self.rig.calibration_status(a).startswith("applied")
-                                for a in self.rig.arm_ids)
+        self.uncalibrated = any(not self.rig.calibrated(a) for a in self.rig.arm_ids)
 
     @property
     def remote(self) -> bool:
@@ -74,7 +87,8 @@ class Station:
         """What every job runs on, printed once by every command."""
         cal = self.calibration()
         return dict(self.digests(), calibration=cal, uncalibrated=self.uncalibrated,
-                    driver=self.driver_kind, speed=self.speed,
+                    driver=self.driver_kind, speed=self.speed, tracking=self.tracking,
+                    pen=self.pen().get("name"),
                     note=("UNCALIBRATED: every arm runs on its nominal pose and pen"
                           if self.uncalibrated else "calibrated"))
 
@@ -87,7 +101,7 @@ class Positions:
         self._lock = threading.Lock()
         self._q: dict = {}
 
-    def note(self, arm: int, q, at: float, job: str) -> None:
+    def note(self, arm: str, q, at: float, job: str) -> None:
         q = np.asarray(q, float).reshape(-1)
         if q.shape != (7,) or not np.all(np.isfinite(q)):
             return
@@ -101,19 +115,19 @@ class Positions:
         """Every joint position an event row carries: `q` of its arm, `where` of every arm."""
         at = float(row.get("time", time.time()))
         if "arm" in row and isinstance(row.get("q"), list) and len(row["q"]) == 7:
-            self.note(int(row["arm"]), row["q"], at, job)
+            self.note(str(row["arm"]), row["q"], at, job)
         where = row.get("where")
         if isinstance(where, dict):
             for a, q in where.items():
                 if isinstance(q, list) and len(q) == 7:
-                    self.note(int(a), q, at, job)
+                    self.note(str(a), q, at, job)
 
     def all(self) -> dict:
         with self._lock:
             return {a: dict(v) for a, v in self._q.items()}
 
 
-def fake_paper(rig, a: int, spec=None) -> tuple:
+def fake_paper(rig, a: str, spec=None) -> tuple:
     """The simulated arms' paper in arm a's base frame: (normal toward the arm, offset), the
     nominal paper moved by dz and tilted by roll (about table x) and pitch (about table y)
     about the table centre.  The simulated arms hang where the rig says at the start."""
@@ -137,7 +151,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  workers: int | None = None,
                  settings: Settings | None = None, drivers: dict | None = None,
                  with_arms: bool = True, with_area: bool = True,
-                 sim_paper=None) -> Station | Refusal:
+                 sim_paper=None, tracking: str = "position") -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
     False: no drivers at all (plan and check only).  `sim_paper`: (dz m, roll deg, pitch deg),
     the simulated arms' paper against the nominal one (default: the nominal paper).  `with_area` False: the drawing area is
@@ -147,8 +161,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         rig = Rig.load(config_dir)
     except (OSError, ValueError, KeyError) as e:
         return Refusal("rig", f"the rig in {config_dir} does not load: {e}")
-    missing = {a: s for a, s in ((a, rig.calibration_status(a)) for a in rig.arm_ids)
-               if not s.startswith("applied")}
+    missing = {a: rig.calibration_status(a) for a in rig.arm_ids if not rig.calibrated(a)}
     if missing and not uncalibrated:
         return Refusal("uncalibrated", "no passing calibration for arms "
                        + ", ".join(f"{a} ({s})" for a, s in missing.items())
@@ -157,6 +170,8 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         return Refusal("driver", f"driver {driver!r} is not built; built: {DRIVERS}")
     if not speed > 0:
         return Refusal("speed", "the speed must be positive")
+    if tracking not in TRACKING:
+        return Refusal("tracking", f"tracking {tracking!r} is not one of {TRACKING}")
     if drivers is None and with_arms and driver == "sim":
         from aris.execute.drivers.sim import SimArm
         drivers = {a: SimArm(a, rig.park_q(a), speed=speed,
@@ -169,7 +184,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         drivers = {}
     st = Station(rig, config_dir, dict(drivers or {}), kind, float(speed), bool(missing),
                  None if cache_dir is None else Path(cache_dir), Path(jobs_dir), w,
-                 cfg)
+                 cfg, tracking=tracking)
     if st.cache_dir is not None:
         st.cache_dir.mkdir(parents=True, exist_ok=True)
     st.positions = Positions()
@@ -215,5 +230,5 @@ def drawing_area(st: Station) -> tuple:
     """The area the drawable maps give (read from the cache, or built)."""
     ph = all_phases(st.rig)
     maps = maps_mod.load_or_build(st.rig, ph, st.rules.gates, st.settings, st.cache_dir,
-                                  st.workers)
-    return tuple(float(x) for x in np.asarray(area_mod.admissible(maps)))
+                                  st.workers, press=st.rules.press)
+    return tuple(float(x) for x in np.asarray(area_mod.admissible(maps, centre=st.drawing_centre)))

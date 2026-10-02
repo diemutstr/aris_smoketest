@@ -7,7 +7,7 @@ queued and run.
    clearance), all together in one
    phase, "lift pens", behind the walls they were drawing behind (the arms that were drawing
    at a stop are one phase's arms, or arms that cannot touch each other).
-2. Then one arm at a time, in rig order, each in its own phase ("park 13", ...): a free motion
+2. Then one arm at a time, in rig order, each in its own phase ("park 1L", ...): a free motion
    to its park.  No two arms move at once and no walls are needed.  An arm already at its park
    is left alone.
 

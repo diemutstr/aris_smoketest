@@ -4,7 +4,7 @@ A job is one directory:
 
     job.json                     the header: rig, calibration and drawing digests, rules, time
     phases.jsonl                 the phases in the order they run, one per line, then {"end": ..}
-    <phase>__arm<id>.queue       one per (phase, arm), appended to as motions arrive
+    <phase>__<slot>.queue        one per (phase, slot), appended to as motions arrive
     events.jsonl                 what every executor and the coordinator did (log.py)
 
 A queue file is a sequence of records.  A record is a 16-byte frame (b"ARQ1", payload length
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from aris.types import Motion, Phase, Piece, Refusal, Trajectory, Wall
+from aris.types import Motion, Phase, Piece, Refusal, Slot, Trajectory, Wall
 
 MAGIC = b"ARQ1"
 FRAME = struct.Struct("<4sQI")
@@ -175,7 +175,7 @@ def verdict_numbers(v) -> dict:
 class Queue:
     """One arm, one phase.  Append-only; one writer, any number of readers."""
 
-    def __init__(self, path, phase: str = "", arm_id: int = -1):
+    def __init__(self, path, phase: str = "", arm_id: Slot = ""):
         self.path = Path(path)
         self.phase, self.arm_id = phase, arm_id
         self._count, self._last_q, self._closed = None, None, False
@@ -336,8 +336,9 @@ class Job:
     def header(self) -> dict:
         return json.loads((self.dir / "job.json").read_text())
 
-    def queue(self, phase: str, arm_id: int) -> Queue:
-        return Queue(self.dir / f"{_slug(phase)}__arm{arm_id}.queue", phase, arm_id)
+    def queue(self, phase: str, arm_id: Slot) -> Queue:
+        """The queue of one slot ("2R") in one phase: `<phase>__<slot>.queue`."""
+        return Queue(self.dir / f"{_slug(phase)}__{arm_id}.queue", phase, arm_id)
 
     @property
     def log_path(self) -> Path:

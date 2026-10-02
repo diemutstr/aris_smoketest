@@ -148,7 +148,7 @@ def add_routes(app, st, store) -> None:
         return dict(pending=st.operator.pending(), **oplog.view())
 
     @app.post("/arms/{arm}/recover")
-    def recover(arm: int):
+    def recover(arm: str):
         if arm not in st.rig.arm_ids:
             raise HTTPException(404, f"no arm {arm} on this rig")
         if st.remote:
@@ -157,8 +157,15 @@ def add_routes(app, st, store) -> None:
         return dict(recovered=bool(r.done), why=r.why)
 
     @app.post("/calibrate/{arm}")
-    def calibrate_arm(arm: int):
+    def calibrate_arm(arm: str):
         rec = calibrate.submit_calibrate(st, store, arm)
+        if not hasattr(rec, "id"):
+            return refused(409, rec)
+        return dict(id=rec.id, state=rec.state)
+
+    @app.post("/touchoff/{arm}")
+    def touchoff_arm(arm: str):
+        rec = calibrate.submit_calibrate(st, store, arm, kind="touchoff")
         if not hasattr(rec, "id"):
             return refused(409, rec)
         return dict(id=rec.id, state=rec.state)
@@ -166,11 +173,11 @@ def add_routes(app, st, store) -> None:
     @app.get("/calibration")
     def calibration():
         files = calib_files.listing(st.config_dir)
-        return dict(arms=sorted(f["arm"] for f in files if f["arm"] is not None), files=files,
+        return dict(arms=sorted(f["slot"] for f in files), files=files,
                     status={str(a): st.rig.calibration_status(a) for a in st.rig.arm_ids})
 
     @app.get("/calibration/{arm}")
-    def calibration_file(arm: int):
+    def calibration_file(arm: str):
         f = calib_files.read(st.config_dir, arm)
         if f is None:
             raise HTTPException(404, f"no calibration file for arm {arm}")

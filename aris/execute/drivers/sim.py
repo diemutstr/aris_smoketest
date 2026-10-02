@@ -16,13 +16,13 @@ import numpy as np
 
 from aris.execute.drivers import ArmState, Result
 from aris.kernel.retime import sample
-from aris.types import Motion, Trajectory
+from aris.types import Motion, Slot, Trajectory
 
 START_GUARD = 1e-3      # rad, the driver's own refusal: a trajectory that starts elsewhere
 
 
 class SimArm:
-    def __init__(self, arm_id: int, q0, speed: float = 1.0, fail_at: float | None = None,
+    def __init__(self, arm_id: Slot, q0, speed: float = 1.0, fail_at: float | None = None,
                  fail_why: str = "injected failure", tick: float = 0.002, paper=None,
                  tip_of=None):
         """`speed`: times real time (math.inf: at once).  `fail_at`: seconds of the motion

@@ -29,6 +29,8 @@ class JobRecord:
     dir: Path
     name: str = ""                     # the drawing's file name
     t_received: float = 0.0            # time.time()
+    note: str = ""                     # the person's note (material, ...): header and report
+    rest_of: str | None = None         # the job whose leftovers this drawing is
     state: str = "received"
     why: str = ""
     lines: list = field(default_factory=list)            # the fitted drawing

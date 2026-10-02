@@ -1,6 +1,8 @@
 """The drawing server: the one front door.  A FastAPI app over one Station.
 
-    POST /jobs              a drawing (the JSON file as the request body) -> the job id
+    POST /jobs              a drawing (the JSON file as the request body) -> the job id;
+                            ?note=... lands in the header and report; ?rest_of=<id> draws
+                            what that finished job left over (no body)
     GET  /jobs              every job of this server run
     GET  /jobs/{id}         state, fitted drawing, per phase and arm progress, the report
     GET  /jobs/{id}/events  the job's event log
@@ -21,6 +23,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from aris.calib import files as calib_files
 from aris.server import drawing, operator, remote, runner
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
@@ -50,7 +53,9 @@ def rig_view(st) -> dict:
     return plain(dict(
         arms={str(a): dict(T_table_base=rig.T_table_base(a), park_q=rig.park_q(a),
                            calibration=rig.calibration_status(a)) for a in rig.arm_ids},
-        drawing_area_m=list(st.drawing_area), canvas_m=rig.canvas_size,
+        drawing_area_m=list(st.drawing_area), drawing_area_centre_m=list(st.drawing_centre),
+        canvas_m=rig.canvas_size, pen_in=st.pen(),
+        calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)},
         drawing_area_from_maps_m=list(st.maps_area),
         **st.assumptions()))
 
@@ -80,11 +85,17 @@ def create_app(st) -> FastAPI:
         return rec
 
     @app.post("/jobs")
-    async def submit(request: Request, name: str = "drawing.json"):
+    async def submit(request: Request, name: str = "drawing.json", note: str = "",
+                     rest_of: str = ""):
+        if rest_of:                      # the leftovers of a finished job, as a new drawing
+            rec = runner.submit_rest(st, store, rest_of, note)
+            if isinstance(rec, Refusal):
+                return _refused(409, rec)
+            return plain(dict(id=rec.id, state=rec.state, why=rec.why))
         lines = drawing.parse(await request.body())
         if isinstance(lines, Refusal):
             return _refused(400, lines)
-        rec = runner.submit_draw(st, store, lines, name)
+        rec = runner.submit_draw(st, store, lines, name, note)
         if isinstance(rec, Refusal):
             return _refused(409, rec)
         return plain(dict(id=rec.id, state=rec.state, why=rec.why))

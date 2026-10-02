@@ -1,17 +1,19 @@
 """The one command: `aris ...`.
 
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
-    aris draw   <drawing.json|.npz> [--server URL]   submit, follow, report; exit 0 on PASS
+    aris draw   <drawing.json|.npz> [--note ..] [--server URL]   submit, follow, report; exit
+                                                     0 on PASS; --rest-of <job> draws its leftovers
     aris status | stop | park | rig   [--server URL]
-    aris calibrate <arm>                             touch the paper, write the arm's calibration
-    aris recover <arm>                               release an arm after a fault
+    aris calibrate <slot>                            touch the paper on a grid: the base part
+    aris touchoff <slot>                             one touch: the pen part
+    aris recover <slot>                              release an arm after a fault
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
 
 Every command prints its assumptions (rig and calibration digests, calibration state, driver,
 speed) once and one PASS or FAIL line at the end.  Only `serve`, `plan` and `check` touch the
-planners or the checker; the others talk to the server only.  (Just over 400 lines: twelve
-short subcommands side by side; split by kind of command when it grows further.)
+planners or the checker; the others talk to the server only.  (Over 400 lines: thirteen
+short subcommands and the report printer side by side; the next one splits it by kind.)
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -60,10 +63,13 @@ def verdict(ok: bool, what: str) -> int:
 
 def assumptions_line(a: dict) -> str:
     cal = a.get("calibration", {})
-    applied = sum(str(s).startswith("applied") for s in cal.values())
+    ok = lambda s: (all(str(v).startswith("applied") for v in s.values()) and bool(s)
+                    if isinstance(s, dict) else str(s).startswith("applied"))
+    applied = sum(ok(s) for s in cal.values())
     return (f"rig {a.get('rig_digest')}, calibration {a.get('calibration_digest')} "
-            f"({applied} of {len(cal)} arms calibrated"
+            f"({applied} of {len(cal)} slots calibrated, base and pen"
             f"{'; UNCALIBRATED: nominal poses' if a.get('uncalibrated') else ''}), "
+            f"pen {a.get('pen')}, tracking {a.get('tracking')}, "
             f"driver {a.get('driver')}, speed {a.get('speed')}")
 
 
@@ -76,6 +82,16 @@ def _mm(x) -> str:
 
 def report_lines(rep: dict) -> list[str]:
     out = [f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else "")]
+    if rep.get("kind") == "touchoff":
+        ref = rep.get("reference", {})
+        out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "
+                   f"({ref.get('source')}), {rep.get('contacts', 0)} contact")
+        t = rep.get("touchoff")
+        if t:
+            out.append(f"pen          {'passed' if t.get('passed') else 'FAILED: ' + str(t.get('why'))}"
+                       + "".join(f", {k} {v}" for k, v in t.items() if k not in ("passed", "why")))
+        if rep.get("written"):
+            out.append(f"written      {rep['written']}")
     if rep.get("kind") == "calibrate":
         out.append(f"arm          {rep.get('arm')}: {rep.get('points', 0)} points touched "
                    f"({rep.get('contacts', 0)} contacts), {len(rep.get('dropped', []))} out of "
@@ -171,6 +187,17 @@ def _assume(http) -> dict | None:
 
 
 def cmd_draw(a, http) -> int:
+    q = urllib.parse.urlencode(dict(note=a.note)) if a.note else ""
+    if a.rest_of:
+        if a.drawing:
+            return verdict(False, "give a drawing or --rest-of, not both")
+        if _assume(http) is None:
+            return verdict(False, "the server does not answer")
+        code, r = http.post(f"/jobs?rest_of={urllib.parse.quote(a.rest_of)}"
+                            + (f"&{q}" if q else ""), b"")
+        return _follow_draw(a, http, code, r)
+    if not a.drawing:
+        return verdict(False, "no drawing given (or --rest-of <job id>)")
     path = Path(a.drawing)
     if path.suffix.lower() == ".npz":
         from aris.server import drawing
@@ -182,7 +209,12 @@ def cmd_draw(a, http) -> int:
         body = path.read_bytes()
     if _assume(http) is None:
         return verdict(False, "the server does not answer")
-    code, r = http.post(f"/jobs?name={urllib.request.quote(path.name)}", body)
+    code, r = http.post(f"/jobs?name={urllib.parse.quote(path.name)}" + (f"&{q}" if q else ""),
+                        body)
+    return _follow_draw(a, http, code, r)
+
+
+def _follow_draw(a, http, code, r) -> int:
     if code != 200:
         return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
     say(f"job {r['id']}")
@@ -193,10 +225,14 @@ def cmd_draw(a, http) -> int:
     return verdict(job_passed(rep), _summary(rep))
 
 
-def cmd_calibrate(a, http) -> int:
+def cmd_touchoff(a, http) -> int:
+    return cmd_calibrate(a, http, "touchoff")
+
+
+def cmd_calibrate(a, http, kind: str = "calibrate") -> int:
     if _assume(http) is None:
         return verdict(False, "the server does not answer")
-    code, r = http.post(f"/calibrate/{a.arm}")
+    code, r = http.post(f"/{kind}/{a.arm}")
     if code != 200:
         return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
     say(f"job {r['id']}")
@@ -204,7 +240,7 @@ def cmd_calibrate(a, http) -> int:
     for line in report_lines(v["report"]):
         say(line)
     rep = v["report"]
-    return verdict(v["state"] == "done", f"calibrate arm {a.arm}: {v['state']}"
+    return verdict(v["state"] == "done", f"{kind} {a.arm}: {v['state']}"
                    + (f", written {rep['written']}" if rep.get("written") else ""))
 
 
@@ -271,12 +307,18 @@ def cmd_rig(a, http) -> int:
     r = _assume(http)
     if r is None:
         return verdict(False, "the server does not answer")
-    say(f"drawing area {r['drawing_area_m'][0]:.3f} x {r['drawing_area_m'][1]:.3f} m, "
-        f"canvas {r['canvas_m'][0]:.3f} x {r['canvas_m'][1]:.3f} m")
+    c = r.get("drawing_area_centre_m") or [0.0, 0.0]
+    say(f"drawing area {r['drawing_area_m'][0]:.3f} x {r['drawing_area_m'][1]:.3f} m around "
+        f"({c[0]:+.3f}, {c[1]:+.3f}), canvas {r['canvas_m'][0]:.3f} x {r['canvas_m'][1]:.3f} m")
+    say(f"pen {(r.get('pen_in') or {}).get('name')}, tracking {r.get('tracking')}")
+    files = r.get("calibration_files", {})
     for aid, arm in r["arms"].items():
         T = arm["T_table_base"]
-        say(f"arm {aid:<3} axis ({T[0][3]:+.4f}, {T[1][3]:+.4f}) m  park "
-            + " ".join(f"{x:+.3f}" for x in arm["park_q"]) + f"  calibration {arm['calibration']}")
+        f = files.get(aid, {})
+        parts = "; ".join(f"{k} {'passed' if f[k]['passed'] else 'FAILED'} {f[k]['date']}"
+                          for k in ("base", "pen") if k in f) or "no file"
+        say(f"slot {aid:<3} axis ({T[0][3]:+.4f}, {T[1][3]:+.4f}) m  calibration "
+            f"{arm['calibration']}  [{parts}]")
     return verdict(True, "rig read")
 
 
@@ -291,7 +333,8 @@ def _station(a, with_arms: bool):
                         cache_dir=None if a.cache in ("", "none") else a.cache,
                         jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
                         settings=Settings(grid_step=a.map_grid), with_arms=with_arms,
-                        sim_paper=_sim_paper(getattr(a, "sim_paper", None)))
+                        sim_paper=_sim_paper(getattr(a, "sim_paper", None)),
+                        tracking=getattr(a, "tracking", "position"))
 
 
 def _sim_paper(text):
@@ -331,7 +374,7 @@ def cmd_plan(a, _http=None) -> int:
     out_dir = Path(a.out or f"out/plans/{time.strftime('%Y%m%d-%H%M%S')}-{Path(a.drawing).stem}")
     rec = JobRecord(out_dir.name, "draw", out_dir, Path(a.drawing).name, time.time())
     rec.lines, rec.fit = fitted
-    job = Job.create(out_dir, runner._header(st, rec, dict(scale=rec.fit.scale)))
+    job = Job.create(out_dir, runner.job_header(st, rec, dict(scale=rec.fit.scale)))
     rec.set_state("planning")
     out = pipeline.plan_into(st, job, rec.lines, None, rec)
     bad = out.error or (out.refusal and f"{out.refusal.reason}: {out.refusal.detail}")
@@ -376,21 +419,29 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--driver", default="sim",
                    help="sim: simulated arms here; robot: the operator PC runs the arms")
     s.add_argument("--speed", type=float, default=1.0, help="simulated arm: times real time")
+    s.add_argument("--tracking", default="position", choices=("position", "impedance"),
+                   help="how the operator PC flies motions: position (mode A, the default) or "
+                   "impedance (mode B, the pen force)")
     s.add_argument("--sim-paper", default=None,
                    help="simulated arms' paper: dz_mm,roll_deg,pitch_deg against the nominal")
     s.add_argument("--jobs", default="out/jobs", help="where the job directories go")
     for name, what in (("draw", "submit a drawing and follow it"),):
         s = sub.add_parser(name, help=what)
-        s.add_argument("drawing")
-    for name, what in (("calibrate", "touch the paper with one arm and write its calibration"),
+        s.add_argument("drawing", nargs="?", default=None)
+        s.add_argument("--note", default="", help="the material and anything else: kept in "
+                       "the job's header and report")
+        s.add_argument("--rest-of", default=None, metavar="JOB",
+                       help="draw what that finished job left over")
+    for name, what in (("calibrate", "touch the paper on a grid: the slot's base calibration"),
+                       ("touchoff", "one touch at the reference point: the slot's pen calibration"),
                        ("recover", "release an arm after a fault, once a person has looked")):
         s = sub.add_parser(name, help=what)
-        s.add_argument("arm", type=int)
+        s.add_argument("arm", help="the slot, e.g. 2R")
     for name, what in (("status", "the current or last job"), ("stop", "stop the job"),
                        ("park", "park all arms"), ("rig", "the rig the server runs")):
         sub.add_parser(name, help=what)
     for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "calibrate",
-                                       "recover")):
+                                       "touchoff", "recover")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -406,7 +457,7 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = dict(serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
                 park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check,
-                calibrate=cmd_calibrate, recover=cmd_recover)
+                calibrate=cmd_calibrate, recover=cmd_recover, touchoff=cmd_touchoff)
 
 
 def main(argv=None, http=None) -> int:

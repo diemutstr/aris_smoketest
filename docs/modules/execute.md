@@ -65,7 +65,7 @@ section 4, is not built.)
 |---|---|
 | `job.json` | the header: digests of the rig, the calibration and the drawing, the drawing rules, the time |
 | `phases.jsonl` | the phases in the order they run (who moves, who stands parked, the walls), one per line, then an end line |
-| `<phase>__arm<id>.queue` | one per phase and moving arm: the queue (below) |
+| `<phase>__<slot>.queue` | one per phase and moving arm, named by its slot (`phase_1__2R.queue`): the queue (below) |
 | `events.jsonl` | the event log (below) |
 
 **A queue file** is a sequence of records, each written in one piece and flushed to disk:
@@ -74,8 +74,8 @@ section 4, is not built.)
 |---|---|---|
 | frame | 16 bytes | `ARQ1`, the payload length, a CRC-32 of the payload |
 | payload | as stated | an uncompressed numpy `.npz`: `meta` (JSON text) and the arrays |
-| first record | | `meta`: format, phase, arm |
-| each motion | | `meta`: its number, kind, piece (line id and arc lengths), pressure, the checker's numbers (passed, the tightest measurement with its value and limit, the smallest clearance and where); arrays `t`, `q`, `qd` and, for drawing, `tip_base`, bit for bit as planned |
+| first record | | `meta`: format, phase, arm (the slot) |
+| each motion | | `meta`: its number, kind, piece (line id and arc lengths), pressure, the checker's numbers (passed, the tightest measurement with its value and limit, the smallest clearance and where), for a touch its `extra_depth`; arrays `t`, `q`, `qd` and, for drawing and touches, `tip_base`, bit for bit as planned. `Queue.append(motion)` takes the checker's word the motion carries (`Motion.checked`) and refuses a motion without a passing one |
 | last record | | the end marker: how many motions, complete or cut short, a note |
 
 A reader that finds fewer bytes than a frame announces has met a motion still being written
@@ -84,9 +84,10 @@ are used.
 
 ## What the executor logs
 
-One JSON line per state change, each with the time, the arm and the phase: `started`,
-`holding` (queue empty), `motion started` (number, kind, duration), `motion done` (where the arm
-is), `finished` (how many, parked or not, complete or not), `failed` or `stopped` (which motion,
+One JSON line per state change, each with the time, the arm (its slot, `"arm": "2R"`) and the
+phase: `started`, `holding` (queue empty), `motion started` (number, kind, duration), `motion
+done` (where the arm is), for a touch `contact` (the joints where the pen met the paper) or
+`no contact` (none within the extra depth: the point is skipped, the arm goes on), `finished` (how many, parked or not, complete or not), `failed` or `stopped` (which motion,
 why, where the arm is). The coordinator adds `job started`, `phase started`,
 `phase end check` (passed, tightest, smallest clearance), `phase done`, `phase failed` and
 `job done / failed / stopped` with where every arm is. Each line is one appending write, so the
@@ -94,14 +95,17 @@ drawing server can read the file while it grows.
 
 ## The simulated arm
 
-`SimArm(arm_id, q0, speed=1.0, fail_at=None)` plays each trajectory in a background thread,
+`SimArm(slot, q0, speed=1.0, fail_at=None, paper=None, tip_of=None)` plays each trajectory in a background thread,
 reading the cubic between the samples at `speed` times real time (`math.inf`: at once), and
 lands exactly on the last sample. `fail_at` makes it fault at that second of its motion clock
 (the seconds flown, at the trajectories' own timing): it stops where it is, holds, and refuses
 to move until `recover()`. Like a joint trajectory controller, it refuses a trajectory that
-starts more than 1 mrad from where it stands.
+starts more than 1 mrad from where it stands. With a fake `paper` (a plane in its base frame,
+from `aris serve --sim-paper`) and its tip kinematics, `touch` flies the whole down-and-up and
+answers the joints where the planned descent, carried straight on for `extra_depth`, crosses
+that plane, or "no contact".
 
-It does **not** simulate: contact with the paper or the pen force, compliance, any tracking
+It does **not** simulate: the pen force, compliance, any tracking
 or controller error, braking (it stops dead), communication delays or dropouts, joint limits
 or collisions (the checker has settled those before a motion is queued). It proves the
 bookkeeping and the order of events, not the arm.
@@ -128,15 +132,15 @@ coordinator says so (L140).
   13 (1.73 s of motion) run at 50x in 0.04 s and land on the last configuration to 1e-9; an
   injected fault halfway through motion 1 stops the executor at motion 1 with its reason, and
   the arm holds there; an arm 20 mrad off on joint 5 is refused before anything moves; the
-  coordinator runs two phases on arms 13 and 2 while the job is still being written, both
+  coordinator runs two phases on arms 13 and 2 (slots 1L and 3L) while the job is still being written, both
   phase-end checks pass, both arms end at their parks to 1e-9; a stop holds every arm
   mid-motion; a queue cut short ends the job after its phase.
 - Slow set, the word "unknown" end to end: planned by the system planner (all of it goes to
-  arm 71 in phase 1: 53 motions, 98.1 s of motion; the other five arms have nothing to do and
+  arm 71 (slot 2R) in phase 1: 53 motions, 98.1 s of motion; the other five arms have nothing to do and
   hold at their parks), every motion checked and queued while six simulated arms run at 20x.
   Planned, checked and queued in 29.1 s wall (drawable maps and kinematic table built from
   scratch); the first motion started 24.4 s in, and the job was done 5.1 s later, 0.5 s after
-  the last motion was queued. The phase-end check passed (tightest: arm 31 against the steel,
+  the last motion was queued. The phase-end check passed (tightest: arm 31, slot 2L, against the steel,
   78.6 mm beyond the demanded clearance). Every arm ends at its park to 1e-9, and the queues on
   disk equal what was planned, bit for bit. Numbers in `tests/data/execute_word.npz`.
 

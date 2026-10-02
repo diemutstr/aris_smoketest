@@ -13,8 +13,8 @@ Planning, for one arm standing at its park with every other arm parked:
    flown back down: the "touch" motion is that descent and the climb back, starting and
    ending at the hover, with `extra_depth` the declared uncertainty of the paper's height.
 4. A free motion from the park to the first hover, between hovers, and back to the park.
-Every motion is checked by the independent checker (a touch as its descent, a lower, and its
-climb, a lift: the checker knows no touch) and queued in one phase, "calibrate <arm>".
+Every motion is checked by the independent checker (a touch as the checker knows it: its
+descent to the real paper and its climb) and queued in one phase, "calibrate <arm>".
 
 When the job has run, the contact rows (the joints where each touch met the paper) go to the
 solver (`aris.calib.calibration_from_events`); a passing result is written as
@@ -54,7 +54,7 @@ class CalibSettings:
 
 @dataclass(frozen=True)
 class Plan:
-    arm: int
+    arm: str
     phase: Phase
     steps: list                 # park.Step, one per motion, in order (all of this arm)
     points_table: np.ndarray    # (N,2) the grid points touched, in order
@@ -63,12 +63,14 @@ class Plan:
     why: str = ""               # why there is no plan
 
 
-def grid_points(rig, arm_id: int, area, cfg: CalibSettings) -> np.ndarray:
-    """(N,2) table xy: a grid over the part of the drawing area near the arm."""
+def grid_points(rig, arm_id: str, area, cfg: CalibSettings, centre=(0.0, 0.0)) -> np.ndarray:
+    """(N,2) table xy: a grid over the part of the drawing area (centred on `centre`) near the
+    arm."""
     axis = rig.T_table_base(arm_id)[:2, 3]
+    c = np.asarray(centre, float).reshape(2)
     half = 0.5 * np.asarray(area, float) - cfg.edge
-    lo = np.maximum(-half, axis - cfg.radius)
-    hi = np.minimum(half, axis + cfg.radius)
+    lo = np.maximum(c - half, axis - cfg.radius)
+    hi = np.minimum(c + half, axis + cfg.radius)
     xs, ys = np.linspace(lo[0], hi[0], cfg.grid), np.linspace(lo[1], hi[1], cfg.grid)
     pts = [(x, y) for i, x in enumerate(xs)
            for y in (ys if i % 2 == 0 else ys[::-1])]          # a serpentine order
@@ -79,6 +81,7 @@ def grid_points(rig, arm_id: int, area, cfg: CalibSettings) -> np.ndarray:
 def _rise(rig, arm, guard, paper, a, xy, spin, cfg, gates):
     """The path from the paper at xy up to the hover, under this spin, or None."""
     T_bt = rig.T_base_table(a)
+    # the touch ends on the nominal paper (the press is a drawing matter, not a probe matter)
     tip = T_bt[:3, :3] @ np.array([xy[0], xy[1], rig.paper_z]) + T_bt[:3, 3]
     T = arm.hand_pose(tip[None], paper.normal, np.array([spin]), np.zeros((1, 2)))
     q7s = rig.park_q(a)[6] + Q7_TRIES
@@ -134,31 +137,23 @@ def touch_motion(arm, guard, path_up, rules, cfg) -> Motion | str:
 
 
 def check_touch(config_dir, a, m: Motion, phase, q_before, fields=()):
-    """The touch as the checker knows it: its descent as a lower, its climb as a lift.
-    -> (passed, numbers of the tighter half, the verdicts)."""
-    k = _bottom(m)
-    down = Trajectory(m.traj.t[:k + 1], m.traj.q[:k + 1], m.traj.qd[:k + 1])
-    up = Trajectory(m.traj.t[k:] - m.traj.t[k], m.traj.q[k:], m.traj.qd[k:])
-    v1 = check(config_dir, a, Motion("lower", down), phase, q_before, fields=fields)
-    v2 = check(config_dir, a, Motion("lift", up), phase, m.traj.q[k], fields=fields)
-    n1, n2 = verdict_numbers(v1), verdict_numbers(v2)
-    worst = n1 if n1["min_clearance"] <= n2["min_clearance"] else n2
-    return bool(v1.passed and v2.passed), dict(worst, passed=bool(v1.passed and v2.passed)), \
-        (v1, v2)
+    """The checker on a touch (it splits the touch at its bottom itself: the descent to the
+    real paper, the climb).  -> (passed, the numbers the motion carries, the verdict)."""
+    v = check(config_dir, a, m, phase, q_before, fields=fields)
+    return bool(v.passed), verdict_numbers(v), v
 
 
-def _bottom(m: Motion) -> int:
-    """The sample where the descent ends: the one furthest (in joints) from the hover."""
-    return int(np.argmax(np.linalg.norm(m.traj.q - m.traj.q[0], axis=1)))
-
-
-def plan_calibrate(st, a: int, where: dict, cfg: CalibSettings = CalibSettings()) -> Plan:
-    """The calibrate job's motions for arm `a`, from where every arm stands (`where`)."""
+def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings(),
+                   points=None, name: str = "calibrate", min_points: int | None = None) -> Plan:
+    """The calibrate job's motions for arm `a`, from where every arm stands (`where`).
+    `points`: (N,2) table xy to touch instead of the grid (the touch-off: one point);
+    `name`: the phase is "<name> <slot>"; `min_points`: fewer reachable is a refusal."""
+    min_points = MIN_CONTACTS if min_points is None else min_points
     rig, rules = st.rig, st.rules
     now = {b: np.asarray(q, float) for b, q in where.items()}
     scene = Scene(rig)
     steps, q = [], now[a]
-    obs, fields, phase = scene.of(a, now, (a,), (), f"calibrate {a}")
+    obs, fields, phase = scene.of(a, now, (a,), (), f"{name} {a}")
     if not at_park(rig, a, q) and pen_down(rig, a, q):      # as the park job: lift it first
         up = lift_pens(st, scene, now, [a])[0]
         if up.why:
@@ -168,7 +163,8 @@ def plan_calibrate(st, a: int, where: dict, cfg: CalibSettings = CalibSettings()
     arm, gates = rig.arm(a), rules.gates
     guard = Guard(arm, obs, gates)
     paper = rig.paper(a, for_planning=True)
-    pts = grid_points(rig, a, st.drawing_area, cfg)
+    pts = grid_points(rig, a, st.drawing_area, cfg, st.drawing_centre) if points is None \
+        else np.asarray(points, float).reshape(-1, 2)
     spin, paths, dropped = _choose_spin(rig, arm, guard, paper, a, pts, cfg, gates)
     kept, touches = [], []
     for k in sorted(paths):
@@ -186,26 +182,28 @@ def plan_calibrate(st, a: int, where: dict, cfg: CalibSettings = CalibSettings()
         steps += [Step(a, phase, (go,), (v,), fields),
                   Step(a, phase, (replace(touch, checked=numbers),), (None,), fields)]
         q, kept = touch.q_end, kept + [k]
-    home = free_plan(arm, q, rig.park_q(a), obs, rules, seed_extra=b"calibrate home")
     out = lambda why, st_=(): Plan(a, phase, list(st_), pts[kept],
                                    [tuple(map(float, pts[k])) for k in dropped], spin, why)
+    if not kept:
+        return out("no point can be touched")
+    home = free_plan(arm, q, rig.park_q(a), obs, rules, seed_extra=b"calibrate home")
     if isinstance(home, Refusal):
         return out(f"no way back to the park: {home.reason}: {home.detail}")
     v = check(st.config_dir, a, home, phase, q, fields=fields)
     if not v.passed:
         return out("the way back to the park fails the checker: " + ", ".join(v.failed))
     steps.append(Step(a, phase, (home,), (v,), fields))
-    if len(kept) < MIN_CONTACTS:
-        return out(f"only {len(kept)} grid points can be touched (at least {MIN_CONTACTS})")
+    if len(kept) < min_points:
+        return out(f"only {len(kept)} points can be touched (at least {min_points})")
     return out("", steps)
 
 
 # --------------------------------------------------------------------------- the job
 
 
-def submit_calibrate(st, store, arm: int):
-    """Admit a calibrate job for `arm` and start it (refused like park: another job runs, or
-    with the robot, no position reported)."""
+def submit_calibrate(st, store, arm: str, kind: str = "calibrate"):
+    """Admit a calibrate job (`kind` "calibrate") or a touch-off ("touchoff") for `arm` and
+    start it (refused like park: another job runs, or with the robot, no position reported)."""
     import threading
     from aris.execute import Job
     from aris.server import runner
@@ -216,19 +214,19 @@ def submit_calibrate(st, store, arm: int):
         where = runner.reported_where(st, need_all=True)
         if isinstance(where, _Refusal):
             return where
-    rec = store.admit("calibrate", f"calibrate arm {arm}")
+    rec = store.admit(kind, f"{kind} {arm}")
     if isinstance(rec, _Refusal):
         return rec
     job = Job.create(rec.dir, runner.job_header(st, rec, dict(arm=arm)))
     rec.set_state("received", received=rec.t_received, arm=arm)
-    rec.thread = threading.Thread(target=_run, args=(st, rec, job, arm), daemon=True,
+    rec.thread = threading.Thread(target=_run, args=(st, rec, job, arm, kind), daemon=True,
                                   name=f"job {rec.id}")
     rec.thread.start()
     runner.announce(st, rec)
     return rec
 
 
-def _run(st, rec, job, arm: int) -> None:
+def _run(st, rec, job, arm: str, kind: str = "calibrate") -> None:
     import time
     import traceback
     from aris.server import runner
@@ -238,32 +236,42 @@ def _run(st, rec, job, arm: int) -> None:
         where = runner.reported_where(st, need_all=True) if st.remote \
             else runner.prepare_arms(st)
         if isinstance(where, _Refusal):
-            return _fail(st, rec, job, where.detail)
+            return _fail(st, rec, job, where.detail, None, kind)
         rec.set_state("planning")
         t0 = time.perf_counter()
-        plan = plan_calibrate(st, arm, where, st.calib_settings or CalibSettings())
+        cfg = st.calib_settings or CalibSettings()
+        if kind == "touchoff":
+            from aris.server import touchoff
+            plan, ref, source = touchoff.plan(st, arm, where, cfg)
+        else:
+            plan = plan_calibrate(st, arm, where, cfg)
         planning_s = time.perf_counter() - t0
         if plan.why:
-            return _fail(st, rec, job, plan.why, plan)
-        moving = queue_steps(job, rec, plan.steps, "calibration planned")
+            return _fail(st, rec, job, plan.why, plan, kind)
+        moving = queue_steps(job, rec, plan.steps, f"{kind} planned")
         rec.set_state("moving")
         run = run_queued(st, rec, job, moving, where)
-        state, why, result, written = _solve(st, rec, plan, run)
-        rep = _report(st, rec, plan, run, result, written, planning_s, state, why)
+        if kind == "touchoff":
+            state, why, result, written = touchoff.solve(st, rec, plan, run, ref, source)
+            rep = touchoff.report(st, rec, plan, run, result, written, planning_s, state, why,
+                                  ref, source)
+        else:
+            state, why, result, written = _solve(st, rec, plan, run)
+            rep = _report(st, rec, plan, run, result, written, planning_s, state, why)
         runner.finish_job(rec, job.dir, rep, state, why)
     except Exception as e:
         if rec.coordinator is not None:
             rec.coordinator.stop()
         rec.log.write("error", why=traceback.format_exc())
-        _fail(st, rec, job, f"internal error: {e!r}")
+        _fail(st, rec, job, f"internal error: {e!r}", None, kind)
 
 
-def _fail(st, rec, job, why, plan=None) -> None:
+def _fail(st, rec, job, why, plan=None, kind: str = "calibrate") -> None:
     from aris.server import runner
     phases = job.dir / "phases.jsonl"
     if not phases.exists() or '"end"' not in phases.read_text():
         job.end_phases("failed")
-    rep = dict(state="failed", why=why, kind="calibrate", assumptions=st.assumptions())
+    rep = dict(state="failed", why=why, kind=kind, assumptions=st.assumptions())
     if plan is not None:
         rep.update(points=len(plan.points_table), dropped=plan.dropped, spin_deg=None
                    if plan.spin is None else float(np.rad2deg(plan.spin)))
@@ -282,7 +290,7 @@ def touch_points(plan: Plan) -> dict:
     return out
 
 
-def misses(plan: Plan, rows, arm: int) -> list:
+def misses(plan: Plan, rows, arm: str) -> list:
     """The grid points whose touch found no paper (a "contact" row is missing for them)."""
     got = {r.get("index") for r in rows
            if r.get("event") == "contact" and r.get("arm") == arm}
@@ -298,7 +306,7 @@ def _solve(st, rec, plan, run):
     """The solver on the contact rows; a passing result is written and the rig reloaded.  A
     touch that met no paper is skipped; the job fails only below MIN_CONTACTS contacts."""
     from aris.calib import calibration_from_events
-    from aris.calib.files import write
+    from aris.calib.files import write_base
     arm = plan.arm
     if rec.stop.is_set():
         return "stopped", "stop requested", None, None
@@ -313,7 +321,7 @@ def _solve(st, rec, plan, run):
     result = calibration_from_events(st.rig, arm, rows)
     if not result.passed:
         return "failed", f"the plane fit did not pass: {result.why}", result, None
-    path = write(result, st.config_dir)
+    path = write_base(result, st.config_dir)
     st.reload()                                    # the station runs on the new file now
     return "done", "", result, str(path)
 

@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from aris.types import Motion, Trajectory
+from aris.types import Motion, Slot, Trajectory
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Driver(Protocol):
     """One arm.  Every verb may be called from any thread; `move` and `draw` block until the
     motion is finished or has failed, and `stop` (from another thread) makes them return."""
 
-    arm_id: int
+    arm_id: Slot
 
     def state(self) -> ArmState:
         """Joint positions, velocities and whether the arm is able to move."""

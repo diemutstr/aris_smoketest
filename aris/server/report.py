@@ -118,7 +118,8 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
     left = [(x.piece, x.reason, x.detail) for x in out.leftovers]
     left += [(p, rest, "queued, not run") for p in not_run]
     acc = account(rec.lines, ran, left, rest)
-    rep = dict(state=state, why=why, kind="draw", name=rec.name,
+    rep = dict(state=state, why=why, kind="draw", name=rec.name, note=rec.note,
+               rest_of=rec.rest_of, pen=st.pen().get("name"), tracking=st.tracking,
                drawing=dict(lines=len(rec.lines), scale=rec.fit.scale if rec.fit else 1.0,
                             bbox_in=rec.fit.bbox_in if rec.fit else None,
                             bbox=rec.fit.bbox_out if rec.fit else None),

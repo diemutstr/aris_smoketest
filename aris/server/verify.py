@@ -4,7 +4,7 @@ it to each arm, phase and footprints and hands it to the arm planners in their p
 `CheckVerify(config_dir, refused_dir)(arm_id, phase, fields, motion, q_before)` runs
 `aris.check.check` in whichever process calls it and answers the checker's key numbers
 (`verdict_numbers`, which is what `Motion.checked` carries).  A motion that fails is also kept
-as `refused/<phase>__arm<id>__<n>.npz` in the job directory: the job directory is the record
+as `refused/<phase>__<slot>__<n>.npz` in the job directory: the job directory is the record
 of what happened, and a refusal without the motion is not a record.  Several processes write
 there at once, so n is the first free number for that phase and arm, taken by creating the
 file exclusively.
@@ -36,7 +36,7 @@ class CheckVerify:
         return out
 
 
-def save_refused(d: Path, phase: str, arm: int, motion, q_before, verdict) -> str:
+def save_refused(d: Path, phase: str, arm, motion, q_before, verdict) -> str:
     """The refused motion with where the arm stood and what the checker said; -> file name."""
     d = Path(d)
     d.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ def save_refused(d: Path, phase: str, arm: int, motion, q_before, verdict) -> st
         arrays["tip_base"] = motion.tip_base
     buf = io.BytesIO()
     np.savez(buf, **arrays)
-    stem = f"{slug(phase)}__arm{arm}__"
+    stem = f"{slug(phase)}__{arm}__"
     n = len(list(d.glob(stem + "*.npz")))
     while True:
         try:

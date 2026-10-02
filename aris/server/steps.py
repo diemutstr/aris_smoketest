@@ -16,11 +16,12 @@ from aris.check import check
 from aris.execute import Coordinator
 from aris.kernel.footprint import footprint, transform_field
 from aris.sequencer.guard import Guard
-from aris.sequencer.lift import lift
+from aris.kernel.retime import retime_detailed
+from aris.sequencer.lift import lift, rise_path
 from aris.sequencer.tour import TourOptions
 from aris.system.phases import cannot_touch
 from aris.system.planner import AT_PARK
-from aris.types import Capsule, Phase, Trajectory
+from aris.types import Capsule, JointPath, Motion, Phase, Refusal, Trajectory
 
 
 
@@ -33,7 +34,7 @@ PEN_DOWN = 0.005         # m: a tip closer to the paper than the pen's clearance
 @dataclass(frozen=True)
 class Step:
     """One arm's motions in one phase, with the checker's verdicts, or why there are none."""
-    arm: int
+    arm: str
     phase: Phase | None = None
     motions: tuple = ()
     verdicts: tuple = ()
@@ -124,10 +125,16 @@ def lift_walls(rig, down) -> tuple | str:
     return f"pens down on arms {sorted(down)}, which never draw at the same time"
 
 
+RECOVERY_LIMIT_MARGIN = 0.075   # rad: a pen stopped near a joint limit may rise this close
+
+
 def lift_pens(st, scene, now, down) -> list[Step]:
     """The arms in `down` (pens at the paper) raise their pens straight up together, in one
     phase "lift pens" behind their walls (the sequencer's lift-off rule, LIFT_EXTRA above the
-    pen's clearance): one checked Step per arm."""
+    pen's clearance), a pen stopped between the surface and its clearance first set down onto
+    the surface: one checked Step per arm.  A stop can leave an arm closer to a joint limit than
+    planning would choose; if the planning gates refuse the rise, it is tried once more with the
+    joint-limit margin halved (the checker still holds every motion to the arm's real limits)."""
     rig, rules = st.rig, st.rules
     walls = lift_walls(rig, down)
     if isinstance(walls, str):
@@ -135,15 +142,75 @@ def lift_pens(st, scene, now, down) -> list[Step]:
     steps = []
     for a in down:
         obs, fields, phase = scene.of(a, now, tuple(down), walls, "lift pens")
-        arm = rig.arm(a)
-        opt = TourOptions()
-        up = lift(arm, Guard(arm, obs, rules.gates), rig.paper(a, for_planning=True), now[a],
-                  rules, LIFT_EXTRA, opt.lift_step, opt.lift_jump, opt.lift_turns)
-        if isinstance(up, str):
-            steps.append(Step(a, phase, why=f"the pen is at the paper and cannot rise: {up}"))
+        got = None
+        for gates in (rules.gates, replace(rules.gates, limit_margin=RECOVERY_LIMIT_MARGIN)):
+            got = _rise_from(rig, a, obs, now[a], replace(rules, gates=gates))
+            if not isinstance(got, str):
+                break
+        if isinstance(got, str):
+            steps.append(Step(a, phase, why=got))
             continue
-        steps.append(checked_step(st, a, [up.up], phase, now[a], fields))
+        steps.append(checked_step(st, a, got, phase, now[a], fields))
     return steps
+
+
+def _rise_from(rig, a, obs, q, rules) -> list | str:
+    """[set-down (if needed), lift-off] for one arm, or why not."""
+    arm, opt = rig.arm(a), TourOptions()
+    guard, paper = Guard(arm, obs, rules.gates), rig.paper(a, for_planning=True)
+    setdown = to_surface(arm, guard, paper, q, rules, opt)
+    if isinstance(setdown, str):
+        return f"the pen is near the paper and cannot be set down to rise from it: {setdown}"
+    q_low = q if setdown is None else setdown.q_end
+    up = lift(arm, guard, paper, q_low, rules, LIFT_EXTRA, opt.lift_step, opt.lift_jump,
+              opt.lift_turns)
+    if isinstance(up, str):
+        return f"the pen is at the paper and cannot rise: {up}"
+    return ([] if setdown is None else [setdown]) + [up.up]
+
+
+SURFACE_TOL = 0.0005     # m: a tip this close to the drawing surface is on it
+
+
+def to_surface(arm, guard, paper, q, rules, opt):
+    """A pen stopped between the drawing surface and its clearance (a stop in the middle of a
+    set-down or a lift-off) is first set down onto the surface, straight along the paper
+    normal and at the landing speed, so that the lift-off starts where a lift-off starts (the
+    checker holds it to that).  -> the "lower" Motion, None when the pen is on the surface
+    already, or why not."""
+    q = np.asarray(q, float)
+    nn = float(np.linalg.norm(paper.normal))
+    n = np.asarray(paper.normal, float) / nn
+    tip = arm.tip(q[None])[0]
+    above_paper = float(np.asarray(paper.normal, float) @ tip - paper.offset) / nn
+    drop = above_paper + float(getattr(rules, "press", 0.0))       # down to the surface
+    if drop <= SURFACE_TOL:
+        return None
+    T = arm.fk(q[None])[0]
+    T[:3, 3] -= drop * n
+    Q, ok = arm.ik(T[None], np.array([q[6]]))
+    if not ok[0].any():
+        return "no arm configuration puts the pen on the drawing surface below it"
+    d = np.where(ok[0], np.linalg.norm(np.nan_to_num(Q[0] - q, nan=1e9), axis=1), np.inf)
+    q_surface = Q[0, int(np.argmin(d))]
+    path = rise_path(arm, guard, q_surface, paper, above_paper, opt.lift_step, opt.lift_jump,
+                     rules.gates)
+    if isinstance(path, str):
+        return path
+    if float(np.max(np.abs(path[-1] - q))) > 1e-6:
+        return "the way down does not start where the arm stands"
+    path = path[::-1].copy()
+    path[0] = q                                     # exactly where the arm stands
+    tips = arm.tip(path)
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tips, axis=0), axis=1))])
+    res = retime_detailed(JointPath(path), arm.limits,
+                          replace(rules, draw_speed=rules.landing_speed), s=s, smooth=True,
+                          tip_of=arm.tip)
+    if isinstance(res, Refusal):
+        return f"the set-down cannot be timed: {res.reason} {res.detail}"
+    if guard.flown(res.traj, touching=True) < 0.0:
+        return "the set-down comes too close"
+    return Motion("lower", res.traj)
 
 
 def queue_steps(job, rec, steps, note: str) -> bool:
