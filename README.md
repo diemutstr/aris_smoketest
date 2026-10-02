@@ -71,15 +71,14 @@ at the −y end, L at −x). Which robot (serial, address) hangs in which slot i
 `site/aris_2026-10.json`; nothing else in the code knows a robot.
 
 **Which slots are controlled** is a fact of the rig file. `config/rig.json` is the full rig; the
-arms that are actually driven today are in `config/two_arms/` (slots 2R and 3R, written from
-the full rig by `tools/mounted_rig.py`, drawing area 0.36 × 2.0 m about (0.40, 0.605)). Use it
-with `--config config/two_arms` on every `aris` command; the empty hangers stay as steel, the
-phases and walls follow from the controlled slots, and the slots whose arms hang there switched
-off are fenced: a plane halfway toward them (toward row 1, and the x = 0 plane between the
-columns) that every controlled arm's whole body stays behind in every phase and job — the dead
-arms themselves are not modelled. When more arms go up, run the tool again with the new list,
-centre and area (the maps allow 0.40 × 2.23 m about that centre for these two; the server
-refuses an area larger than the maps allow).
+arms that are actually driven today are in `config/two_arms/` (the middle row, slots 2L and 2R,
+written from the full rig by `tools/mounted_rig.py`, drawing area 1.72 × 0.9 m centred on the
+table). Use it with `--config config/two_arms` on every `aris` command; the empty hangers stay
+as steel, the phases and walls follow from the controlled slots, and the rows whose arms hang
+there switched off are fenced: a plane halfway toward each (y = ±0.605 m) that every controlled
+arm's whole body stays behind in every phase and job — the dead arms themselves are not
+modelled. When more arms go up, run the tool again with the new list, centre and area (the maps
+allow 1.76 × 0.96 m for these two; the server refuses an area larger than the maps allow).
 
 On the **operator PC** one process runs, `aris-robot serve`, installed once as a systemd
 service (`robot/aris-robot.service`, `robot/README.md` section 8). It brings up and keeps up the
@@ -94,10 +93,10 @@ Before the first drawing, once per slot and again whenever an arm or the frame w
 one touch after every pen switch or handling of the pencil:
 
 ```
-aris calibrate 2R                     # touches the paper on a grid: height, roll, pitch -> base part of config/calibration/2R.json
-aris calibrate 3R
-aris touchoff 2R                      # one touch at a reference point: the pen's length -> pen part of the file
-aris touchoff 3R
+aris calibrate 2L                     # touches the paper on a grid: height, roll, pitch -> base part of config/calibration/2L.json
+aris calibrate 2R
+aris touchoff 2L                      # one touch at a reference point: the pen's length -> pen part of the file
+aris touchoff 2R
 ```
 
 Drawing runs in **mode A** by default: joint position control, the plan 3.5 mm below the paper

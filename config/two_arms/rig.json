@@ -3,8 +3,8 @@
   "derived_from": "config/rig.json",
   "source_digest": "d42becb2b5fbd0f5afbafdf8",
   "mounted": [
-   "2R",
-   "3R"
+   "2L",
+   "2R"
   ],
   "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not edit by hand; change config/rig.json and run the tool again."
  },
@@ -23,12 +23,12 @@
    0.0
   ],
   "drawing_area_m": [
-   0.36,
-   2.0
+   1.72,
+   0.9
   ],
   "drawing_area_centre_m": [
-   0.4,
-   0.605
+   0.0,
+   0.0
   ],
   "drawing_area_centre_note": "the centre of the drawing area in the table frame (x, y); [0, 0] when absent. The system planner and the drawing server place the area here (2026-10-02).",
   "drawing_area_note": "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
@@ -140,7 +140,7 @@
      1.2335,
      -1.3841
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "2R",
@@ -245,7 +245,7 @@
      1.3231,
      -0.5932
     ],
-    "mounted": true
+    "mounted": false
    }
   ]
  },
@@ -633,18 +633,18 @@
     "source": "halfway between the row at y = -1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
    },
    {
-    "name": "fence_col_minus_x",
+    "name": "fence_row_+1p210",
     "point_m": [
      0.0,
-     0.0,
+     0.605106,
      0.0
     ],
     "normal": [
-     1.0,
      0.0,
+     -1.0,
      0.0
     ],
-    "source": "halfway between the columns at x = +0.0000 m: the uncontrolled arm(s) of row(s) 2, 3 on the far side"
+    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
    }
   ]
  }

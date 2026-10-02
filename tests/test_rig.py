@@ -689,37 +689,38 @@ def test_obstacles_for_matches_obstacles(rig):
     assert [p.name for p in a.planes] == [p.name for p in b.planes]
 
 
-def test_the_two_live_arms_2R_and_3R():
-    """config/two_arms is config/rig.json with only 2R and 3R mounted (tools/mounted_rig.py):
-    every hanger stays, rows and walls with a missing arm go, one fence toward row 1."""
+def test_the_two_live_arms_2L_and_2R():
+    """config/two_arms is config/rig.json with only 2L and 2R mounted (tools/mounted_rig.py):
+    every hanger stays, the middle row stays a row, walls go (the row partners never move
+    together), fences toward rows 1 and 3."""
     import subprocess
     import sys
     two = Rig.load(CONFIG / "two_arms")
     six = Rig.load(CONFIG)
-    assert two.arm_ids == ("2R", "3R") and two.slot_names == six.slot_names
-    assert two.rows == () and two.leader_sets == {1: ("2R",), 2: ("3R",)}
+    assert two.arm_ids == ("2L", "2R") and two.slot_names == six.slot_names
+    assert two.rows == (("2L", "2R"),) and two.leader_sets == {1: ("2R",), 2: ("2L",)}
     assert two.wall_pairs == {1: (), 2: ()}
     assert len(two.steel) == len(six.steel)                     # the empty hangers stay
-    assert two.row_partner("2R") is None and six.row_partner("2R") == "2L"
-    assert tuple(two.drawing_area_m) == (0.36, 2.0)
-    assert tuple(two.drawing_area_centre_m) == (0.40, 0.605)
+    assert two.row_partner("2R") == "2L" and two.row_partner("1L") is None
+    assert tuple(two.drawing_area_m) == (1.72, 0.9)
+    assert tuple(two.drawing_area_centre_m) == (0.0, 0.0)
     assert json.loads((CONFIG / "two_arms" / "rig.json").read_text())["about"]["mounted"] == \
-        ["2R", "3R"]
+        ["2L", "2R"]
     # the derived file is in step with its source
     out = subprocess.run([sys.executable, str(DEPLOY / "tools" / "mounted_rig.py"),
                           "--check", str(CONFIG / "two_arms")], capture_output=True)
     assert out.returncode == 0, out.stdout.decode() + out.stderr.decode()
 
 
-def test_fence_holds_in_every_phase_for_the_planner_and_the_checker():
-    """config/two_arms fences off row 1, whose arms are not controlled: a plane at y = -0.605 m
-    that every controlled arm's body stays behind, in every phase and job, at the wall
-    clearance."""
+def test_fences_hold_in_every_phase_for_the_planner_and_the_checker():
+    """config/two_arms fences off rows 1 and 3, whose arms hang there switched off: planes at
+    y = -0.605 and +0.605 m that every controlled arm's body stays behind, in every phase and
+    job, at the wall clearance."""
     from aris.check.config import read_rig
     from aris.check.scene import build_scene, clearance
     from aris.kernel.collide import clearance as kernel_clearance
     two, six = Rig.load(CONFIG / "two_arms"), Rig.load(CONFIG)
-    fences = ["fence_row_-1p210", "fence_col_minus_x"]
+    fences = ["fence_row_-1p210", "fence_row_+1p210"]
     assert len(six.fences) == 0 and [f[0] for f in two.fences] == fences
     for ph in (two.phase(1), two.phase(2)):
         for a in ph.active:
@@ -727,46 +728,23 @@ def test_fence_holds_in_every_phase_for_the_planner_and_the_checker():
             names = [p.name for p in obs.planes]
             assert names == ["paper"] + fences
             assert all(p.margin == 0.040 + two.allowance["wall_m"] for p in obs.planes[1:])
-    # a configuration of 2R reaching past y = -0.605 m toward the dead row is refused on both
-    # sides
+    # a configuration of 2R reaching past y = -0.605 m toward row 1 is refused on both sides
     arm, T = two.arm("2R"), two.T_table_base("2R")
     rng = np.random.default_rng(3)
     Q = rng.uniform(arm.limits.q_min, arm.limits.q_max, size=(2000, 7))
     body = arm.body(Q)
-    ys = np.minimum(body.p0[..., :] @ T[:3, :3].T, body.p1 @ T[:3, :3].T)[..., 1] + T[1, 3]
-    xs = np.minimum(body.p0 @ T[:3, :3].T, body.p1 @ T[:3, :3].T)[..., 0] + T[0, 3]
-    # some part of the arm past the row fence, none near the column fence
-    far = np.flatnonzero((ys.min(axis=1) < -0.65) & (xs.min(axis=1) > 0.15))
-    reach = Q[far[0]] if len(far) else None
-    assert reach is not None, "no configuration of 2R reaches past the fence"
+    ys = np.minimum(body.p0 @ T[:3, :3].T, body.p1 @ T[:3, :3].T)[..., 1] + T[1, 3]
+    far = np.flatnonzero(ys.min(axis=1) < -0.65)
+    assert len(far) > 10, "no configuration of 2R reaches past the fence"
+    reach = Q[far[0]]
     planner = kernel_clearance(arm.body(reach[None]), two.obstacles_for("2R", two.phase(1)))[0]
     assert planner < 0.0
+    c = kernel_clearance(arm.body(Q[far]), two.obstacles_for("2R", two.phase(1)))
+    assert np.all(c < 0.0)
     rig_c = read_rig(CONFIG / "two_arms")
-    scene = build_scene(rig_c, "2R", (), ("3R",), drawing=False)
+    scene = build_scene(rig_c, "2R", (), ("2L",), drawing=False)
     chk = clearance(scene, reach[None])
     assert chk.value["walls"][0] < 0.0 and scene.plane_names == tuple(fences)
-
-
-def test_column_fence_keeps_2R_off_the_switched_off_column():
-    """Every robot not controlled hangs in its slot switched off: 2L and 3L are fenced off by
-    one plane at x = 0.  A 2R configuration with any part past x = -0.04 is refused."""
-    from aris.kernel.collide import clearance as kernel_clearance
-    two = Rig.load(CONFIG / "two_arms")
-    arm, T = two.arm("2R"), two.T_table_base("2R")
-    rng = np.random.default_rng(4)
-    Q = rng.uniform(arm.limits.q_min, arm.limits.q_max, size=(4000, 7))
-    body = arm.body(Q)
-    xs = np.minimum(body.p0 @ T[:3, :3].T, body.p1 @ T[:3, :3].T)[..., 0] + T[0, 3]
-    past = np.flatnonzero(xs.min(axis=1) < -0.04)
-    assert len(past) > 10
-    for ph in (two.phase(1), two.phase(2)):
-        obs = two.obstacles_for(ph.active[0], ph)
-        if ph.active[0] != "2R":
-            continue
-        c = kernel_clearance(arm.body(Q[past]), obs)
-        print(f"\n2R: {len(past)} of {len(Q)} random configurations reach past x = -0.04; "
-              f"worst clearance {c.max():+.4f} (must be < 0)")
-        assert np.all(c < 0.0)
 
 
 def test_a_pen_without_a_speed_draws_at_the_drawing_speed(tmp_path):
