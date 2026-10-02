@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from aris.types import Phase, Wall
+from aris.types import Phase, Slot, Wall
 
 LEADER_PHASES = (1, 2)
 
 
-def horizontal_reach(rig, arm_id: int) -> float:
+def horizontal_reach(rig, arm_id: Slot) -> float:
     """A bound on how far any part of the arm (links, hand, holder, pen; base included) can be
     from its own first joint's axis, over every configuration.  From the arm model's bound on
     each capsule's distance from joint 1's axis (the triangle inequality along the chain,
@@ -29,7 +29,7 @@ def horizontal_reach(rig, arm_id: int) -> float:
     return max(moving, float(np.max(base + body.radius[fixed], initial=0.0)))
 
 
-def axis_gap(rig, a: int, b: int) -> float:
+def axis_gap(rig, a: Slot, b: Slot) -> float:
     """The smallest horizontal distance between the two arms' first-joint axes, between the
     paper and the higher base (the axes may lean slightly after a calibration)."""
     Ta, Tb = rig.T_table_base(a), rig.T_table_base(b)
@@ -41,15 +41,15 @@ def axis_gap(rig, a: int, b: int) -> float:
     return float(min(np.linalg.norm(at(Ta, z) - at(Tb, z)) for z in zs))
 
 
-def cannot_touch(rig, a: int, b: int) -> bool:
+def cannot_touch(rig, a: Slot, b: Slot) -> bool:
     """True when arms a and b stay the arm-to-arm clearance apart in every configuration."""
     margin = rig.clearance["arm_to_arm_m"] + rig.allowance["arm_to_arm_m"]
     return axis_gap(rig, a, b) - horizontal_reach(rig, a) - horizontal_reach(rig, b) >= margin
 
 
-def fill_groups(rig) -> list[tuple[int, ...]]:
+def fill_groups(rig) -> list[tuple[Slot, ...]]:
     """Arms in rig order, each joining the first group it cannot touch any member of."""
-    groups: list[list[int]] = []
+    groups: list[list[Slot]] = []
     for a in rig.arm_ids:
         for g in groups:
             if all(cannot_touch(rig, a, b) for b in g):
@@ -62,7 +62,7 @@ def fill_groups(rig) -> list[tuple[int, ...]]:
 
 def fill(rig, arms) -> Phase:
     """These arms move together, no walls; every other arm stands parked."""
-    arms = (arms,) if isinstance(arms, int) else tuple(arms)
+    arms = (arms,) if isinstance(arms, (str, int)) else tuple(arms)
     return Phase("fill " + "+".join(str(a) for a in arms), arms,
                  tuple(a for a in rig.arm_ids if a not in arms), ())
 
@@ -84,7 +84,7 @@ def is_fill(phase: Phase) -> bool:
     return phase.name.startswith("fill ")
 
 
-def follower_phase(rig, phase: Phase, arm_id: int) -> Phase:
+def follower_phase(rig, phase: Phase, arm_id: Slot) -> Phase:
     """What a follower moves in, during a leader phase: alone, nothing parked (every arm
     moves), behind the same walls as its leader (each wall next to the leader, held on the
     follower's own side).  Its leader is a footprint, handed over separately."""

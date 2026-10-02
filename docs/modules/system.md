@@ -58,17 +58,25 @@ The report counts, per phase and arm, the motions handed on with a verdict (`che
 the length handed back as `failed_check`. It also keeps the tightest checked clearance over
 every motion (`Report.tightest`, `tightest_at`). With `verify=None` nothing is checked here.
 
-**Tested with a fake checker** that refuses every motion of one line for arm 13:
-- arm 13 hands the line back in phase 1;
-- arm 17 draws what its maps hold in phase 2 and in fill 17+97;
-- the 2.6 cm at the line's start that only arm 13 reaches is refused again in fill 13+2 and
-  left over as "failed_check, fill 13+2, arm 13";
+**Tested with a fake checker** that refuses every motion of one line for slot 1L:
+- 1L hands the line back in phase 1;
+- 1R draws what its maps hold in phase 2 and in fill 1R+3R;
+- the 2.6 cm at the line's start that only 1L reaches is refused again in fill 1L+3L and
+  left over as "failed_check, fill 1L+3L, arm 1L";
 - every motion handed on carries a passing verdict.
 - **Refusals:**
   - A drawing with any point outside the drawing area (below) is refused before anything is
     planned. The generator yields nothing and returns a `Refusal("outside_drawing_area")`
     naming the line, the point and the area.
   - An arm away from its park that does not move in phase 1 is an error.
+
+## The drawing surface
+
+The system planner gives every point of the drawing its height: the paper less the pen's press
+(`rules.press`, 3.5 mm for the 2 mm 4H pen, from the rig's pen table). The planners below put
+the pen tip where the points are and know nothing about pens. The real paper stays the plane
+that the links and the holder must clear, and the plane from which the lifts are measured. The
+drawable maps are computed with the pen tip on that surface too.
 
 ## The laws
 
@@ -78,11 +86,11 @@ every motion (`Report.tightest`, `tightest_at`). With `verify=None` nothing is c
 
    | phase | moving | parked | walls |
    |---|---|---|---|
-   | 1 | 13, 71, 2 | 17, 31, 97 | 13-71, 71-2 |
-   | 2 | 17, 31, 97 | 13, 71, 2 | 17-31, 31-97 |
-   | fill 13+2 | 13, 2 | the other four | none |
-   | fill 17+97 | 17, 97 | the other four | none |
-   | fill 31, fill 71 | that arm alone | the other five | none |
+   | 1 | 1L, 2R, 3L | 1R, 2L, 3R | 1L-2R, 2R-3L |
+   | 2 | 1R, 2L, 3R | 1L, 2R, 3L | 1R-2L, 2L-3R |
+   | fill 1L+3L | 1L, 3L | the other four | none |
+   | fill 1R+3R | 1R, 3R | the other four | none |
+   | fill 2L, fill 2R | that arm alone | the other five | none |
 
 2. **A stretch goes to the first phase and arm whose drawable map holds every point of it.**
    The arm planner is the judge. What it hands back flows to the next phases.
@@ -98,10 +106,10 @@ every motion (`Report.tightest`, `tightest_at`). With `verify=None` nothing is c
 - The walls keep the arms of a phase apart by construction; the independent checker confirms
   it.
 
-**Why 13 with 2 and 17 with 97 may fill together.** The ends of a column hang 2.42 m apart.
+**Why 1L with 3L and 1R with 3R may fill together.** The ends of a column hang 2.42 m apart.
 No part of an arm, pen included, gets further than 1.150 m from its own first joint's axis.
 That is a bound from the arm model, not a sample; sampled, the furthest is 1.02 m. So the two
-stay 0.121 m apart, against 0.053 m demanded. Arms 31 and 71 each reach another arm, so they
+stay 0.121 m apart, against 0.053 m demanded. Slots 2L and 2R each reach another arm, so they
 fill alone (`phases.fill_groups`, tested).
 
 ## Step 2: followers in the leader phases (off by default)
@@ -160,26 +168,32 @@ grid):
 
 | phase | per arm | together |
 |---|---|---|
-| 1 | 13: 0.238, 71: 0.243, 2: 0.240 | 0.721 |
-| 2 | 17: 0.238, 31: 0.242, 97: 0.239 | 0.719 |
-| fill | 13: 0.253, 2: 0.255; 17: 0.254, 97: 0.254; 31: 0.273; 71: 0.274 | |
+| 1 | 1L: 0.236, 2R: 0.239, 3L: 0.238 | 0.713 |
+| 2 | 1R: 0.236, 2L: 0.238, 3R: 0.237 | 0.711 |
+| fill | 1L: 0.252, 3L: 0.255; 1R: 0.253, 3R: 0.254; 2L: 0.272; 2R: 0.273 | |
 | all phases | | 0.992 |
 
 ![drawable maps](figures/system_maps.png)
 
 ## The drawing area
 
-`plan` reads the area from the rig (`rig.drawing_area_m`, from rig.json). Before planning
-anything it refuses if the file has none, or if the maps give a rectangle more than one grid
-cell different from the file's.
+`plan` reads the area and its centre from the rig (`rig.drawing_area_m`,
+`rig.drawing_area_centre_m`, default the table centre). Before planning anything it refuses:
+- if the file has no area;
+- if the file's area is larger than the maps give by more than one grid cell;
+- if any point of the drawing lies outside the area about its centre.
 
-The drawing area is the largest rectangle centred on the table, with sides along the table,
-that lies inside the union of all maps shrunk by 2 cm (`area.py`). It is **1.56 x 3.56 m**,
-against the canvas's 1.80 x 3.63 m (86 % along x, 98 % along y, 85 % of the area). It is in
-`config/rig.json` (`canvas.drawing_area_m`, with how and at which gates). Drawings must lie
-inside it; the drawing server will scale them to fit.
+The drawing area is the largest rectangle about the given centre, with sides along the table,
+that lies inside the union of all maps shrunk by 2 cm (`area.py`). Drawings must lie inside
+it; the drawing server scales them about the centre to fit.
+- **Six slots, centre (0, 0):** **1.56 x 3.56 m**, against the canvas's 1.80 x 3.63 m (85 % of
+  the area). It is unchanged on the drawing surface and on the new steel.
+- **Two arms (`config/two_arms`, slots 2R and 3R), centre (0, 0.605):** 0.32 x 2.23 m. The two
+  arms hang at x = +0.305, and at the centre's x = 0 the valley between their reaches lies
+  0.16 m to the left. About (0.305, 0.605) it is 0.95 x 2.23 m; about (0.2, 0.605),
+  0.72 x 2.23 m. The file says 1.2 x 1.6, which the maps do not hold.
 
-## Measured (2026-09-30, struts from the technical drawing, gates of rig.json, followers on, machine load 9 to 19, 30 processes, maps cached)
+## Measured (2026-10-02, slots, pen 2 mm 4H: press 3.5 mm, 15 mm/s on paper; followers off; machine load 18 to 27; 30 processes; maps cached)
 
 The seven drawings of `tests/system_cases.py`, each scaled to the drawing area:
 - word: "unknown", 0.55 m wide at the table centre;
@@ -195,16 +209,25 @@ alternation draws.
 
 | case | length m | drawn | phases 1 + 2 | of which followers | fill | cuts | left over | planning CPU / wall s | first motion s | on the rig s (phases) | checker |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| word | 1.30 | 1.000 | 1.000 | 0 | 0 | 0 | none | 13 / 1.6 | 1.2 | 98 (98) | 53 / 53 |
-| hatch | 60.00 | 1.000 | 1.002 | 0 | 0.004 | 42 | < 1 mm | 261 / 55 | 4.0 | 1594 (779 + 794 + 14 + 8) | 377 / 377 |
-| scatter | 9.59 | 1.000 | 0.979 | 0 | 0.021 | 0 | none | 174 / 41 | 2.6 | 323 (228 + 76 + 19) | 331 / 331 |
-| starburst | 29.36 | 1.000 | 0.999 | 0 | 0.006 | 16 | none | 191 / 46 | 2.2 | 1052 (524 + 517 + 12) | 180 / 180 |
-| spiral | 16.91 | 1.000 | 1.003 | 0 | 0.007 | 17 | none | 169 / 49 | 2.1 | 494 (265 + 216 + 13) | 100 / 100 |
-| duotone | 35.29 | 1.000 | 1.004 | 0 | 0.002 | 22 | none | 212 / 48 | 3.4 | 694 (341 + 345 + 8) | 184 / 184 |
-| random 300 | 179.67 | 1.000 | 0.993 | 0 | 0.013 | 95 | < 1 mm | 507 / 84 | 7.9 | 4518 (2368 + 2028 + 78 + 44) | 1665 / 1665 |
+| word | 1.30 | 1.000 | 1.000 | 0 | 0 | 0 | none | 13 / 2.5 | 1.5 | 152 (152) | 53 / 53 |
+| hatch | 60.00 | 1.000 | 0.999 | 0 | 0.008 | 44 | < 1 mm | 142 / 23 | 5.0 | 2143 (1043 + 1066 + 34) | 400 / 400 |
+| scatter | 9.59 | 1.000 | 0.980 | 0 | 0.020 | 0 | none | 70 / 9.2 | 4.4 | 509 (359 + 131 + 20) | 327 / 327 |
+| starburst | 29.36 | 1.000 | 0.995 | 0 | 0.011 | 18 | none | 77 / 12 | 2.5 | 1419 (699 + 695 + 25) | 204 / 204 |
+| spiral | 16.91 | 1.000 | 1.001 | 0 | 0.009 | 17 | none | 47 / 9.5 | 2.3 | 672 (368 + 284 + 21) | 111 / 111 |
+| duotone | 35.29 | 1.000 | 1.000 | 0 | 0.007 | 24 | none | 97 / 15 | 4.8 | 956 (462 + 472 + 23) | 208 / 208 |
+| random 300 | 179.67 | 1.000 | 0.988 | 0 | 0.017 | 97 | < 1 mm | 355 / 59 | 7.4 | 6334 (3339 + 2734 + 156 + 47 + 32 + 26) | 1715 / 1715 |
 
-- Inside the drawing area every drawing is drawn completely. Phases 1 + 2 draw 98 to 100 %
+- Inside the drawing area every drawing is drawn completely. Phases 1 + 2 draw 99 to 100 %
   of it (over 1 where the joins are drawn twice).
+- **Against the last table (20 mm/s, no press):** the same drawn shares. The rig times are 33
+  to 54 % longer: word 100 to 152 s, hatch 1 615 to 2 143, scatter 331 to 509, starburst
+  1 062 to 1 419, spiral 502 to 672, duotone 699 to 956, random 4 588 to 6 334. Drawing at
+  15 mm/s instead of 20 accounts for a third more drawing time. The rest is the sequencer's
+  slower set-down (it now lands at 10 mm/s), which weighs most on drawings of many short
+  pieces (word and scatter).
+- **The drawing surface:** every point is planned 3.5 mm below the paper. The lifts still
+  end with the pen tip 22 mm above the real paper, because the sequencer measures the lift from
+  the paper plane. No planner below needs to know the press.
 - **Followers draw nothing on any case.** What waits for a fill phase is 0 to 2 % of a
   drawing: rim bits and the patches where the walls cross. Each leader's footprint covers 41 to
   100 % of what its follower could draw with the leader parked. Of that, the field's own
@@ -213,17 +236,14 @@ alternation draws.
 - **The price of step 2 is planning time.** Footprints and follower maps are built in every
   leader phase with something waiting: planning wall 41 to 84 s against 6 to 30 s without,
   and CPU doubled. The rig time is not affected.
-- **Re-run** with followers off, `verify=None` and the sequencer's new lift rule: drawn
-  lengths are the same on all seven cases, the rig times within 2 %, and all 2 906 motions
-  pass the checker (smallest clearance 0.6 mm).
-- **Checker:** all 2 890 motions pass `aris.check.check` with their phase, and the smallest
-  clearance beyond the demanded one is 0.8 mm. `check_phase_end` passes after all 21 phases
+- **Checker:** all 3 018 motions pass `aris.check.check` with their phase, and the smallest
+  clearance beyond the demanded one is 0.6 mm. `check_phase_end` passes after all 22 phases
   that ran.
 - **Corrected struts:** on the steel from the technical drawing the fill maps shrink by
   0.1 point; the leader maps and the drawing area (1.56 x 3.56 m) do not change. With
   followers off, every number is within 1 % of the previous table.
 - **Rig time:** each phase lasts as long as its busiest arm. In phase 1 of the random lines,
-  arm 71 works 2 368 s. Nothing balances the arms yet.
+  slot 2R works 2 368 s. Nothing balances the arms yet.
 - **Before the drawing area** (whole-canvas drawings at the old gates), the same laws left
   only what lies beyond every arm's reach: spiral 13 mm, starburst 0.25 m, duotone 0.05 m,
   random 0.27 m.
@@ -268,7 +288,7 @@ rectangle is the drawing area.
 - each arm is checked in its own view;
 - a line the checker refuses for one arm flows on and is left over as failed_check where no
   other arm reaches it;
-- a small drawing runs end to end on arms 13 and 71 in two processes, joined from park to
+- a small drawing runs end to end on slots 1L and 2R in two processes, joined from park to
   park, with the same result from one process.
 
 Slow test: the word end to end through the checker and `check_phase_end`, and the drawing

@@ -36,14 +36,14 @@ from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
 from aris.system.settings import Settings
 from aris.system.stretch import Stretch, of_line
-from aris.types import DrawRules, Leftover, Motion, Phase, Piece, Refusal
+from aris.types import DrawRules, Leftover, Line, Motion, Phase, Piece, Refusal, Slot
 
 AT_PARK = 1e-6          # rad
 
 
 @dataclass
 class ArmReport:
-    arm_id: int
+    arm_id: Slot
     stretches: int = 0          # stretches handed to the arm
     offered: float = 0.0        # m
     drawn: float = 0.0          # m, drawing motions produced
@@ -83,6 +83,7 @@ class Report:
     cpu: float = 0.0            # s, everything (this process, arm planners, map builders)
     wall: float = 0.0
     first_wall: float = -1.0    # s from the call to the first motion
+    drawing_centre: np.ndarray | None = None         # (2,) m, its centre (table frame)
     drawing_area: np.ndarray | None = None           # (2,) m, rig.json's, checked against the maps
     # Step 2: per (phase name, follower) its leader's footprint in its frame (the checker needs
     # it: `check(..., fields=)`), and its drawable map against it
@@ -146,14 +147,17 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     if len({x.id for x in lines}) != len(lines):
         raise ValueError("two lines share an id")
     q_now = start_configs(rig, arm_configs, phases[0].active)
-    maps = maps_mod.load_or_build(rig, phases, rules.gates, cfg, cache_dir, workers)
+    maps = maps_mod.load_or_build(rig, phases, rules.gates, cfg, cache_dir, workers, rules.press)
     rep.map_cpu, rep.map_wall = _cpu() - c0, time.perf_counter() - w0
     rep.coverage = maps_mod.coverage(maps, phases)
     file_area = getattr(rig, "drawing_area_m", None)
     if file_area is None:
         return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
     rep.drawing_area = np.asarray(file_area, float).reshape(2)
-    maps_area = area.admissible(maps)
+    rep.drawing_centre = np.asarray(getattr(rig, "drawing_area_centre_m", None)
+                                    if getattr(rig, "drawing_area_centre_m", None) is not None
+                                    else (0.0, 0.0), float).reshape(2)
+    maps_area = area.admissible(maps, centre=rep.drawing_centre)
     # the file's area may be smaller than the maps' on purpose (a conservative choice), never
     # larger by more than a grid cell (a stale file)
     if np.max(rep.drawing_area - maps_area) > cfg.grid_step + 1e-9:
@@ -161,13 +165,16 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
                        f"rig.json's drawing area {rep.drawing_area[0]:.3f} x "
                        f"{rep.drawing_area[1]:.3f} m is larger than the maps' {maps_area[0]:.3f} x "
                        f"{maps_area[1]:.3f} m by more than one grid cell ({cfg.grid_step} m)")
-    out = area.first_outside(lines, rep.drawing_area)
+    out = area.first_outside(lines, rep.drawing_area, rep.drawing_centre)
     if out is not None:
         return Refusal("outside_drawing_area",
                        f"line {out[0]}: point ({out[1][0]:.4f}, {out[1][1]:.4f}) m lies outside "
                        f"the drawing area {rep.drawing_area[0]:.3f} x {rep.drawing_area[1]:.3f} m "
-                       "centred on the table")
-    pool, left = [of_line(x) for x in lines], []
+                       f"centred on ({rep.drawing_centre[0]:.3f}, {rep.drawing_centre[1]:.3f}) m")
+    # the drawing surface: every point `press` below the paper (the planners below put the tip
+    # where the points are; the real paper stays the plane for clearances)
+    z = rig.paper_z - rules.press
+    pool, left = [of_line(on_surface(x, z)) for x in lines], []
     for k, ph in enumerate(phases):
         cands = [(j, a, maps[(phases[j].name, a)], not is_fill(phases[j]))
                  for j in range(k, len(phases)) for a in phases[j].active]
@@ -234,7 +241,7 @@ def _followers(rig, phases, maps, k, back, pool, trajs, rules, cfg, cache_dir, w
              for p in phases if is_fill(p) and f in p.active]
     if not take_whole(back + waiting, alone, cfg)[0]:
         return back, pool, []
-    setups = followers.setup_all(rig, ph, trajs, rules.gates, cfg, workers)
+    setups = followers.setup_all(rig, ph, trajs, rules.gates, cfg, workers, rules.press)
     for f, (fld, _, m) in setups.items():
         rep.fields[(ph.name, f)], rep.follower_maps[(ph.name, f)] = fld, m
     taken, rest = take_whole(back + waiting, [(k, f, m) for f, (_, _, m) in setups.items()], cfg)
@@ -246,7 +253,14 @@ def _followers(rig, phases, maps, k, back, pool, trajs, rules, cfg, cache_dir, w
     return back2, kept + rest, final
 
 
-def check_view(rig, phase: Phase, arm_id: int, report) -> tuple[Phase, tuple]:
+def on_surface(line: Line, z: float) -> Line:
+    """The line with every point at height z (the drawing surface); x and y as drawn."""
+    p = np.array(line.points, float).reshape(-1, 3)
+    p[:, 2] = z
+    return replace(line, points=p)
+
+
+def check_view(rig, phase: Phase, arm_id: Slot, report) -> tuple[Phase, tuple]:
     """The Phase and footprints (`Field`s) an arm's motions in `phase` are checked in: its own
     phase for a leader or a fill arm; for a follower of a leader phase, the phase as it sees it
     (its leader's walls, nothing parked) with its leader's footprint from `report.fields`."""
@@ -307,7 +321,7 @@ def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify
     return back, final, trajs
 
 
-def _retag(m: Motion, subs: dict, arm_id: int) -> Motion:
+def _retag(m: Motion, subs: dict, arm_id: Slot) -> Motion:
     """The motion with its piece in the input line's own id and arc length."""
     if m.piece is None:
         return m

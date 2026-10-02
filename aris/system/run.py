@@ -19,12 +19,12 @@ from multiprocessing import get_context
 import numpy as np
 
 from aris import arm_planner
-from aris.types import DrawRules, Obstacles
+from aris.types import DrawRules, Obstacles, Slot
 
 
 @dataclass(frozen=True)
 class ArmJob:
-    arm_id: int
+    arm_id: Slot
     lines: tuple                # base-frame Lines
     obstacles: Obstacles
     q_start: np.ndarray

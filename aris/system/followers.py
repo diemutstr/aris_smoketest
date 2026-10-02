@@ -23,7 +23,7 @@ from aris.types import Trajectory
 CELL = 0.01          # m, the footprint's grid
 
 
-def pairs(rig, phase) -> list[tuple[int, int]]:
+def pairs(rig, phase) -> list[tuple]:
     """(leader, follower) for every leader whose row partner stands parked in `phase`."""
     return [(a, rig.row_partner(a)) for a in phase.active
             if rig.row_partner(a) is not None and rig.row_partner(a) in phase.parked]
@@ -31,21 +31,22 @@ def pairs(rig, phase) -> list[tuple[int, int]]:
 
 def setup(job):
     """-> (follower, Field in its frame, Obstacles, Map).  Runs in a worker process."""
-    rig, phase, lead, f, trajs, gates, cfg = job
+    rig, phase, lead, f, trajs, gates, cfg, press = job
     park = rig.park_q(lead)
     stand = Trajectory(np.array([0.0, 1.0]), np.stack([park, park]), np.zeros((2, 7)))
     margin = rig.clearance["arm_to_arm_m"] + rig.allowance["arm_to_arm_m"]
-    fp = footprint(rig.arm(lead), list(trajs) + [stand], cell=CELL, name=f"footprint{lead}",
+    fp = footprint(rig.arm(lead), list(trajs) + [stand], cell=CELL, name=f"footprint {lead}",
                    margin=margin)
     field = transform_field(fp, rig.T_base_table(f) @ rig.T_table_base(lead))
     fph = follower_phase(rig, phase, f)
     obs = replace(rig.obstacles(f, (), fph.walls), fields=(field,))
-    return f, field, obs, maps_mod.build(rig, phase, f, gates, cfg, obstacles=obs)
+    return f, field, obs, maps_mod.build(rig, phase, f, gates, cfg, obstacles=obs, press=press)
 
 
-def setup_all(rig, phase, trajs_by_leader: dict, gates, cfg, workers: int = 1) -> dict:
+def setup_all(rig, phase, trajs_by_leader: dict, gates, cfg, workers: int = 1,
+              press: float = 0.0) -> dict:
     """{follower: (Field, Obstacles, Map)} for every (leader, follower) pair of `phase`."""
-    jobs = [(rig, phase, lead, f, trajs_by_leader.get(lead, []), gates, cfg)
+    jobs = [(rig, phase, lead, f, trajs_by_leader.get(lead, []), gates, cfg, press)
             for lead, f in pairs(rig, phase)]
     if workers > 1 and len(jobs) > 1:
         with ProcessPoolExecutor(min(workers, len(jobs)), mp_context=get_context("spawn")) as ex:

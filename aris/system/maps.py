@@ -30,7 +30,7 @@ from aris.local.gates import Judge
 from aris.local.lattice import Lattice
 from aris.local.settings import Settings as LocalSettings
 from aris.system.settings import Settings
-from aris.types import Gates, Obstacles, Phase
+from aris.types import Gates, Obstacles, Phase, Slot
 
 VERSION = 1
 _CHUNK = 300                 # grid points per lattice; bounds memory
@@ -40,7 +40,7 @@ OUT, BLOCKED, DRAWABLE = 0, 1, 2
 @dataclass(frozen=True)
 class Map:
     phase: str
-    arm_id: int
+    arm_id: Slot
     x: np.ndarray            # (nx,) grid x, table frame
     y: np.ndarray            # (ny,) grid y
     state: np.ndarray        # (nx, ny) int8: OUT, BLOCKED or DRAWABLE
@@ -82,13 +82,13 @@ def _obstacle_digest(h, obs: Obstacles) -> None:
         h.update(np.concatenate([c.p0, c.p1, [c.radius, c.margin]]).tobytes())
 
 
-def digest(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> str:
+def digest(rig, phase: Phase, arm_id: Slot, gates: Gates, cfg: Settings, press: float = 0.0) -> str:
     """Everything the map of `arm_id` in `phase` depends on."""
     h = hashlib.blake2b(digest_size=12)
     arm = rig.arm(arm_id)
     tool = arm.tool
     h.update(repr((VERSION, phase.name, arm_id, gates, cfg.grid_step, cfg.n_spin, cfg.reach,
-                   tool.pen_names)).encode())
+                   press, tool.pen_names)).encode())
     for a in (rig.T_table_base(arm_id), np.asarray(rig.canvas_size, float), tool.tip_hand,
               tool.pen_axis_hand, arm.limits.q_min, arm.limits.q_max):
         h.update(np.ascontiguousarray(a, float).tobytes())
@@ -98,13 +98,15 @@ def digest(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings) -> str:
     return h.hexdigest()
 
 
-def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings, obstacles=None) -> Map:
+def build(rig, phase: Phase, arm_id: Slot, gates: Gates, cfg: Settings, obstacles=None,
+          press: float = 0.0) -> Map:
     """The map of one arm in one phase, computed; against `obstacles` if given (a follower
-    with its leader's footprint), else the phase's (`rig.obstacles_for`)."""
+    with its leader's footprint), else the phase's (`rig.obstacles_for`).  The pen tip is put
+    on the drawing surface, `press` below the paper."""
     t0 = time.process_time()
     x, y = grid(rig, cfg.grid_step)
     X, Y = np.meshgrid(x, y, indexing="ij")
-    p_table = np.column_stack([X.ravel(), Y.ravel(), np.full(X.size, rig.paper_z)])
+    p_table = np.column_stack([X.ravel(), Y.ravel(), np.full(X.size, rig.paper_z - press)])
     axis = rig.T_table_base(arm_id)[:2, 3]
     near = np.flatnonzero(np.linalg.norm(p_table[:, :2] - axis, axis=1) <= cfg.reach)
     T = rig.T_base_table(arm_id)
@@ -124,18 +126,18 @@ def build(rig, phase: Phase, arm_id: int, gates: Gates, cfg: Settings, obstacles
 
 
 def _build_job(job):
-    rig, phase, arm_id, gates, cfg = job
-    return build(rig, phase, arm_id, gates, cfg)
+    rig, phase, arm_id, gates, cfg, press = job
+    return build(rig, phase, arm_id, gates, cfg, press=press)
 
 
 def load_or_build(rig, phases, gates: Gates, cfg: Settings, cache_dir=None,
-                  workers: int = 1) -> dict:
+                  workers: int = 1, press: float = 0.0) -> dict:
     """{(phase name, arm id): Map} for every active arm of every phase.  Read from `cache_dir`
     where present; the rest built (in `workers` processes) and, with `cache_dir`, saved."""
     keys = [(p, a) for p in phases for a in p.active]
     files = {}
     if cache_dir is not None:
-        files = {(p.name, a): Path(cache_dir) / f"system_map_{digest(rig, p, a, gates, cfg)}.npz"
+        files = {(p.name, a): Path(cache_dir) / f"system_map_{digest(rig, p, a, gates, cfg, press)}.npz"
                  for p, a in keys}
     out, todo = {}, []
     for p, a in keys:
@@ -144,7 +146,7 @@ def load_or_build(rig, phases, gates: Gates, cfg: Settings, cache_dir=None,
             d = np.load(f)
             out[(p.name, a)] = Map(p.name, a, d["x"], d["y"], d["state"])
         else:
-            todo.append((rig, p, a, gates, cfg))
+            todo.append((rig, p, a, gates, cfg, press))
     if workers > 1 and len(todo) > 1:
         with ProcessPoolExecutor(min(workers, len(todo)), mp_context=get_context("spawn")) as ex:
             built = list(ex.map(_build_job, todo))

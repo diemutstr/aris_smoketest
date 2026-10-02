@@ -3,7 +3,7 @@
 Whole drawings in the table frame, over the admissible drawing area of rig.json (canvas,
 drawing_area_m: 1.56 x 3.56 m, centred on the table):
   word       the word "unknown" (tests/local_cases.py), scaled to 0.55 m wide and centred on the
-             table, so it sits between arms 31 and 71 as on the hardware day
+             table, so it sits between slots 2L and 2R as on the hardware day
   hatch      40 parallel lines 1.5 m long across the canvas (along x), evenly spaced along it
   scatter    80 short random lines (5 to 20 cm) anywhere on the canvas
   starburst  24 rays from the table centre to the edge of the canvas
@@ -283,7 +283,7 @@ def summary(res) -> list[str]:
     for p in rep.phases:
         for a, r in p.arms.items():
             role = "f" if (p.name, a) in rep.fields else " "
-            out.append(f"    {p.name:8s} arm {a:3d}{role}: {r.stretches:3d} stretches, offered "
+            out.append(f"    {p.name:8s} arm {a:>3}{role}: {r.stretches:3d} stretches, offered "
                        f"{r.offered:6.2f} m, drawn {r.drawn:6.2f} m ({r.drawn / L:.3f}), "
                        f"{r.motions:4d} motions, {r.motion_time:6.0f} s; plan CPU {r.cpu:6.1f} "
                        f"wall {r.wall:6.1f} s, first motion {r.first_phase_wall:5.1f} s; back: "
