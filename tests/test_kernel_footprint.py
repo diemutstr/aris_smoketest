@@ -186,16 +186,16 @@ def _spiral_71():
 def test_spiral_phase_speed_report():
     rig_mod = pytest.importorskip("aris.rig")
     rig = rig_mod.Rig.load(Path(__file__).parents[1] / "config")
-    leader, follower = rig.arm(71), rig.arm(31)
+    leader, follower = rig.arm("2R"), rig.arm("2L")
     trs = _spiral_71()
     t = time.process_time()
     f71 = footprint(leader, trs, cell=CELL, name="leader71")
     t_build = time.process_time() - t
-    T_31_71 = rig.T_base_table(31) @ rig.T_table_base(71)
+    T_31_71 = rig.T_base_table("2L") @ rig.T_table_base("2R")
     t = time.process_time()
     f = transform_field(f71, T_31_71)
     t_tf = time.process_time() - t
-    base = rig.obstacles(31, walls=(rig.wall_between(31, 17), rig.wall_between(31, 97)))
+    base = rig.obstacles("2L", walls=(rig.wall_between("2L", "1R"), rig.wall_between("2L", "3R")))
     P = collide.pack(Obstacles(base.boxes, base.planes, base.capsules, (f,)))
     T = collide.arm_tables(follower)
     rng = np.random.default_rng(6)

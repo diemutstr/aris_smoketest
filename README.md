@@ -65,16 +65,20 @@ aris serve --host 0.0.0.0 --driver robot --uncalibrated
 the pen is kept 20 mm above the paper when lifted). Leave out `--driver robot` to draw with
 simulated arms instead of the real ones.
 
-**Which arms are mounted** is a fact of the rig file. `config/rig.json` is the full rig; the
-arms that are actually bolted on today are in `config/two_arms/` (arms 31 and 71, written from
-the full rig by `tools/mounted_rig.py`, with a conservative drawing area of 1.2 × 1.0 m around
-the table centre). Use it with `--config config/two_arms` on every `aris` command; the empty
-hangers stay as steel, the phases and walls follow from the mounted arms, and the rows whose
-arms are present but switched off are fenced: a plane halfway between that row and the nearest
-controlled one, which every controlled arm's whole body stays behind in every phase and job
-(the dead arms themselves are not modelled). When more arms go up, run the tool again with the
-new list and a new area (the maps allow 1.76 × 1.00 m for these two behind the fences; the
-server refuses an area larger than the maps allow).
+**Arms are named by slot** — the place on the frame they hang from: `1L 1R 2L 2R 3L 3R` (row 1
+at the −y end, L at −x). Which robot (serial, address) hangs in which slot is one table,
+`site/aris_2026-10.json`; nothing else in the code knows a robot.
+
+**Which slots are controlled** is a fact of the rig file. `config/rig.json` is the full rig; the
+arms that are actually driven today are in `config/two_arms/` (slots 2R and 3R, written from
+the full rig by `tools/mounted_rig.py`, drawing area 0.36 × 2.0 m about (0.40, 0.605)). Use it
+with `--config config/two_arms` on every `aris` command; the empty hangers stay as steel, the
+phases and walls follow from the controlled slots, and the slots whose arms hang there switched
+off are fenced: a plane halfway toward them (toward row 1, and the x = 0 plane between the
+columns) that every controlled arm's whole body stays behind in every phase and job — the dead
+arms themselves are not modelled. When more arms go up, run the tool again with the new list,
+centre and area (the maps allow 0.40 × 2.23 m about that centre for these two; the server
+refuses an area larger than the maps allow).
 
 On the **operator PC** one process runs, `aris-robot serve`, installed once as a systemd
 service (`robot/aris-robot.service`, `robot/README.md` section 8). It brings up and keeps up the
@@ -85,22 +89,30 @@ Nobody types anything on that PC after it is installed; the e-stop is the only t
 side. (The hardware-day tools `aris-robot bringup / identify / touch / jog` exist for the first
 runs, with serve stopped.)
 
-Before the first drawing, once per arm and again whenever an arm or the frame was moved:
+Before the first drawing, once per slot and again whenever an arm or the frame was moved; and
+one touch after every pen switch or handling of the pencil:
 
 ```
-aris calibrate 31                     # touches the paper on a grid with that arm, writes config/calibration/31.json
-aris calibrate 71
+aris calibrate 2R                     # touches the paper on a grid: height, roll, pitch -> base part of config/calibration/2R.json
+aris calibrate 3R
+aris touchoff 2R                      # one touch at a reference point: the pen's length -> pen part of the file
+aris touchoff 3R
 ```
+
+Drawing runs in **mode A** by default: joint position control, the plan 3.5 mm below the paper
+(the pen's `press_m` in rig.json), 15 mm/s on the paper — the recipe that drew the first word on
+the rig. `aris serve --tracking impedance` chooses mode B (the pen-force controller).
 
 Then a drawing, from the planning PC or any machine that reaches the server
 (`--server http://<planning pc>:8420`):
 
 ```
-aris draw drawings/today.json         # submits, prints a line whenever something changes, then the report
+aris draw drawings/today.json --note "4H on 120 g paper"   # submits, prints a line on every change, then the report
+aris draw --rest-of <job id>          # what a stopped job left, as a new drawing
 aris status                           # the current or last job, any time
 aris stop                             # every arm stops at once and holds; the job is finished
 aris park                             # every arm back to its park, one at a time (pens lifted first)
-aris recover 31                       # after a fault, once a person has looked
+aris recover 2R                       # after a fault, once a person has looked
 aris rig                              # what the server runs: arms, drawing area, calibration state
 ```
 
@@ -135,16 +147,19 @@ Everything a job produces is in one directory, `out/jobs/<job id>/` on the plann
 
 | file | what it is |
 |---|---|
-| `job.json` | the header: drawing, rig and calibration digests, the fit |
+| `job.json` | the header: rig and calibration digests, the fit, the pen, the tracking mode, your note |
+| `drawing.json` | the drawing as planned (after the fit) |
 | `phases.jsonl` | the phases, in order: who moves, who stands parked |
-| `queues/<phase>/<arm>` | the motions of that arm in that phase, in order, each one checked |
+| `<phase>__<slot>.queue` | the motions of that slot in that phase, in order, each one checked |
 | `events.jsonl` | the log: job states, every motion started and ended, every stop and fault, from both machines |
 | `report.json` | drawn and left over, by line and by reason; the same thing `aris draw` prints |
-| `refused/<phase>__arm<id>__<n>.npz` | every motion the checker refused while planning, with where the arm stood and what the checker said (the piece is then left over or drawn by a later phase) |
+| `refused/<phase>__<slot>__<n>.npz` | every motion the checker refused while planning, with where the arm stood and what the checker said (the piece is then left over or drawn by a later phase) |
 
 `out/jobs/operator.jsonl` is what the operator PC said outside any job (positions, its arm
-stacks, commands taken). `config/calibration/<arm>.json` is written by `aris calibrate` and read
-by every later job; the operator PC fetches these files, it never has its own.
+stacks, commands taken). `config/calibration/<slot>.json` has two parts: `base` (height, roll,
+pitch — later x, y, yaw too) written by `aris calibrate`, and `pen` (the pen's length) written by
+`aris touchoff`; every later job reads it, and the operator PC fetches these files, it never has
+its own.
 
 The operator PC keeps a copy of each job it ran under `out/robot_jobs/<id>/`. `out/cache/`
 holds the drawable maps and the kinematic table (built on first use, minutes; reused as long
@@ -157,11 +172,10 @@ directory.
 
 ## 6. Not built yet
 
-- **Calibration beyond the plane**: `aris calibrate` finds each arm's height, roll and pitch
-  from paper touches. Its position on the table and its turn stay nominal until the dimple
-  plates and the pin exist (Pete's hardware); the pen's length is not measured either (a flat
-  paper cannot see it). Until the first calibration runs, every job needs `--uncalibrated`
-  and the pen stays 20 mm off the paper when lifted.
+- **Calibration beyond the plane**: `aris calibrate` finds each slot's height, roll and pitch
+  and `aris touchoff` the pen's length. A slot's position on the table and its turn (1–2 cm off
+  today) stay nominal until the dimple plates and the pin exist (Pete's hardware); until then the
+  wall clearance is 40 mm and every job needs `--uncalibrated` when a slot has no file.
 - **First run on the operator PC**: nothing under `robot/` has been built against the real
   ROS headers or run on an arm yet. The order is fake hardware first, then one real arm, then
   the touch, then a drawing in the air.

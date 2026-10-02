@@ -203,9 +203,9 @@ def test_speed_report_arm31():
     rig_mod = pytest.importorskip("aris.rig")
     from pathlib import Path
     rig = rig_mod.Rig.load(Path(__file__).parents[1] / "config")
-    arm = rig.arm(31)
+    arm = rig.arm("2L")
     T = collide.arm_tables(arm)
-    obs = rig.obstacles(31, parked=(71,), walls=(rig.wall_between(31, 17), rig.wall_between(31, 97)))
+    obs = rig.obstacles("2L", parked=("2R",), walls=(rig.wall_between("2L", "1R"), rig.wall_between("2L", "3R")))
     rng = np.random.default_rng(27)
     r = _speed_rows("arm 31, phase 2 (walls to 17 and 97, arm 71 parked)", arm.body, T, obs,
                     int((~T.is_fixed).sum()), rng, arm.limits.q_min, arm.limits.q_max)
@@ -247,8 +247,8 @@ def _arm31():
     rig_mod = pytest.importorskip("aris.rig")
     from pathlib import Path
     rig = rig_mod.Rig.load(Path(__file__).parents[1] / "config")
-    arm = rig.arm(31)
-    obs = rig.obstacles(31, parked=(71,), walls=(rig.wall_between(31, 17), rig.wall_between(31, 97)))
+    arm = rig.arm("2L")
+    obs = rig.obstacles("2L", parked=("2R",), walls=(rig.wall_between("2L", "1R"), rig.wall_between("2L", "3R")))
     return arm, collide.arm_tables(arm), collide.pack(obs)
 
 
