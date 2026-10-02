@@ -4,7 +4,9 @@ A drawing job: fit the drawing, create the job directory, start the coordinator 
 phases), then plan -> check -> queue (pipeline.py) while the arms already run what is queued.
 When the planner is done and the coordinator has finished, the report is written.
 
-A park job: plan every arm's way to its park (park.py), queue it, run it.
+Every job, of whatever kind, goes through the same frame (`start`): admitted, its directory
+made, its work run in a thread, announced to the operator PC.  The drawing job's work is here;
+park, calibrate and touch-off are a short list of planned steps (steps.py `steps_work`).
 
 Stop, at any time: every arm stops at once and holds (the coordinator stops every driver),
 the planner is abandoned, and the job is finished: what is left is reported as leftovers.
@@ -23,8 +25,6 @@ from aris.execute import Coordinator, Job
 from aris.execute.queue import digest, header_for
 from aris.server import drawing, pipeline, report
 from aris.server.jobs import JobRecord, JobStore, arm_progress
-from aris.server.park import at_park, plan_park
-from aris.server.steps import queue_steps, run_queued
 from aris.types import Refusal
 
 
@@ -86,31 +86,80 @@ def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
                 rest_of: str | None = None) -> JobRecord | Refusal:
     """Admit a drawing job and start it.  A drawing that cannot be fitted is a failed job.
     `rest_of`: the job whose leftovers these lines are (already in place: not refitted)."""
-    rec = store.admit("draw", name)
+    fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
+
+    def prepare(rec):
+        rec.note, rec.rest_of = note, rest_of
+        rec.lines = list(lines) if isinstance(fitted, Refusal) else fitted[0]
+        rec.fit = None if isinstance(fitted, Refusal) else fitted[1]
+        return dict(drawing_area=list(st.drawing_area), drawing_centre=list(st.drawing_centre),
+                    drawing_digest_in=digest(list(lines)), rest_of=rest_of,
+                    scale=None if rec.fit is None else rec.fit.scale)
+
+    def created(rec, job):
+        # the drawing as it is planned, so its leftovers can be drawn again later (--rest-of)
+        (job.dir / "drawing.json").write_text(json.dumps(drawing.to_dict(rec.lines)))
+        if rec.fit is not None:
+            rec.set_state("fitted", scale=rec.fit.scale, bbox=rec.fit.bbox_out,
+                          bbox_in=rec.fit.bbox_in)
+
+    refused = None if not isinstance(fitted, Refusal) else f"{fitted.reason}: {fitted.detail}"
+    return start(st, store, "draw", name, _draw_work(refused), prepare, created)
+
+
+# --------------------------------------------------------------------------- the job frame
+
+
+def start(st, store: JobStore, kind: str, name: str, work, prepare=None, created=None,
+          need_positions: bool = False) -> JobRecord | Refusal:
+    """Every job the same way: refuse (another job runs; with the robot and
+    `need_positions`, an arm that never reported where it stands), admit, create the job
+    directory with its header, start `work(st, rec, job)` in a thread (an exception in it
+    fails the job loudly and stops the arms), and announce it to the operator PC.
+    `prepare(rec) -> dict`: fills the record before the header is written and gives the
+    header's extra fields; `created(rec, job)`: right after the directory exists."""
+    if need_positions and st.remote:
+        where = reported_where(st, need_all=True)
+        if isinstance(where, Refusal):
+            return where
+    rec = store.admit(kind, name)
     if isinstance(rec, Refusal):
         return rec
-    rec.note, rec.rest_of = note, rest_of
-    fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
-    rec.lines = list(lines) if isinstance(fitted, Refusal) else fitted[0]
-    rec.fit = None if isinstance(fitted, Refusal) else fitted[1]
-    job = Job.create(rec.dir, job_header(st, rec, dict(
-        drawing_area=list(st.drawing_area), drawing_centre=list(st.drawing_centre),
-        drawing_digest_in=digest(list(lines)), rest_of=rest_of,
-        scale=None if rec.fit is None else rec.fit.scale)))
-    # the drawing as it is planned, so its leftovers can be drawn again later (--rest-of)
-    (job.dir / "drawing.json").write_text(json.dumps(drawing.to_dict(rec.lines)))
-    rec.set_state("received", lines=len(lines), received=rec.t_received)
-    if isinstance(fitted, Refusal):
-        rec.report = dict(state="failed", why=f"{fitted.reason}: {fitted.detail}",
-                          assumptions=st.assumptions())
-        finish_job(rec, job.dir, rec.report, "failed", rec.report["why"])
-        return rec
-    rec.set_state("fitted", scale=rec.fit.scale, bbox=rec.fit.bbox_out, bbox_in=rec.fit.bbox_in)
-    rec.thread = threading.Thread(target=_run_draw, args=(st, rec, job), daemon=True,
+    extra = prepare(rec) if prepare is not None else {}
+    job = Job.create(rec.dir, job_header(st, rec, extra))
+    rec.set_state("received", received=rec.t_received)
+    if created is not None:
+        created(rec, job)
+    rec.thread = threading.Thread(target=_guarded, args=(st, rec, job, work), daemon=True,
                                   name=f"job {rec.id}")
     rec.thread.start()
     announce(st, rec)
     return rec
+
+
+def _guarded(st, rec: JobRecord, job: Job, work) -> None:
+    try:
+        work(st, rec, job)
+    except Exception as e:                       # a bug: the arms stop, the job fails loudly
+        if rec.coordinator is not None:
+            rec.coordinator.stop()
+        rec.log.write("error", why=traceback.format_exc())
+        fail_job(st, rec, job, f"internal error: {e!r}")
+
+
+def fail_job(st, rec: JobRecord, job: Job, why: str, **extra) -> None:
+    """End the job as failed before or instead of running it."""
+    phases = job.dir / "phases.jsonl"
+    if not phases.exists() or '"end"' not in phases.read_text():
+        job.end_phases("failed")
+    finish_job(rec, job.dir, dict(state="failed", why=why, kind=rec.kind,
+                                  assumptions=st.assumptions(), **extra), "failed", why)
+
+
+def where_now(st, need_all: bool) -> dict | Refusal:
+    """Where every arm stands: the simulated arms' own state, or what the operator PC last
+    reported (`need_all`: an arm that never reported refuses)."""
+    return reported_where(st, need_all) if st.remote else prepare_arms(st)
 
 
 def rest_lines(store: JobStore, jid: str) -> tuple[list, dict] | Refusal:
@@ -168,7 +217,7 @@ def _arm_configs(st, where) -> dict | Refusal:
     first = st.rig.phase(1).active
     tol = st.rig.execution().start_tolerance if st.remote else None
     near = (lambda a, q: float(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))) <= tol) \
-        if tol is not None else (lambda a, q: at_park(st.rig, a, q))
+        if tol is not None else st.rig.at_park
     away = {a: q for a, q in where.items() if not near(a, q)}
     bad = [a for a in away if a not in first]
     if bad:
@@ -176,74 +225,43 @@ def _arm_configs(st, where) -> dict | Refusal:
     return away
 
 
-def _run_draw(st, rec: JobRecord, job: Job) -> None:
-    if st.remote:
-        return _run_draw_remote(st, rec, job)
-    coord, result, out = None, [], pipeline.Outcome()
-    try:
-        where = prepare_arms(st)
-        configs = where if isinstance(where, Refusal) else _arm_configs(st, where)
-        if isinstance(configs, Refusal):
-            job.end_phases(configs.reason)
-            finish_job(rec, job.dir, dict(state="failed", why=configs.detail,
-                                       assumptions=st.assumptions()), "failed", configs.detail)
-            return
-        coord = Coordinator(job, st.drivers, st.config_dir, st.rig)
-        rec.coordinator = coord
-        ct = threading.Thread(target=lambda: result.append(coord.run()), daemon=True)
-        ct.start()
-        rec.set_state("planning")
-        out = pipeline.plan_into(st, job, rec.lines, configs, rec,
-                                 on_first=lambda: rec.set_state("drawing"))
-        if rec.stop.is_set():
-            coord.stop()
-        ct.join()
-        run = result[0]
-        state, why = _end_state(rec, out, run)
-        rows, first = arm_progress(rec.log.read())
-        done = {k: r["done"] for k, r in rows.items()}
-        rep = report.draw_report(st, rec, job, out, run, done,
-                                 None if first is None else first - rec.t_received, state, why)
-        finish_job(rec, job.dir, rep, state, why)
-    except Exception as e:                       # a bug: the arms stop, the job fails loudly
-        if coord is not None:
-            coord.stop()
-        rec.log.write("error", why=traceback.format_exc())
-        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
-                                   assumptions=st.assumptions()), "failed",
-                f"internal error: {e!r}")
-
-
 ROBOT_STOP_WAIT = 30.0      # s the server waits for the operator PC to confirm a stop
 
 
-def _run_draw_remote(st, rec: JobRecord, job: Job) -> None:
-    """--driver robot: plan, check and queue here; the operator PC's runner copies the queues,
-    runs them and posts its events.  The job ends with the runner's own "job ..." row, or,
-    after a stop, when the runner confirms it (at most ROBOT_STOP_WAIT; at once if no runner
-    ever reported)."""
-    try:
-        configs = _arm_configs(st, reported_where(st, need_all=False))
+def _draw_work(refused: str | None):
+    """A drawing job: plan, check and queue (pipeline.py) while the arms already run what is
+    queued: the simulated arms with the coordinator here; with `--driver robot` the operator
+    PC's runner, whose events end the job (or, after a stop, its confirmation: at most
+    ROBOT_STOP_WAIT; at once if no runner ever reported)."""
+    def work(st, rec: JobRecord, job: Job) -> None:
+        if refused:
+            return fail_job(st, rec, job, refused)
+        where = where_now(st, need_all=False)
+        configs = where if isinstance(where, Refusal) else _arm_configs(st, where)
         if isinstance(configs, Refusal):
-            job.end_phases(configs.reason)
-            finish_job(rec, job.dir, dict(state="failed", why=configs.detail,
-                                       assumptions=st.assumptions()), "failed", configs.detail)
-            return
+            return fail_job(st, rec, job, configs.detail)
+        result, ct = [], None
+        if not st.remote:
+            coord = rec.coordinator = Coordinator(job, st.drivers, st.config_dir, st.rig)
+            ct = threading.Thread(target=lambda: result.append(coord.run()), daemon=True)
+            ct.start()
         rec.set_state("planning")
         out = pipeline.plan_into(st, job, rec.lines, configs, rec,
                                  on_first=lambda: rec.set_state("drawing"))
-        run = wait_robot(rec)
+        if ct is None:
+            run = wait_robot(rec)
+        else:
+            if rec.stop.is_set():
+                rec.coordinator.stop()
+            ct.join()
+            run = result[0]
         state, why = _end_state(rec, out, run)
         rows, first = arm_progress(rec.log.read())
         done = {k: r["done"] for k, r in rows.items()}
         rep = report.draw_report(st, rec, job, out, run, done,
                                  None if first is None else first - rec.t_received, state, why)
         finish_job(rec, job.dir, rep, state, why)
-    except Exception as e:
-        rec.log.write("error", why=traceback.format_exc())
-        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}",
-                                   assumptions=st.assumptions()), "failed",
-                f"internal error: {e!r}")
+    return work
 
 
 def wait_robot(rec: JobRecord):
@@ -280,98 +298,6 @@ def _end_state(rec, out, run) -> tuple[str, str]:
     if run.status != "done":
         return "failed", run.why
     return "done", ""
-
-
-# --------------------------------------------------------------------------- park
-
-
-def submit_park(st, store: JobStore) -> JobRecord | Refusal:
-    if st.remote:
-        where = reported_where(st, need_all=True)
-        if isinstance(where, Refusal):
-            return where
-    rec = store.admit("park", "park all arms")
-    if isinstance(rec, Refusal):
-        return rec
-    job = Job.create(rec.dir, job_header(st, rec, {}))
-    rec.set_state("received", received=rec.t_received)
-    rec.thread = threading.Thread(target=_run_park, args=(st, rec, job), daemon=True,
-                                  name=f"job {rec.id}")
-    rec.thread.start()
-    announce(st, rec)
-    return rec
-
-
-def _run_park(st, rec: JobRecord, job: Job) -> None:
-    try:
-        where = reported_where(st, need_all=True) if st.remote else prepare_arms(st)
-        if isinstance(where, Refusal):
-            job.end_phases(where.reason)
-            finish_job(rec, job.dir, dict(state="failed", why=where.detail, kind="park",
-                                       assumptions=st.assumptions()), "failed", where.detail)
-            return
-        rec.set_state("planning")
-        t0 = time.perf_counter()
-        steps = plan_park(st, where)
-        planning_s = time.perf_counter() - t0
-        moving = queue_steps(job, rec, steps, "park planned")
-        if moving:
-            rec.set_state("moving")
-        run = run_queued(st, rec, job, moving, where)
-        finish_job(rec, job.dir, _park_report(st, rec, steps, run, planning_s), *_park_end(
-            st, rec, steps, run))
-    except Exception as e:
-        if rec.coordinator is not None:
-            rec.coordinator.stop()
-        rec.log.write("error", why=traceback.format_exc())
-        finish_job(rec, job.dir, dict(state="failed", why=f"internal error: {e!r}", kind="park",
-                                   assumptions=st.assumptions()), "failed",
-                f"internal error: {e!r}")
-
-
-def _park_end(st, rec, steps, run) -> tuple[str, str]:
-    if rec.stop.is_set():
-        return "stopped", "stop requested"
-    tol = st.rig.execution().start_tolerance if st.remote else 1e-6
-    left = [f"arm {a}" for a, q in run.where.items()
-            if float(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))) > tol]
-    if run.status != "done":
-        return "failed", run.why
-    if left:
-        return "failed", "not parked: " + ", ".join(left) + "; " + "; ".join(
-            f"arm {s.arm}: {s.why}" for s in steps
-            if s.why and s.why != "already at its park")
-    return "done", ""
-
-
-def _park_arms(st, steps, run) -> dict:
-    """Per arm: parked, already at its park, or why not; its motions and how long they take."""
-    out = {}
-    for a in st.rig.arm_ids:
-        mine = [s for s in steps if s.arm == a]
-        why = next((s.why for s in mine if s.why), "")
-        ms = [m for s in mine if not s.why for m in s.motions]
-        out[str(a)] = dict(result=why or ("parked" if ms else "already at its park"),
-                           motions=[m.kind for m in ms],
-                           motion_s=sum(float(m.traj.t[-1] - m.traj.t[0]) for m in ms),
-                           at_park=a in run.where and bool(at_park(st.rig, a, run.where[a])))
-    return out
-
-
-def _park_report(st, rec, steps, run, planning_s) -> dict:
-    state, why = _park_end(st, rec, steps, run)
-    checked = [v for s in steps for v in s.verdicts]
-    rows, first = arm_progress(rec.log.read())
-    return dict(state=state, why=why, kind="park",
-                arms=_park_arms(st, steps, run),
-                checker=dict(checked=len(checked), passed=sum(bool(v.passed) for v in checked),
-                             tightest_clearance_m=min((float(v.min_clearance) for v in checked),
-                                                      default=None)),
-                phases=[dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
-                        for n, p, t, c in run.phase_ends],
-                planning_s=planning_s,
-                first_motion_s=None if first is None else first - rec.t_received,
-                assumptions=st.assumptions())
 
 
 # --------------------------------------------------------------------------- stop

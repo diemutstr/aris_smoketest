@@ -11,14 +11,13 @@ Files: `aris/sequencer/tour.py` (the loop and the report), `lift.py` (lift-off, 
 
 ## In and out
 
-`tour(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=None)`
+`tour(arm, bunches, q_start, obstacles, rules, q_end=None, *, report=None, verify=None, batches=None, refill=32)`
 
 - **In:** the arm, the local planner's bunches, where the arm is, the obstacles (base frame),
   the drawing rules (draw speed, speed share, gates), where the arm should end
-  (default: where it started), and settings for the free-space planner.
+  (default: where it started).
 - **Out:** a generator. It hands out `Motion`s one at a time, in order, and at the end returns
-  the pieces it could not draw (`Leftover`, reason and detail). `tour_all` collects everything;
-  a `TourReport` passed in is filled as it goes (pieces, lifts, drawing time, pen-up time and
+  the pieces it could not draw (`Leftover`, reason and detail). A `TourReport` passed in is filled as it goes (pieces, lifts, drawing time, pen-up time and
   share, longest free motion, joint travel of the moves, free-space calls and refusals, time
   to the first motion, CPU and wall time).
 
@@ -67,8 +66,7 @@ Decided by Pete, 2026-09-30: as simple and reliable as possible.
 
 The pen clearance is rig.json's `pen_lifted_to_paper_m`: the free-space planner keeps the pen
 that far above the paper, so the lift is just enough to hand over to it. Today 20 mm (until the
-calibration is proven on the rig; then 3 mm), so the lift is 22 mm. `rules.lift_height` is not
-used by the sequencer. The set-down (motion kind `lower`) follows the lift-off's path at the
+calibration is proven on the rig; then 3 mm), so the lift is 22 mm. The set-down (motion kind `lower`) follows the lift-off's path at the
 piece's first configuration backwards, timed so that the pen never goes faster than
 `rules.landing_speed` (rig.json `drawing.landing_speed_m_per_s`, 10 mm/s): the pen's path
 length along the descent is the arc length and the landing speed its cap, as on the hardware,

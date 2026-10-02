@@ -203,8 +203,6 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
             bunches.append(Bunch(piece, tuple(plans)))
         else:
             leftovers.append(Leftover(piece, "unreachable", f"cannot be timed: {why}"))
-    # the reason of an undrawn stretch ("blocked by ...") needs its nodes checked
-    clock("graph", lat.check_layers, sorted({k for a, b in route.gaps for k in range(a, b + 1)}))
     leftovers += gap_leftovers(lat, judge, line.id, route.gaps, gap_from, gap_to)
     leftovers += [Leftover(Piece(line.id, float(s[k0]), float(s[k1])), *REPAIRED)
                   for k0, k1 in lost]
@@ -218,23 +216,7 @@ def plan_line(arm, line: Line, judge: Judge, rules: DrawRules, cfg: Settings, ta
 
 
 def _search(lat: Lattice, cfg: Settings, clock, stats) -> Route:
-    """The cheapest route whose nodes are all free of the obstacles.
-
-    Lazily (`cfg.lazy`) the graph's nodes count as free until checked; so the route is found,
-    its nodes and their neighbours are checked in one batch, and if any of the route's own
-    nodes is not free the search runs again.  After `lazy_rounds` searches every surviving node
-    of the line is checked, as in the eager planner."""
-    for _ in range(cfg.lazy_rounds if cfg.lazy else 1):
-        route = clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
-        stats.rounds += 1
-        if not cfg.lazy:
-            return route
-        picks = [(r.k0 + i, lat.band(r.k0 + i, [n])) for r in route.runs
-                 for i, n in enumerate(r.nodes)]
-        clock("graph", lat.check, picks)
-        if all(lat.layers[r.k0 + i].free[n] for r in route.runs for i, n in enumerate(r.nodes)):
-            return route
-    clock("graph", lat.check_layers, range(lat.n_layers))
+    """The cheapest route whose nodes are all free of the obstacles."""
     stats.rounds += 1
     return clock("search", best_route, lat, cfg.lift_cost, cfg.gap_cost)
 
@@ -337,21 +319,8 @@ def _alternatives(lat, judge, run, piece, checked, points, s_points, rules, cfg,
     """Up to `n_alternatives` verified, timed plans for one piece: the best route of each
     family, cheapest family first, each starting or ending at least `distinct` away (in some
     joint) from every plan already taken."""
-    for _ in range(cfg.lazy_rounds if cfg.lazy else 1):
-        sweep = clock("search", piece_routes, lat, run.k0, run.k1)
-        ends = families(lat, sweep, cfg.spin_sectors)[: 3 * cfg.n_alternatives]
-        if not cfg.lazy:
-            break
-        routes = [sweep.route(e) for e in ends]
-        picks = [(run.k0 + i, lat.band(run.k0 + i, [r[i] for r in routes]))
-                 for i in range(run.k1 - run.k0 + 1)]
-        clock("graph", lat.check, picks)
-        if all(lat.layers[run.k0 + i].free[r[i]] for r in routes for i in range(len(r))):
-            break
-    else:
-        clock("graph", lat.check_layers, range(run.k0, run.k1 + 1))
-        sweep = clock("search", piece_routes, lat, run.k0, run.k1)
-        ends = families(lat, sweep, cfg.spin_sectors)
+    sweep = clock("search", piece_routes, lat, run.k0, run.k1)
+    ends = families(lat, sweep, cfg.spin_sectors)[: 3 * cfg.n_alternatives]
     primary = _family(lat, run.k0, run.k1, run.nodes[0], run.nodes[-1], cfg.spin_sectors)
     extent = (piece.s0, piece.s1)
     layers = (float(lat.s[run.k0]), float(lat.s[run.k1]))

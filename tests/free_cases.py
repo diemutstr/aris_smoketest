@@ -8,7 +8,7 @@ is seeded, so a rebuild gives the same file.
 How a case is made (default, `pool_local`, since 2026-09-30)
 - the local planner plans its fixed set (tests/local_cases.py: the word, the corpus, the random
   lines) for the arm in its phase; at both ends of every alternative plan the sequencer's
-  lift-off is made; its top configuration (tip `rules.lift_height` above the paper) joins the
+  lift-off is made; its top configuration (tip `lift_height(paper, extra)` above the paper) joins the
   pool, with the IK slot that reproduces it as its branch
 - four groups of 250 pairs: near (tips under 0.15 m apart), far (over 0.6 m), same IK branch,
   different IK branch (the last two at any distance)
@@ -57,7 +57,10 @@ def pool(rig: Rig, arm_id: str, seed: int):
     a = rng.uniform(-np.pi, np.pi, N_POSES)
     xy = axis + np.stack([r * np.cos(a), r * np.sin(a)], 1)
     xy = np.clip(xy, -half, half)
-    tip_table = np.column_stack([xy, np.full(N_POSES, rig.paper_z + rules.lift_height)])
+    from aris.sequencer import TourOptions
+    from aris.sequencer.lift import lift_height
+    up = lift_height([p for p in obs.planes if p.kind == "paper"][0], TourOptions().lift_extra)
+    tip_table = np.column_stack([xy, np.full(N_POSES, rig.paper_z + up)])
     T = rig.T_base_table(arm_id)
     tip_base = tip_table @ T[:3, :3].T + T[:3, 3]
     normal = T[:3, :3] @ np.array([0.0, 0.0, 1.0])

@@ -121,10 +121,8 @@ maps and the kinematic table; `--map-grid` (default 2 cm) is the maps' grid; `--
 
 Units "mm" or "m"; the frame must be "table" (origin at the table centre, on the paper, x
 across, y along). `intensity` (0 to 1, how hard to press) is optional, default 1. One pen.
-Ids must be distinct; every line needs at least two points. The same content is accepted as a
-`.npz` file by `aris draw` and `aris plan` (`lines` an object array); the command turns it
-into JSON before sending, because the server never unpacks pickles from the network. **SVG is
-not read in this round.**
+Ids must be distinct; every line needs at least two points. One format. **SVG is not read in
+this round.**
 
 ## The fit rule
 
@@ -151,11 +149,8 @@ plans on from where it was. A refused motion is saved in the job directory (belo
 So every motion the planner hands over already carries a passing check (`Motion.checked`),
 and the server queues it at once, in the order it came; the queue itself refuses a motion
 without one ("nothing unchecked is ever queued"). A phase is written when its first motion
-arrives, so the arms start while the planner still works. A leader phase lists the leaders'
-row partners as moving too: a follower draws against its leader's footprint and is checked in
-its own view of the phase with that footprint (saved next to its queue so `aris check` can
-repeat it); a follower with nothing to do holds. `aris check` re-checks every queued motion
-offline (it keeps its own `--check-workers`).
+arrives, so the arms start while the planner still works. `aris check` re-checks every
+queued motion offline (it keeps its own `--check-workers`).
 
 **Park all arms.** From where every arm stands: with the simulated arms, as they report it;
 with `--driver robot`, as the operator PC last reported it (every event row about an arm
@@ -174,7 +169,7 @@ cannot move an arm the wrong way.
    were drawing behind (every phase-end check fails while any pen is down).
 2. Then one arm at a time in rig order, each in its own phase ("park 1L", ...): a free motion
    to its park, planned around the others (parked ones at their parks; ones not yet parked as
-   their bodies where they stand, and for the checker as their footprints), checked, queued,
+   their bodies where they stand, and for the checker as `standing` joints), checked, queued,
    run. An arm already at its park is left alone. An arm the planners or the checker refuse
    stays; the job then fails and says which.
 
@@ -256,9 +251,8 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 |---|---|
 | `job.json` | the header: rig, calibration and drawing digests, rules, the pen that is in (`rig.pen()`: name, press, force rules, which the operator PC applies), the tracking mode, the note, the drawing area and its centre, scale, `rest_of`, driver, speed |
 | `drawing.json` | the drawing as planned (after the fit), so its leftovers can be drawn again (`--rest-of`) |
-| `phases.jsonl` | the phases in the order they run, then an end line |
+| `phases.jsonl` | the phases in the order they run, then an end line; a park or calibrate phase also names the arms standing still off their parks (`standing`: {slot: joints}), which `aris check` gives the checker |
 | `<phase>__<slot>.queue` | the checked motions of one arm in one phase (format: execute.md) |
-| `<phase>__<slot>.check.npz` | where a queue is not checked in its named phase (a follower, a park): that phase and the footprints |
 | `refused/<phase>__<slot>__<n>.npz` | every motion the checker refused while planning: `t`, `q`, `qd`, `tip_base` (drawing), `kind`, `piece` (line id and arc lengths, JSON), `intensity`, `q_before`, the failed measurements and the whole verdict as text |
 | `operator.jsonl` (beside the job directories) | the operator PC's rows outside any job |
 | `events.jsonl` | every state change: the job's, the coordinator's, each arm's (with `--driver robot`, the operator PC's rows, marked `source: robot`) |
@@ -293,7 +287,8 @@ A park job's report says per arm "parked", "already at its park" or why not.
 - Small drawing (two short lines, arms 13 and 71, now 1L and 2R; 5 cm maps, no cache): first motion 7.2 s,
   done at 7.9 s, 10 of 10 motions pass.
 - Park all arms from random configurations up to 0.05 rad from their parks (five arms to move):
-  planned and checked in 7.9 s, done at 8.2 s; the standing arms' footprints take most of it
+  planned and checked in 7.9 s, done at 8.2 s (then; the standing arms' footprints took most of it,
+  and are gone since: the checker now builds the standing arms' bodies itself)
   (1.1 s each).
 - **Very big drawings** (`tests/big_cases.py`; `aris plan`, 30 planner and 30 checker
   processes, warm cache, machine load about 4): 2 000 lines of 1.2 to 1.5 m (2 680 m): 17 min

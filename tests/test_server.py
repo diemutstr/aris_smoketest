@@ -86,15 +86,6 @@ def test_drawing_file_read_and_fitted(tmp_path):
     assert [x.id for x in lines] == ["under13", "under71"]
     assert np.allclose(lines[0].points, [[-0.45, -1.0, 0.0], [-0.30, -0.95, 0.0]])
     assert lines[1].intensity == 0.8 and lines[0].frame == "table"
-    # the same as .npz
-    z = tmp_path / "small.npz"
-    raw = json.loads(SMALL.read_text())["lines"]
-    arr = np.empty(len(raw), object)
-    arr[:] = raw
-    np.savez(z, units="mm", frame="table", lines=arr)
-    again = drawing.load(z)
-    assert all(np.array_equal(a.points, b.points) and a.intensity == b.intensity
-               for a, b in zip(lines, again))
     # refusals are returned, never raised
     for bad in (b"not json", b'{"units": "inch", "lines": []}',
                 b'{"units": "mm", "frame": "base", "lines": [{"points": [[0,0],[1,1]]}]}',
@@ -143,13 +134,14 @@ def test_a_stale_drawing_area_in_the_rig_file_is_refused():
 def test_the_report_reasons_are_the_shared_ones():
     from typing import get_args
     from aris.server.report import account
-    from aris.types import Line, Piece, Reason
+    from aris.types import Leftover, Line, Piece, Reason
     line = Line("a", np.array([[0.0, 0, 0], [0.1, 0, 0]]), "table")
     for rest in ("stopped", "failed", "unaccounted"):
-        acc = account([line], [Piece("a", 0.0, 0.02)], [(Piece("a", 0.05, 0.06), "blocked", "")],
-                      rest)
-        assert set(acc["left_by_reason"]) <= set(get_args(Reason))
+        acc = account([line], [Piece("a", 0.0, 0.02)], [Leftover(Piece("a", 0.05, 0.06),
+                                                                  "blocked")], rest, 0.01)
+        assert set(acc["left_by_reason"]) == {"blocked", rest} <= set(get_args(Reason))
         assert acc["drawn_m"] + acc["left_m"] == pytest.approx(0.1)
+        assert acc["left_by_reason"][rest] == pytest.approx(0.07)   # never planned: the gaps
 
 
 def test_rig_and_arms_endpoints(station):
@@ -365,10 +357,10 @@ def test_the_verify_keeps_a_refused_motion_and_pickles(station, tmp_path):
     traj = retime(JointPath(np.array([p, p + 0.05])), arm.limits, rig.rules())
     motion = Motion("free", traj, Piece("x", 0.0, 0.1))
     verify = pickle.loads(pickle.dumps(CheckVerify(CONFIG, tmp_path / "refused")))
-    ok = verify("1L", rig.phase(1), (), motion, p)
+    ok = verify("1L", rig.phase(1), motion, p)
     assert ok["passed"] and "refused_file" not in ok and not (tmp_path / "refused").exists()
     for n in range(2):                             # q_before is not where it starts: refused
-        bad = verify("1L", rig.phase(1), (), motion, p + 0.01)
+        bad = verify("1L", rig.phase(1), motion, p + 0.01)
         assert not bad["passed"] and bad["refused_file"] == f"phase_1__1L__{n}.npz"
     with np.load(tmp_path / "refused" / "phase_1__1L__1.npz") as z:
         assert np.array_equal(z["q"], traj.q) and np.array_equal(z["t"], traj.t)

@@ -151,7 +151,8 @@ def test_calibrate_starts_from_where_the_arm_stands(tmp_path):
     assert np.max(np.abs(first.q_start - where["2R"])) < 1e-9 and first.kind == "free"
     assert plan.steps[-1].motions[-1].q_end == pytest.approx(rig.park_q("2R"), abs=1e-9)
     assert all(v is None or v.passed for s in plan.steps for v in s.verdicts)
-    assert plan.phase.active == ("2R",) and "3R" not in plan.phase.parked   # 2R as it stands
+    assert plan.phase.active == ("2R",) and "3R" in plan.phase.parked
+    assert np.allclose(plan.steps[0].standing["3R"], where["3R"])   # 3R where it stands
 
 
 def test_missed_touches_are_skipped_and_named():

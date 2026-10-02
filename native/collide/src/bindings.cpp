@@ -23,9 +23,6 @@ namespace {
 struct SceneIn {  // keeps the converted arrays alive while the pointers are in use
     Arr bR, bc, bh, bm, pn, po, pm, ppm, ca, cb, crm, ptm, ga, gb, gr, gm;
     IArr gs, gmem;
-    Arr fo, fc, fm, ft, fb, fmin;
-    IArr fd, foff;
-    py::array_t<float, py::array::c_style | py::array::forcecast> fdata;
     BArr pp;
     std::vector<double> box_soa, cap_soa, og_soa;
     acol::Scene s;
@@ -36,26 +33,7 @@ struct SceneIn {  // keeps the converted arrays alive while the pointers are in 
           ptm(t[12].cast<Arr>()), ga(t[15].cast<Arr>()), gb(t[16].cast<Arr>()),
           gr(t[17].cast<Arr>()), gm(t[18].cast<Arr>()), gs(t[13].cast<IArr>()),
           gmem(t[14].cast<IArr>()), pp(t[8].cast<BArr>()) {
-        if (t.size() != 28) throw std::invalid_argument("scene must have 28 arrays");
-        fo = t[19].cast<Arr>(); fc = t[20].cast<Arr>(); fd = t[21].cast<IArr>();
-        fm = t[22].cast<Arr>(); foff = t[23].cast<IArr>();
-        fdata = t[24].cast<py::array_t<float, py::array::c_style | py::array::forcecast>>();
-        ft = t[25].cast<Arr>(); fb = t[26].cast<Arr>(); fmin = t[27].cast<Arr>();
-        s.F = int(fc.size());
-        s.NL = int(ft.size());
-        if (fo.size() != 3 * s.F || fd.size() != 3 * s.F || fm.size() != s.F ||
-            foff.size() != s.F + 1 || fb.size() != 6 * s.F * s.NL || fmin.size() != s.F ||
-            foff.data()[s.F] != fdata.size())
-            throw std::invalid_argument("field arrays have inconsistent sizes");
-        for (int f = 0; f < s.F; ++f) {
-            const int64_t* n = fd.data() + 3 * f;
-            if (n[0] < 1 || n[1] < 1 || n[2] < 1 || fc.data()[f] <= 0.0 ||
-                foff.data()[f + 1] - foff.data()[f] != n[0] * n[1] * n[2])
-                throw std::invalid_argument("bad field grid");
-        }
-        s.fl_origin = fo.data(); s.fl_cell = fc.data(); s.fl_dims = fd.data(); s.fl_margin = fm.data();
-        s.fl_off = foff.data(); s.fl_data = fdata.data(); s.fl_tau = ft.data(); s.fl_box = fb.data();
-        s.fl_min = fmin.data();
+        if (t.size() != 19) throw std::invalid_argument("scene must have 19 arrays");
         s.Mb = int(bm.size());
         s.Mp = int(po.size());
         s.Mc = int(crm.size());

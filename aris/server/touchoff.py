@@ -12,6 +12,8 @@ not touched.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from aris.server.calibrate import grid_points, misses
@@ -37,17 +39,43 @@ def candidates(st, slot, cfg) -> tuple[list, str]:
         "the grid point nearest the slot's axis that the arm can touch"
 
 
-def plan(st, slot, where, cfg):
-    """-> (Plan, reference (x, y), where it came from): the first candidate that can be
-    touched."""
+@dataclass(frozen=True)
+class TouchPlan:
+    """The touch-off's plan: the calibrate job's Plan for one point, and that point."""
+    plan: object
+    ref: tuple | None
+    source: str
+
+    @property
+    def steps(self):
+        return [] if self.plan is None else self.plan.steps
+
+    @property
+    def why(self):
+        return "no point to touch in the drawing area" if self.plan is None else self.plan.why
+
+    def failed(self) -> dict:
+        out = {} if self.plan is None else self.plan.failed()
+        return dict(out, reference=dict(xy_table_m=self.ref, source=self.source))
+
+
+def plan(st, slot, where, cfg) -> TouchPlan:
+    """The first candidate point that can be touched (or the last refusal)."""
     from aris.server.calibrate import plan_calibrate
     pts, source = candidates(st, slot, cfg)
     p = None
     for xy in pts:
         p = plan_calibrate(st, slot, where, cfg, points=[xy], name="touchoff", min_points=1)
         if not p.why:
-            return p, xy, source
-    return p, (pts[0] if pts else None), source
+            return TouchPlan(p, xy, source)
+    return TouchPlan(p, pts[0] if pts else None, source)
+
+
+def job_report(st, rec, tp: TouchPlan, run, planning_s):
+    state, why, result, written = solve(st, rec, tp.plan, run, tp.ref, tp.source)
+    rep = report(st, rec, tp.plan, run, result, written, planning_s, state, why, tp.ref,
+                 tp.source)
+    return rep, state, why
 
 
 def solve(st, rec, plan, run, ref, source):

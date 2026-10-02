@@ -7,8 +7,9 @@ Obstacle classes, each with the clearance `rig.json` demands (not the planning a
   tool     the paper, for the tool (gripper, blades, holder, pencil tail), its own clearance
   pen      the paper, for the pen (free motions only), at the lifted-pen clearance
   walls    the walls of the phase that have this arm on one side
-  parked   the arms standing parked in this phase, at their park configurations
-  fields   neighbours' footprints over the phase (distance fields), at the arm-to-arm clearance
+  parked   the other arms standing still: parked in this phase at their park configurations,
+           or standing elsewhere at the joints the caller gives (`standing`), bases included,
+           at the arm-to-arm clearance
   self     the arm against itself
 Capsules bolted to the base (link0) are not checked against obstacles, only against the arm
 itself.  Values are the clearance beyond the demanded one ("gap minus margin"), per sample:
@@ -21,12 +22,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from aris.check import field as fld
 from aris.check import geometry as geo
 from aris.check.config import RigData
 from aris.check.model import ArmModel, capsules, load_model
 
-CLASSES = ("steel", "links", "tool", "pen", "walls", "parked", "fields", "self")
+CLASSES = ("steel", "links", "tool", "pen", "walls", "parked", "self")
 _BLOCK = 16                     # consecutive samples that share one ball per capsule
 
 
@@ -49,7 +49,6 @@ class Scene:
     other_a: np.ndarray         # (C,3)
     other_b: np.ndarray
     other_r: np.ndarray
-    fields: tuple = ()          # (name, origin_base, cell, dist) per field, this arm's base frame
 
 
 @dataclass(frozen=True)
@@ -71,12 +70,13 @@ def model_of(rig: RigData, slot: str) -> ArmModel:
 
 
 def build_scene(rig: RigData, slot: str, walls, parked, drawing: bool,
-                pen_floor: float | None = None, fields=()) -> Scene:
-    """`slot`: the arm, by its slot ("2R"); `parked`: slots.  `pen_floor` replaces the pen's
-    lifted clearance to the (real) paper; a negative number lets the pen into it, for setting it
-    down on the drawing surface and taking it up.  `fields`: `types.Field`s in
-    this arm's base frame; each is held to the demanded arm-to-arm clearance of rig.json (the
-    field's own margin is the planner's business)."""
+                pen_floor: float | None = None, standing=None) -> Scene:
+    """`slot`: the arm, by its slot ("2R"); `parked`: slots, standing at their park
+    configurations.  `standing` ({slot: (7,) joints}): arms standing still somewhere other than
+    their park (park and calibrate jobs); a slot in both stands where `standing` says.
+    `pen_floor` replaces the pen's lifted clearance to the (real) paper; a negative number lets
+    the pen into it, for setting it down on the drawing surface and taking it up."""
+    standing = standing or {}
     mount = rig.mounts[slot]
     model = model_of(rig, slot)
     base = mount.T_table_base[:3, 3]
@@ -93,25 +93,24 @@ def build_scene(rig: RigData, slot: str, walls, parked, drawing: bool,
     for name, pt, normal in rig.fences:        # always there, whatever the phase
         names.append(name), n.append(normal), d.append(normal @ pt)
     o_names, o_a, o_b, o_r = [], [], [], []
-    for p in parked:
-        other = rig.mounts[p]
+    still = [(p, "parked", rig.mounts[p].park_q) for p in parked if p not in standing]
+    still += [(p, "standing", np.asarray(q, float)) for p, q in standing.items()]
+    for p, how, q in still:
         m = model_of(rig, p)
-        a, b = capsules(m, other.park_q[None], other.T_table_base)
-        o_names += [f"parked{p}:{x}" for x in m.names]
+        a, b = capsules(m, q[None], rig.mounts[p].T_table_base)
+        o_names += [f"{how}{p}:{x}" for x in m.names]
         o_a.append(a[0]), o_b.append(b[0]), o_r.append(m.radius)
     c = rig.clearance
     margin = dict(steel=c["steel_m"], links=c["body_to_paper_m"], tool=c["tool_to_paper_m"],
                   pen=c["pen_lifted_to_paper_m"] if pen_floor is None else pen_floor,
                   walls=c["wall_m"],
-                  parked=c["arm_to_arm_m"], fields=c["arm_to_arm_m"], self=c["self_m"])
+                  parked=c["arm_to_arm_m"], self=c["self_m"])
     cat = lambda xs, k: np.concatenate(xs) if xs else np.zeros((0,) + k)
     own = np.array([o == slot for o in rig.box_owner], bool)
     return Scene(model, mount.T_table_base, drawing, margin, rig.box_names, rig.box_lo,
                  rig.box_hi, own, rig.own_exempt, tuple(names), np.array(n, float).reshape(-1, 3),
                  np.array(d, float), rig.paper_z, tuple(o_names), cat(o_a, (3,)),
-                 cat(o_b, (3,)), cat(o_r, ()),
-                 tuple((f.name, np.asarray(f.origin_base, float), float(f.cell),
-                        np.asarray(f.dist)) for f in fields))
+                 cat(o_b, (3,)), cat(o_r, ()))
 
 
 def clearance(scene: Scene, Q, thr=None) -> Clearance:
@@ -148,7 +147,6 @@ def clearance_of(scene: Scene, A, B, thr=None) -> Clearance:
         "walls": _plane(Am, Bm, rm, names[move], scene.plane_n, scene.plane_d,
                         scene.plane_names, scene.margin["walls"]),
         "parked": _parked(scene, Am, Bm, rm, names[move], t("parked")),
-        "fields": _fields(scene, Am, Bm, rm, names[move], t("fields")),
         "self": _self(A, B, m, scene.margin["self"], t("self")),
     }
     return Clearance({c: v[0] for c, v in out.items()}, {c: v[1] for c, v in out.items()},
@@ -339,41 +337,3 @@ def _self(A, B, m: ArmModel, margin, thr):
     val, sel = _gather(N, n_i, lb, ub, exact, thr, floor)
     pair = np.where(sel >= 0, p_i[np.maximum(sel, 0)] if len(p_i) else -1, -1)
     return val, pair, lambda p: f"{m.names[i[p]]} / {m.names[j[p]]}"
-
-
-def _fields(scene, A, B, r, names, thr):
-    """Moving capsules against the neighbours' footprints (see field.py for the reading)."""
-    N, K = A.shape[:2]
-    F = scene.fields
-    if K == 0 or not F:
-        return _nothing(N)
-    R, t = scene.T_table_base[:3, :3], scene.T_table_base[:3, 3]
-    base = lambda p: (p - t) @ R                   # table -> this arm's base frame
-    margin = scene.margin["fields"]
-
-    def at(p, o):                                  # points (M,3), fields (M,) -> (M,)
-        out = np.empty(len(p))
-        for j in np.unique(o):
-            sel = o == j
-            out[sel] = fld.point_bound(F[j][1], F[j][2], F[j][3], base(p[sel]))
-        return out
-
-    def ob_lb(c, o):                               # points (M,3) x fields (O,) -> (M,O)
-        if len(o) == 0:                            # every field pruned
-            return np.empty((len(c), 0))
-        return np.stack([at(c, np.full(len(c), j)) for j in o], axis=1) - margin
-
-    def bounds(mid, rad, rk, o):                   # no upper bound for a field reading
-        lb = at(mid, o) - rad - margin
-        return lb, np.full(len(lb), np.inf)
-
-    def exact(a, b, rk, o):
-        out = np.empty(len(a))
-        for j in np.unique(o):
-            sel = o == j
-            out[sel] = fld.capsule_bound(F[j][1], F[j][2], F[j][3], base(a[sel]), base(b[sel]),
-                                         rk[sel])
-        return out - margin
-
-    val, pair = _two_level(A, B, r, ob_lb, bounds, exact, len(F), thr)
-    return val, pair, lambda p: f"{names[p % K]} / {F[p // K][0]}"

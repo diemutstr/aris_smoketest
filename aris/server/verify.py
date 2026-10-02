@@ -1,7 +1,7 @@
 """The independent checker as the planners' `verify`: handed to the system planner, which binds
-it to each arm, phase and footprints and hands it to the arm planners in their processes.
+it to each arm and phase and hands it to the arm planners in their processes.
 
-`CheckVerify(config_dir, refused_dir)(arm_id, phase, fields, motion, q_before)` runs
+`CheckVerify(config_dir, refused_dir)(slot, phase, motion, q_before)` runs
 `aris.check.check` in whichever process calls it and answers the checker's key numbers
 (`verdict_numbers`, which is what `Motion.checked` carries).  A motion that fails is also kept
 as `refused/<phase>__<slot>__<n>.npz` in the job directory: the job directory is the record
@@ -27,8 +27,8 @@ class CheckVerify:
     config_dir: Path
     refused_dir: Path | None = None
 
-    def __call__(self, arm_id, phase, fields, motion, q_before) -> dict:
-        v = check(self.config_dir, arm_id, motion, phase, q_before, fields=tuple(fields))
+    def __call__(self, arm_id, phase, motion, q_before) -> dict:
+        v = check(self.config_dir, arm_id, motion, phase, q_before)
         out = verdict_numbers(v)
         if not v.passed and self.refused_dir is not None:
             out["refused_file"] = save_refused(self.refused_dir, phase.name, arm_id, motion,

@@ -12,7 +12,6 @@ Two rules (Pete and the orchestrator, 2026-09-30), nothing else:
 2. If rule 1 fails at an end, the piece is shortened at that end by `cut_step` (1 cm) and rule 1
    is tried again, up to `max_cut` (5 cm); the part cut off is a leftover.
 The pen clearance is the paper's lifted-pen margin (rig.json `pen_lifted_to_paper_m`).
-`rules.lift_height` is not used.
 """
 from __future__ import annotations
 

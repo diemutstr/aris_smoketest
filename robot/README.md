@@ -17,13 +17,11 @@ robot/
   tests/                       everything that runs without ROS
 ```
 
-**In normal operation one process runs here, `aris-robot serve` (section 8), started at boot
-by systemd. Nobody touches this PC after that: every command (draw, park, calibrate, recover,
-report) is given on the planning PC with `aris ...`, and the only thing on this side is the
-e-stop.** Sections 5 to 7 are the hardware-day steps that come before it. The tools they use
-(`aris-robot run, park, jog, touch, identify, switch, recover`) stay for that, but they are
-not needed once serve runs. Stop serve (`sudo systemctl stop aris-robot`) before using any of
-them on the same arm.
+**One process runs here, `aris-robot serve` (section 5), started at boot by systemd. Nobody
+touches this PC after that: every command (draw, park, calibrate, touch-off, recover, report)
+is given on the planning PC with `aris ...`, and the only thing on this side is the e-stop.**
+The first run is: build (sections 1 to 3), fill in the site (section 4), install and start
+serve (section 5), then everything from the planning PC.
 
 Nothing below has been run on the operator PC yet. Where a step can fail for a reason we could
 not check here, it says so.
@@ -37,7 +35,7 @@ not check here, it says so.
 - The collision thresholds in force are whatever the arm was last given (the old stack raised
   them from 20 N to 40 N before every pass). Write down which are in force.
 
-`robot/generated/` (from `aris-robot bringup`) and `out/robot_jobs/` (the local copies of
+`robot/generated/` (the launch arguments serve writes) and `out/robot_jobs/` (the local copies of
 jobs) are gitignored, and so is `out/operator/`, serve's log directory.
 
 ## 1. Get the code
@@ -92,7 +90,7 @@ python -m pytest robot/tests -q -m "not slow"      # needs: pip install pytest f
 ## 4. Slots, the site table and the site file
 
 Arms are named by their slot on the frame: `1L 1R 2L 2R 3L 3R` (row 1 at the −y end, L at −x;
-DESIGN 4c). Every command, row and file here uses the slot (`aris-robot jog 2R ...`, rows with
+DESIGN 4c). Every command, row and file here uses the slot (rows with
 `"arm": "2R"`, namespace `arm_2R`). The old robot ids (13, 17, 31, 71, 2, 97) live on only in
 the site table.
 
@@ -132,99 +130,9 @@ which park the arm stands at.
 
 The calibration touch is under position control in both modes.
 
-## 5. Launch files
+## 5. The resident process: `aris-robot serve`
 
-```
-aris-robot bringup                 # writes robot/generated/arm_<slot>.json and _controllers.yaml
-aris-robot --fake bringup          # the same, for fake hardware
-```
-
-It prints one `ros2 launch` line per slot. Each runs in its own terminal, in namespace
-`arm_<slot>` on the slot's DDS domain from the site table:
-
-```
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
-```
-
-The launch refuses an arm that is not mounted (unless the files are for fake hardware). To look
-at one arm with the ROS tools, set its domain: `ROS_DOMAIN_ID=71 ros2 control list_controllers
--c /arm_2R/controller_manager` should show `fr3_arm_controller` and the broadcasters active and
-`aris_joint_impedance_controller` inactive.
-
-## 6. First run: fake hardware, one arm
-
-```
-aris-robot --fake bringup
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
-aris-robot --fake identify
-aris-robot --fake switch 2R impedance && aris-robot --fake switch 2R trajectory
-aris-robot --fake jog 2R --joint 7 --delta 0.05
-```
-
-Not checked here: that franka_description's fake hardware offers a position command interface
-(the fake arm ignores torques, so with fake hardware the trajectory controller is set to
-positions and drawing motions go through it, without pen force).
-
-Then a job. The server on the planning PC must offer the four endpoints of
-`aris_robot/remote.py` (not built there yet, see `docs/modules/robot.md`). Start a job there
-(`aris draw ...`), take its id, then:
-
-```
-aris-robot run --job <id> --sim-speed inf     # no ROS at all: simulated arms, at once
-aris-robot --fake run --job <id>              # fake hardware, real time
-```
-
-Every event appears in the job's log on the server (`aris status`), and a local copy of the job
-is kept under `out/robot_jobs/<id>/`. A job runs once; a second run of the same id is refused.
-
-## 7. A real arm
-
-```
-aris-robot bringup
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
-aris-robot identify                 # address, domain, mode, which park the arm stands nearest
-aris-robot jog 2R --joint 7 --delta 0.05
-aris-robot park 2R                  # only from within 0.05 rad of the park, straight
-```
-
-A park from further away is a planned job, planned from where the arms really stand. The
-server knows that only from this PC: every run reports every mounted arm's joints at its start,
-on every row about an arm, and at its end, and serve reports them every 10 s while idle. With
-serve running, `aris park` on the planning PC is all it takes. Without serve:
-
-1. Run anything with `aris-robot run` first (the last run's report is what the server plans
-   from). If the arms were moved by hand since, the server's positions are stale.
-2. `aris park` on the planning PC: it plans a park job from those positions.
-3. `aris-robot run --job <that id>` here. It runs like any job, one arm per phase.
-
-A stale position cannot move an arm: a motion that does not start within 0.005 rad of the
-arm's actual joints (on every joint) is refused before it moves. The job then fails with a
-"failed" row saying which joint is how far off, and the arm holds. That refused run reports
-the true positions, so run `aris park` again and then the new job.
-
-The first contact with paper is the touch, with the pen a few centimetres above the paper:
-
-```
-aris-robot touch 2R --depth 0.04 --extra 0.01
-```
-
-It goes straight down at 5 mm/s under position control (the trajectory controller), and on
-for at most 10 mm more at 2 mm/s if it has not met the paper. It stops at the force onset
-(1.0 N over the air reading), prints the joints, the pen tip and the air reading, and goes
-back up the same way. Over 3 N it stops and holds where it is. This is the same touch the
-calibration job uses (`aris calibrate <arm>` on the planning PC, with serve running). Check
-the sign of the force (site.json, the arm's `force_sign`) here: the reading must rise when the pen meets
-the paper. Then the first job, in the air first (a drawing planned 30 mm above the paper), then on
-paper.
-
-If an arm faults or was stopped: look at it, clear the cause, then `aris-robot recover 2R`
-(franka error recovery, then the trajectory controller takes the arm again). The runner never
-does this by itself: a failed arm holds, and the next job refuses an arm that is not able to
-move. Never recover an arm in user stop (mode "user stopped") or guiding.
-
-## 8. The resident process: `aris-robot serve`
-
-Once the steps above work for every mounted arm, install serve and leave this PC alone:
+Install it once and leave this PC alone:
 
 ```
 sudo cp ~/aris3/robot/aris-robot.service /etc/systemd/system/
@@ -240,12 +148,15 @@ that order); the venv's `aris-robot`; real-time limits for the control loop (`Li
 boot.
 
 What it does, on its own:
-- writes the launch files and starts one ROS stack per mounted arm (site.json), each in its own
-  process group, with its output in `out/operator/stack_arm<slot>.log`. A stack that dies is
+- writes the launch arguments (`robot/generated/arm_<slot>.json` and `_controllers.yaml`) and
+  starts one ROS stack per mounted slot (`ros2 launch aris_bringup arm.launch.py`, namespace
+  `arm_<slot>`, the slot's DDS domain from the site table), each in its own process group, with
+  its output in `out/operator/stack_arm<slot>.log`. A stack that dies is
   started again after 1 s, then 2, 4, ... up to a minute, and every death is reported.
 - asks the drawing server for work (`GET /operator/next`, waiting 30 s at a time), so this PC
-  opens no port. "run" runs a job exactly as `aris-robot run --job` does (a drawing, a park or
-  a calibration); "recover" recovers one arm; "report" reports every arm.
+  opens no port. "run" runs a job (a drawing, a park, a calibration or a touch-off: the
+  server plans parks from the positions serve reports); "recover" recovers one arm after a
+  person has looked (never in user stop or guiding); "report" reports every arm.
 - before each job, fetches the calibration files from the server into `config/calibration/`
   (the server owns them; a local file the server does not have is removed).
 - every 10 s while no job runs, reports where every arm stands.
@@ -264,6 +175,22 @@ in for it, at `--fake-paper-mm` above the nominal paper (default 0: the touch me
 planned end of its descent). `aris-robot serve --sim-speed inf` runs without ROS at all, on
 simulated arms that also touch a fake paper. It is useful for trying the server's commands on
 any PC.
+
+Not checked here: that franka_description's fake hardware offers a position command interface
+(with fake hardware the trajectory controller is set to positions).
+
+**The first jobs**, all from the planning PC: `aris touchoff <slot>` first (its report shows
+the sign of the force onset: it must match the slot's `force_sign` in site.json), then a
+drawing in the air (planned 30 mm above the paper), then on paper. A stale position cannot
+move an arm: a motion that does not start within 0.005 rad of the arm's actual joints is
+refused before it moves, with a row saying which joint is how far off, and the arm holds.
+
+**If serve is down** (or the server is): `aris-robot identify` is a read-only check. Per slot
+it reports the robot the site table names, whether its address and DDS domain answer, the
+robot mode, the address the stack was launched with, and which park the arm stands nearest.
+It needs the stacks running, and it moves nothing. `systemctl status aris-robot` and
+`out/operator/serve.log` say why serve stopped. To look at one arm with the ROS tools, set
+its domain: `ROS_DOMAIN_ID=71 ros2 control list_controllers -c /arm_2R/controller_manager`.
 
 ## Defaults worth knowing
 

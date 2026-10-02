@@ -2,7 +2,7 @@
 
     ros2 launch aris_bringup arm.launch.py args:=<robot/generated/arm_31.json>
 
-The argument file is written by `aris-robot bringup` from rig.json and site.json; nothing
+The argument file is written by `aris-robot serve` (bringup.py) from rig.json and the site; nothing
 about the arm is typed here.  Everything runs in the namespace arm_<id> and on the DDS domain
 of the arm.  Started:
   robot_state_publisher, ros2_control_node (franka_hardware, 1 kHz), joint_state_publisher,
@@ -75,6 +75,6 @@ def _nodes(context):
 
 def generate_launch_description():
     return LaunchDescription([
-        DeclareLaunchArgument('args', description='arm_<id>.json from `aris-robot bringup`'),
+        DeclareLaunchArgument('args', description='arm_<slot>.json, written by `aris-robot serve`'),
         OpaqueFunction(function=_nodes),
     ])

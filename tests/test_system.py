@@ -17,8 +17,7 @@ from aris.rig import Rig  # noqa: E402
 from aris.system import NoDropViolation, account, phases, plan_all, plan_detailed  # noqa: E402
 from aris.system import maps as mp  # noqa: E402
 from aris.system.allocate import allocate, cover  # noqa: E402
-from aris.system.phases import (cannot_touch, fill_groups, follower_phase,  # noqa: E402
-                                 horizontal_reach, is_fill)
+from aris.system.phases import cannot_touch, fill_groups, horizontal_reach, is_fill  # noqa: E402
 from aris.system.settings import Settings  # noqa: E402
 from aris.system.stretch import of_line  # noqa: E402
 from aris.types import Leftover, Line, Piece, Refusal  # noqa: E402
@@ -185,29 +184,6 @@ def test_parts_for_the_same_arm_that_meet_are_one():
                                                                         (0.19, 0.3, 1)]
 
 
-def test_a_follower_sees_its_leaders_footprint(rig, rules):
-    from aris.kernel.geometry import field_lookup
-    from aris.system import followers
-    ph = rig.phase(1)
-    assert followers.pairs(rig, ph) == [("1L", "1R"), ("2R", "2L"), ("3L", "3R")]
-    t = time.process_time()
-    f, field, obs, m = followers.setup((rig, ph, "1L", "1R", [], rules.gates, COARSE, rules.press))
-    print(f"follower set-up (leader standing, 5 cm map): CPU {time.process_time() - t:.1f} s")
-    assert f == "1R" and obs.fields == (field,) and field.cell == followers.CELL
-    # the leader's body at its park, in the follower's frame, is inside the footprint
-    body = rig.arm("1L").body(rig.park_q("1L")[None])
-    p13 = rig.to_table("1L", 0.5 * (body.p0[0] + body.p1[0]))
-    T = rig.T_base_table("1R")
-    p17 = p13 @ T[:3, :3].T + T[:3, 3]
-    d = field_lookup(p17, np.asarray(field.origin_base), field.cell,
-                     np.array(field.dist.shape), np.asarray(field.dist))
-    assert np.all(d < 0.0)
-    # standing, the leader takes only a little of the follower's area: under its own park
-    alone = mp.build(rig, ph, "1R", rules.gates, COARSE, press=rules.press,
-                     obstacles=rig.obstacles("1R", ("1L",), follower_phase(rig, ph, "1R").walls))
-    assert 0.9 * alone.share <= m.share <= alone.share
-
-
 def test_fill_groups_cannot_touch(rig):
     # the two ends of a column are 2.42 m apart; each arm's body stays within 1.15 m of its axis
     assert fill_groups(rig) == [("1L", "3L"), ("1R", "3R"), ("2L",), ("2R",)]
@@ -318,22 +294,11 @@ class RefuseLine:
         self.arm_id, self.line_id = arm_id, line_id
         self.seen = []
 
-    def __call__(self, arm_id, phase, fields, motion, q_before):
-        self.seen.append((arm_id, phase.name, len(fields)))
+    def __call__(self, arm_id, phase, motion, q_before):
+        self.seen.append((arm_id, phase.name))
         bad = (arm_id == self.arm_id and motion.piece is not None
                and motion.piece.line_id.split("#")[0] == self.line_id)
         return dict(passed=not bad, tightest="fake", min_clearance=FAKE_CLEARANCE[arm_id])
-
-
-def test_each_arm_is_checked_in_its_own_view(rig):
-    from aris.system import check_view
-    from aris.system.planner import Report
-    ph, rep = rig.phase(1), Report()
-    assert check_view(rig, ph, "1L", rep) == (ph, ())
-    rep.fields[("phase 1", "1R")] = "the footprint of 1L"
-    view, fields = check_view(rig, ph, "1R", rep)
-    assert view.active == ("1R",) and view.parked == () and fields == ("the footprint of 1L",)
-    assert [w.arms for w in view.walls] == [("1R", "2R")]
 
 
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
@@ -341,7 +306,7 @@ def test_a_refused_line_flows_on_and_is_left_over_as_failed_check(rig, rules):
     import pickle
     from functools import partial
     verify = RefuseLine("1L", "under13")
-    pickle.loads(pickle.dumps(partial(verify, "1L", rig.phase(1), ())))    # crosses processes
+    pickle.loads(pickle.dumps(partial(verify, "1L", rig.phase(1))))    # crosses processes
     lines = _small()
     tagged, left, rep = plan_detailed(rig, lines, rules, settings=COARSE, workers=4, verify=verify)
     assert tagged and all(m.checked is not None and m.checked["passed"] for _, _, m in tagged)

@@ -23,7 +23,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import local_cases as lc  # noqa: E402
 
-from aris.arm_planner import plan_detailed  # noqa: E402
+from aris import arm_planner  # noqa: E402
 from aris.rig import Rig  # noqa: E402
 
 DEPLOY = Path(__file__).resolve().parents[1]
@@ -32,6 +32,30 @@ ARMS = lc.ARMS                                    # arm -> the phase in which it
 FIGURE = DEPLOY / "docs" / "modules" / "figures" / "arm_word_31.png"
 DRAW_SPEED = Rig.load(CONFIG).rules().draw_speed
 OLD_WORD_2L = dict(plan_s=66.8, motion_s=67.8)    # the old planner, word, arm 2L
+
+
+def drain(gen):
+    """All motions of a planner's generator, and what it returns: -> (motions, leftovers)."""
+    motions = []
+    while True:
+        try:
+            motions.append(next(gen))
+        except StopIteration as stop:
+            return motions, stop.value
+
+
+def plan_detailed(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None,
+                  **kw):
+    """`arm_planner.plan` collected: -> (motions, leftovers, PlanStats)."""
+    st = arm_planner.PlanStats()
+    ms, left = drain(arm_planner.plan(arm, lines, obstacles, q_start, rules, q_end, workers,
+                                      cache_dir, stats=st, **kw))
+    return ms, left, st
+
+
+def plan_all(*a, **kw):
+    """`arm_planner.plan` collected: -> (motions, leftovers)."""
+    return plan_detailed(*a, **kw)[:2]
 
 
 def on_surface(rig: Rig, lines) -> list:
@@ -130,8 +154,7 @@ def check_all(rig: Rig, arm_id: str, motions, workers: int = 16, draw_speed=None
 def summary(name: str, motions, leftovers, st, load, checks=None, arm_id=None) -> list[str]:
     t = st.tour
     out = [f"{name}: {st.lines} lines, {st.bunches} pieces offered, machine load {load:.0f}",
-           f"  planning: CPU {st.cpu:.1f} s, wall {st.wall:.1f} s (local planner CPU "
-           f"{st.local_cpu:.1f} s, wall {st.local_wall:.1f}; tour CPU {t.cpu:.1f} s); first motion "
+           f"  planning: CPU {st.cpu:.1f} s, wall {st.wall:.1f} s (tour CPU {t.cpu:.1f} s); first motion "
            f"after CPU {st.first_cpu:.2f} s, wall {st.first_wall:.2f} s",
            f"  tour: {t.pieces} pieces, {t.lifts} lifts, {t.motions} motions; drawing "
            f"{t.draw_time:.1f} s, pen up {t.penup_time:.1f} s (moves {t.move_time:.1f} s), share "
@@ -185,24 +208,6 @@ def big_lines(rig: Rig, arm_id: str, n: int = 1000) -> list:
             if len(out) == n:
                 break
     return on_surface(rig, out)
-
-
-def compare_batches(rig: Rig, arm_id: str, name: str, lines, cache=None, workers=8,
-                    batch=32, refills=(32,)) -> list[str]:
-    """The same case planned all at once and in batches (8 workers), for each refill."""
-    rows = []
-    for b, r in [(None, None)] + [(batch, r) for r in refills]:
-        ms, left, st, load = plan_case(rig, arm_id, lines, cache, workers, batch=b, refill=r)
-        rows.append((b, r, st, st.tour, load, len(ms), sum(float(m.traj.t[-1]) for m in ms)))
-    out = [f"arm {arm_id} {name}: {len(lines)} lines, {workers} workers"]
-    t0, T0 = rows[0][3], rows[0][6]
-    for b, r, st, t, load, n, total in rows:
-        what = "all at once" if b is None else f"batches of {b}, refill {r}"
-        out.append(f"  {what} (load {load:.0f}): first motion after {st.first_wall:.2f} s wall; "
-                   f"planning CPU {st.cpu:.1f} s, wall {st.wall:.1f} s; {n} motions, {total:.1f} s "
-                   f"on the rig ({total / T0 - 1:+.1%}), pen up {t.penup_time:.1f} s "
-                   f"({t.penup_time / t0.penup_time - 1:+.1%}), share {t.penup_share:.3f}")
-    return out
 
 
 def compare_verify(rig: Rig, arm_id: str, name: str, lines, cache=None) -> list[str]:
@@ -273,9 +278,6 @@ if __name__ == "__main__":
     ap.add_argument("--cache", default="", help="kinematic table directory")
     ap.add_argument("--figure", action="store_true")
     ap.add_argument("--draw-speed", type=float, default=None, help="m/s, instead of the rules'")
-    ap.add_argument("--batches", action="store_true",
-                    help="plan each case all at once and in batches (8 workers), compare")
-    ap.add_argument("--refills", default="32", help="refills to compare with --batches")
     ap.add_argument("--big", type=int, default=0, help="add a case of this many big_cases lines")
     ap.add_argument("--verify", action="store_true",
                     help="plan each case with and without the checker in the loop, compare")
@@ -288,10 +290,6 @@ if __name__ == "__main__":
             cases[f"big{a.big}"] = big_lines(rig, arm_id, a.big)
         for name, lines in cases.items():
             if a.cases and name not in a.cases.split(","):
-                continue
-            if a.batches:
-                print("\n".join(compare_batches(rig, arm_id, name, lines, cache, refills=tuple(
-                    int(x) for x in a.refills.split(",")))), flush=True)
                 continue
             if a.verify:
                 print("\n".join(compare_verify(rig, arm_id, name, lines, cache)), flush=True)

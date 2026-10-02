@@ -11,7 +11,7 @@ This is the only place that knows about ROS. Folder: `robot/`. Set-up steps:
 | planning PC | operator PC |
 |---|---|
 | drawing server, planners, checker | one ROS launch per slot (namespace `arm_<slot>`, the DDS domain from the site table) |
-| writes the job: header, phases, one queue per phase and arm | `aris-robot run --job <id>`: copies the phases and the queues byte for byte, runs them, posts the events back |
+| writes the job: header, phases, one queue per phase and arm | `aris-robot serve`, on the server's "run": copies the phases and the queues byte for byte, runs them, posts the events back |
 
 **Slots and robots** (DESIGN 4c). Arms are slots, `1L 1R 2L 2R 3L 3R`, strings everywhere
 here (rows keep the key `"arm"`: `"arm": "2R"`). Which robot hangs in which slot, its address
@@ -77,7 +77,7 @@ at boot (`robot/aris-robot.service`, restart always) and:
   like every other row, and there is one unit to enable.
 - **Pulls its work.** It asks `GET /operator/next?wait=30` (long-poll), acknowledges with
   `POST /operator/ack`, and gets `run <job>`, `recover <arm>` or `report`. A run is exactly
-  `aris-robot run --job`, in the same process, with drivers kept for the process's life. This
+  `runner.run_job`, in the same process, with drivers kept for the process's life. This
   PC opens no port.
 - **Fetches the calibration** from the server (`GET /calibration`, `GET /calibration/{arm}`)
   into its config before every job, and removes local files the server does not have. The
@@ -170,10 +170,8 @@ a few seconds.
 | `recover()` | Franka error recovery, then the trajectory controller takes the arm again. Refused while the arm is in user stop or guiding |
 | `switch(name)` | "trajectory" or "impedance" takes the arm |
 
-The executor sends lower and lift to `move` with the trajectory only, so the runner puts a
-small router in front of each driver. The router finds each trajectory in the arm's own queue
-and sends lower and lift to `draw`. **Contract change requested:** the executor should call
-`draw` for lower, draw and lift; then the router goes.
+The executor sends every kind to its verb itself (free to `move`, touch to `touch`, lower,
+draw and lift to `draw`).
 
 ## The pen force (`aris_robot/force.py`, no ROS)
 
@@ -212,12 +210,12 @@ touch settings.
   then it gives up with "no contact within … mm". In both cases it flies back to the hover
   along the path flown. Over 3 N at any reading it stops and holds where it is, flies no way
   back, and the arm refuses to move until it is recovered. The executor logs a "contact" row
-  with the joints. `aris-robot touch` makes the same motion by hand from where the arm stands.
+  with the joints. The first `aris touchoff <slot>` from the planning PC also checks the force sign.
   On fake hardware a fake paper stands in for the force estimate.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 63 tests, 59 in the quick set; the 4 slow ones compile the controller
+`robot/tests`: 60 tests, 56 in the quick set; the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -305,9 +303,8 @@ core (6 to 15 s under load).
 
 ## What it cannot do (yet)
 
-- No certified park from far away without the server's park job. `aris-robot park` moves
-  straight only from within 0.05 rad. `jog` moves one joint by at most 0.1 rad. `touch`
-  descends at most 60 mm. None of these is checked for collisions.
+- Nothing moves an arm except a job of the server (`aris-robot` has only `serve` and the
+  read-only `identify`, Pete 2026-10-02).
 - No re-plan after a failure. A failed arm holds, and the job ends after its phase (as with the
   simulated arms).
 - No depth limit along the pen inside the controller (the old stack's DMAX). The tracking-error

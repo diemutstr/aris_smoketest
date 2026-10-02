@@ -103,7 +103,7 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 
 | part | boxes | numbers from |
 |---|---|---|
-| hanging struts | 2 per slot, 0.0762 x 0.1524 section (long side along y) | the technical drawing (Pete, 2026-09-30): `legacy_docs/drawings/plan_centre_datum.pdf`, sheet 3, panel D. For every arm, axis to outside face 0.17175 on −x and 0.22205 on +x (393.8 mm outside to outside, 241.4 mm clear between). Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
+| hanging struts | 2 per slot, 0.0762 x 0.1524 section (long side along y) | the technical drawing (Pete, 2026-09-30): `docs/drawings/plan_centre_datum.pdf`, sheet 3, panel D. For every arm, axis to outside face 0.17175 on −x and 0.22205 on +x (393.8 mm outside to outside, 241.4 mm clear between). Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
 | mounting plate | 1 per slot, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centre 25.15 mm toward table +x of the axis, for every arm (sheet 3, panel D). |
 | clamp stack | 1 per slot, on the plate | old model (drawing) |
 | runways | 3, one double beam per row at 1.624 to 1.700 | old model (drawing) |

@@ -265,30 +265,3 @@ def test_the_table_guides_to_the_same_drawing(tmp_path):
     assert abs(drawn[0] - drawn[1]) <= 0.005, drawn
     assert not plans_check("2L", lines, table[0], WORKERS)
     assert len(list(tmp_path.glob("local_table_*.npy"))) == 2
-
-
-def test_a_line_through_a_footprint_is_blocked_by_it():
-    """A distance field (a neighbour's footprint) is an obstacle like any other: here the
-    footprint of arm 2L's own body, standing with its pen on the paper, blocks a line drawn
-    through that spot, and the leftover names the field."""
-    from aris.kernel.footprint import footprint
-    from aris.types import Trajectory
-    arm, obs, rules, gates = _problem("2L")
-    axis = RIG.T_table_base("2L")[:2, 3]
-    spot = _base("2L", [[axis[0] + 0.4, 0.3]]).points[0]
-    spins, q7s = np.meshgrid(np.linspace(0, 2 * np.pi, 12, endpoint=False), np.linspace(-2, 2, 9))
-    T = arm.hand_pose(np.repeat(spot[None], spins.size, 0), np.array([0.0, 0.0, -1.0]),
-                      spins.ravel(), np.zeros((spins.size, 2)))
-    Q, ok = arm.ik(T, q7s.ravel())
-    q = Q[ok][0]                                         # any arm shape with the pen on the spot
-    field = footprint(arm, [Trajectory(np.array([0.0, 1.0]), np.array([q, q]), np.zeros((2, 7)))],
-                      name="test_footprint", margin=0.05)
-    with_field = Obstacles(obs.boxes, obs.planes, obs.capsules, (field,))
-    line = _base("2L", [[axis[0] + 0.4, 0.15], [axis[0] + 0.4, 0.45]], "through")
-    bunches, leftovers = plan(arm, [line], with_field, rules, gates)
-    assert covers_once(line, bunches, leftovers)
-    blocked = [x for x in leftovers if x.reason == "blocked"]
-    assert blocked and all("test_footprint" in x.detail for x in blocked)
-    assert all(not (b.piece.s0 < 0.15 < b.piece.s1) for b in bunches)   # the spot is not drawn
-    free_bunches, free_left = plan(arm, [line], obs, rules, gates)
-    assert not free_left                                                # without it: all drawn

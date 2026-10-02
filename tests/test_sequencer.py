@@ -17,11 +17,19 @@ from test_arm_planner import RIG, assert_tour, two_lines  # noqa: E402
 
 from aris import local  # noqa: E402
 from aris.kernel.retime import sample  # noqa: E402
-from aris.sequencer import TourOptions, TourReport, price, tour, tour_all  # noqa: E402
+from aris.sequencer import TourOptions, TourReport, price, tour  # noqa: E402
+from arm_cases import drain  # noqa: E402
 from aris.sequencer.draw import draw_motions  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
 from aris.sequencer.lift import end_lift, lift, lift_height, trim
 from aris.sequencer.lift import reverse  # noqa: E402
+
+
+def tour_all(arm, bunches, q_start, obstacles, rules, q_end=None, **kw):
+    """`tour` collected: -> (motions, leftovers, report)."""
+    rep = TourReport()
+    ms, left = drain(tour(arm, bunches, q_start, obstacles, rules, q_end, report=rep, **kw))
+    return ms, left, rep
 
 
 @pytest.fixture(scope="module")

@@ -3,15 +3,15 @@
 A phase is who moves, who stands parked, and the walls between those who move.  Phases 1 and 2
 come from the rig (the leaders of each row, diagonal walls between them).  After them come the
 fill phases: arms that cannot touch each other in any configuration move together, without
-walls, everything else parked.  On this rig: 13 with 2, 17 with 97 (the two ends of a column,
-2.42 m apart), then 31 alone and 71 alone.  The system planner skips a phase in which nobody
+walls, everything else parked.  On this rig: 1L with 3L, 1R with 3R (the two ends of a column,
+2.42 m apart), then 2L alone and 2R alone.  The system planner skips a phase in which nobody
 has anything to do.
 """
 from __future__ import annotations
 
 import numpy as np
 
-from aris.types import Phase, Slot, Wall
+from aris.types import Phase, Slot
 
 LEADER_PHASES = (1, 2)
 
@@ -83,25 +83,3 @@ def phase_named(rig, name: str) -> Phase:
 def is_fill(phase: Phase) -> bool:
     return phase.name.startswith("fill ")
 
-
-def follower_phase(rig, phase: Phase, arm_id: Slot) -> Phase:
-    """What a follower moves in, during a leader phase: alone, nothing parked (every arm
-    moves), behind the same walls as its leader (each wall next to the leader, held on the
-    follower's own side).  Its leader is a footprint, handed over separately."""
-    lead = rig.row_partner(arm_id)
-    walls = tuple(Wall(f"{w.name}_for_{arm_id}", (arm_id, w.arms[1] if w.arms[0] == lead
-                                                  else w.arms[0]),
-                       w.point_table, w.normal_table)
-                  for w in phase.walls if lead in w.arms)
-    return Phase(phase.name, (arm_id,), (), walls)
-
-
-def execution_phase(rig, phase: Phase) -> Phase:
-    """The phase as the arms run it: in a leader phase the followers may move too (each checked
-    in its own view, `planner.check_view`)."""
-    if is_fill(phase):
-        return phase
-    partners = tuple(rig.row_partner(a) for a in phase.active
-                     if rig.row_partner(a) is not None and rig.row_partner(a) in phase.parked)
-    return Phase(phase.name, phase.active + partners,
-                 tuple(a for a in phase.parked if a not in partners), phase.walls)

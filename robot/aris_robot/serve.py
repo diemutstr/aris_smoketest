@@ -5,7 +5,7 @@ Started once, at boot (robot/aris-robot.service), and never touched again.  It
     keeps it up: a stack that exits is started again after a pause that doubles up to a minute
     (reset after a minute of running), and every start and death is reported;
   - asks the drawing server what to do, pulling (`GET /operator/next`, long-poll), so this PC
-    opens no port: run a job (a drawing, a park, a calibration: what `aris-robot run` does),
+    opens no port: run a job (a drawing, a park, a calibration: runner.run_job),
     recover an arm, report every arm;
   - fetches the calibration files from the server into its config before every job, so both
     machines hold the same ones (the server owns them);

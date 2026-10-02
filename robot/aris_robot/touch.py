@@ -215,24 +215,6 @@ def _way_back(q_now, knots, q_hover, kin: Kinematics):
     return retime(JointPath(path[keep]), kin.arm.limits, kin.rules)
 
 
-def manual_touch(kin: Kinematics, q_hover, depth: float, extra: float, speed: float = 0.005):
-    """A touch motion from where the arm stands, for the hand tool (`aris-robot touch`): straight
-    down `depth`, timed at `speed`, and back up the same way; not planned by the server and so
-    not checked.  -> Motion, or a Refusal."""
-    from aris.types import Motion
-    down = straight_on(kin.arm, kin.arm.limits, kin.rules, q_hover, kin.down, depth, speed)
-    if isinstance(down, Refusal):
-        return down
-    path = np.concatenate([down.q, down.q[-2::-1]])
-    tips = kin.tip(path)
-    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tips, axis=0), axis=1))])
-    traj = retime(JointPath(path), kin.arm.limits, dataclasses.replace(kin.rules, draw_speed=speed),
-                  s=s)
-    if isinstance(traj, Refusal):
-        return traj
-    return Motion("touch", traj, tip_base=kin.tip(traj.q), extra_depth=extra)
-
-
 class FakePaper:
     """The force a paper at `height` (m along the normal from the nominal paper; + is higher)
     with stiffness `k` pushes back with, from where the pen tip is.  For fake hardware and

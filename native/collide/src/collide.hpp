@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "chain.hpp"
-#include "field.hpp"
 #include "geometry.hpp"
 #include "scene.hpp"
 
@@ -82,12 +81,8 @@ struct Scratch {
     std::vector<int> order;
 };
 
-// A pair's clearance, given the obstacle's global index o (boxes, planes, capsules, fields).
+// A pair's clearance, given the obstacle's global index o (a box or a capsule).
 inline double pair_exact(const Scene& S, const double* a, const double* b, double r, int64_t o) {
-    if (o >= S.Mb + S.Mp + S.Mc) {
-        const int f = int(o - S.Mb - S.Mp - S.Mc);
-        return segment_field_distance(S, f, a, b) - r - S.fl_margin[f];
-    }
     if (o < S.Mb)
         return segment_box_distance(a, b, S.box_R + 9 * o, S.box_c + 3 * o, S.box_h + 3 * o) - r -
                S.box_m[o];
@@ -283,26 +278,6 @@ inline void eval_config(const Scene& S, const Caps& C, const double* p0, const d
                 for (int64_t j = 0; j < no; ++j)
                     if (!(ub[j] - w.half[k] > best + span)) exact(int(k), S.og_members[o0 + j]);
             }
-        }
-    }
-    // the distance fields: every pair measured, unless (with groups) the field's level
-    // bound shows a whole body group is too far to matter
-    const int64_t f0 = Mb + Mp + Mc;
-    if (S.F > 0) {
-        if (md.prune && md.groups) {
-            for (int g = 0; g < C.NG; ++g) {
-                const double* sp = w.sph.data() + 4 * g;
-                if (sp[3] < 0.0) continue;
-                for (int f = 0; f < S.F; ++f) {
-                    if (field_group_bound(S, f, sp) > best + span) continue;
-                    for (int64_t n = C.bg_start[g]; n < C.bg_start[g + 1]; ++n)
-                        if (!C.is_fixed[C.bg_members[n]]) exact(int(C.bg_members[n]), f0 + f);
-                }
-            }
-        } else {
-            for (int k = 0; k < K; ++k)
-                if (!C.is_fixed[k])
-                    for (int f = 0; f < S.F; ++f) exact(k, f0 + f);
         }
     }
     finish(C, span, val, arg);

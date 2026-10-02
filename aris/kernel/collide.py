@@ -67,16 +67,6 @@ def _plane_block(p0, p1, r, is_pen, is_tool, P, drawing):
     return val
 
 
-def _field_block(p0, p1, r, P):
-    """(n, K, F) clearances against the distance fields (never skipped in this engine)."""
-    out = np.empty(p0.shape[:2] + (P.n_fields,))
-    for f, fl in enumerate(P.fields):
-        d = geo.segment_field_distance(p0, p1, np.asarray(fl.origin_base, float), float(fl.cell),
-                                       np.shape(fl.dist), np.asarray(fl.dist))
-        out[:, :, f] = d - r - fl.margin
-    return out
-
-
 def _midpoint_bounds(p0, p1, r, P):
     """Cheap bounds from each capsule's midpoint, for the boxes and the capsule obstacles.
 
@@ -120,14 +110,13 @@ def _chunk_values(p0, p1, r, is_pen, is_tool, P, drawing, mode, gid, exempt):
     n = p0.shape[0]
     prune, groups, span = mode
     planes = _plane_block(p0, p1, r, is_pen, is_tool, P, drawing)
-    fields = _field_block(p0, p1, r, P)
     if not prune:
         boxes = np.where(exempt, np.inf, _box_block(p0, p1, r, P))
-        return np.concatenate([boxes, planes, _cap_block(p0, p1, r, P), fields], axis=2)
+        return np.concatenate([boxes, planes, _cap_block(p0, p1, r, P)], axis=2)
     ub_b, ub_c, half = _midpoint_bounds(p0, p1, r, P)
     ub_b = np.where(exempt, np.inf, ub_b)
     best = np.min([x.reshape(n, -1).min(axis=1, initial=np.inf)
-                   for x in (ub_b, ub_c, planes, fields)], axis=0)[:, None, None]
+                   for x in (ub_b, ub_c, planes)], axis=0)[:, None, None]
     thr = best + span
     skip_b, skip_c = (ub_b - half[:, :, None] > thr) | exempt, ub_c - half[:, :, None] > thr
     if groups:
@@ -142,7 +131,7 @@ def _chunk_values(p0, p1, r, is_pen, is_tool, P, drawing, mode, gid, exempt):
     oc = np.full(ub_c.shape, np.inf)
     ob[~skip_b] = _box_block(p0, p1, r, P, ~skip_b)
     oc[~skip_c] = _cap_block(p0, p1, r, P, ~skip_c)
-    return np.concatenate([ob, planes, oc, fields], axis=2)
+    return np.concatenate([ob, planes, oc], axis=2)
 
 
 def _finish(val, arg, live, span):

@@ -20,9 +20,9 @@ pytest tests -q -m "not slow"`, under a minute).
 | `aris/types.py` | the contracts; changed by the orchestrator only | |
 | `rig` | done; struts from the technical drawing; gates and rules in rig.json | drawing area 1.56 x 3.56 m |
 | `kernel/arm` + `native/fr3_ik` | done | new IK round trip 100 %; body 62 capsules; reach at the paper 0.805 m geometric, sigma gate 0.04 |
-| `kernel/collide` + `native/collide` | done, incl. two-level check, exemptions, distance fields (footprints) | real arm 31 scene 244 000 configurations/s on one thread |
+| `kernel/collide` + `native/collide` | done, incl. two-level check, exemptions | real arm 31 scene 244 000 configurations/s on one thread |
 | `kernel/retime` + `native/retime` | done; two models: corners (free paths) and smooth (draw, lower, lift: a C2 spline through the IK samples, cut only at real pen corners) | free path 30 waypoints 5 ms; drawing 250 samples 10 ms; the arc that crawled at 1.7 mm/s now 14.8 mm/s and 5.5 s instead of 7.6 s |
-| `check` | done; reads rig.json itself; footprints with its own lookup | agrees with the kernel to 1e-15; 0.2 s for a 7 s motion |
+| `check` | done; reads rig.json itself; standing arms as (slot, joints) | agrees with the kernel to 1e-15; 0.2 s for a 7 s motion |
 | `free` | done | 2 000 of 2 000 pairs; 48 / 75 ms median when a search is needed (quiet machine) |
 | `local` | done | paper only: 100 % of random lines and curves within reach; 0.14 to 0.40 s per line with the table |
 | `sequencer` + `arm_planner` | done; two-rule lift; the checker runs inside the tour (`verify`: a piece is drawn only if its whole group passes); lines planned in batches of 32 nearest first, refill 128; flown check 4x finer | 1 533 of 1 533 motions pass, 0 refusals; slowest mid-line speed 5 mm/s except real corners; first motion 1-2 s on the word, 4-5 s on 1 000 lines (was 20 s); verify costs 0.1-0.26 s per motion |
@@ -86,7 +86,7 @@ header carries tracking, pen and a note. Two-arm rig = 2R+3R, fences toward row 
 time from 15 mm/s and the 10 mm/s landings). Quick suite 270 tests, robot 63.
 
 Dead-code audit done (read-only): ~1 500 lines removable; decisions pending Pete on followers,
-legacy_docs/assets, hardware-day verbs; the rest to be executed next.
+legacy_docs/assets, hardware-day verbs — all three decided 2026-10-02 (remove) and executed: followers out (breadcrumb in DESIGN.md), old documents and assets out (two files kept under docs/), hardware-day verbs out (serve + identify stay), footprints replaced by standing arms as (slot, joints) in the checker, one account, one phase reader, one job frame, one at_park (the rig's).
 
 ## Next
 
@@ -143,78 +143,7 @@ every split. CPU per line is the median on a loaded machine.
   exact-path check 12-17 %, search 4-6 %, timing 1-4 %.
 - 795 pieces: 78 % have four alternative plans, 95 % at least two.
 
-## Work that was running when the session ended
-
-Agents belong to the session that started them; assume they stopped with it. Their files are on
-disk and in the snapshot commit. Restart these three tasks from the descriptions below.
-
-1. **Local planner** (`aris/local/`). To do, in order:
-   - DONE: fixed set for both arms, floors in the tests, "Measured" section of the module page,
-     table against live, comparison with the old planner (see the table above)
-   - BUILT AND MEASURED, NOT WORTH IT RIGHT NOW: the lazy obstacle check (setting `lazy`). On
-     arm 31 with the table it draws exactly what the full check draws (shares, pieces and
-     leftovers identical), but on the same kernel it is 10 to 50 % SLOWER at the median: it
-     checks 4 to 5 times fewer nodes and pays for it with many more searches along the walls
-     (up to 66 per line). An earlier note that it halved the time compared it with a run on the
-     slower kernel; that was wrong. `lazy=False` is the default and the setting is kept.
-     Confirmed on both arms: identical drawing in all 16 comparisons.
-   - CURRENT SPEED, full check with the table, CPU per line at the median (arm 31 / arm 13):
-     word 0.14 / 0.14 s, corpus 0.39 / 0.40, lines 0.30 / 0.22, curves 0.40 / 0.29. Mean split:
-     graph 0.06-0.39 s, search 0.02-0.12, exact-path check 0.03-0.11, timing 0.02-0.03.
-     Target is tens of milliseconds. Next levers, none built: fewer whole-line searches after a
-     failed exact path; a cheaper way to open the lean (it multiplies the nodes by 13); sharing
-     work between lines.
-   - the table moves the share drawn IN ONE PIECE by up to 2.3 % (it blends between tabulated
-     distances from the axis, which can move a lift); the share drawn agrees within 0.2 %
-     except on the word (0.5 to 0.8 %). Decide whether that is acceptable or refine the table.
-   - run the slow fixed-set test once (`pytest tests/test_local.py -m slow`); it has not been
-     run since the last changes
-   - delete the module's own tool-to-paper rule (the kernel's rule is in use) and the
-     corner-to-corner timing workaround (retime handles a whole drawing in one call; use
-     `tip_budget_m` with `tip_of=arm.tip`)
-   - target: tens of milliseconds of CPU per line at the median
-2. **Free-space planner** (`aris/free/`): DONE and committed. Every edge check goes through the
-   compiled batch of edges. 94 % of what remains is inside the kernel's edge call. A refusal
-   "no free path" costs the full cap of 20 000 edges, 10 to 30 s. The fixed test set still comes
-   from random lift-off configurations; regenerate it from the local planner's alternatives.
-3. **Collision kernel** (`aris/kernel/collide*.py`, `native/collide/`): the two-level check is
-   DONE and committed (groups per link and per parked arm; same answers to 1e-12; path and edge
-   bounds moved by at most 0.35 mm, inside their tolerance). Still open, asked for by the
-   free-space planner: a tighter bound on how far the arm moves along an edge. The kernel
-   charges each joint its largest possible lever arm and needs about 55 body evaluations per
-   edge; a bound from the joints' actual speeds at the two ends of the edge plus a reach-based
-   change term needed 17 to 20 (see the git history of `aris/free/bound.py`). Both planners
-   would gain from it.
-   After this kernel change, re-measure both planners: the local planner's and the free-space
-   planner's speed tables were taken before the two-level check was finished.
-
-## If the tests fail right after picking up
-
-`ValueError: scene must have 13 arrays` (or another count) means the compiled collision module
-that is installed and the Python side in the working tree are out of step: the two-level check
-was mid-change when the session ended. Either finish that task, or go back to the last
-consistent state:
-
-```
-cd /home/franka/aris_project/aris_sixarm
-git status --short deployment            # see what the agents left uncommitted
-git stash push -- aris/kernel native/collide tests/test_kernel_collide*.py
-.venv/bin/pip install ./native/collide ./native/fr3_ik ./native/retime
-.venv/bin/python -m pytest tests -q -m "not slow"
-```
-
-The same three `pip install` lines are what a fresh clone needs before anything runs.
-
-## Decisions waiting for Pete
-
-1. How close the pen holder may come to the paper (`rig.json`, `clearances.tool_to_paper_m`, now
-   0.0 = must not touch). It is also the limit on pen wear. Holder height: 14.7 mm upright,
-   9.4 mm at 15 degrees lean.
-2. At the rig: how far the hanging struts reach below the mounting plate (35 mm in the old model;
-   12 mm more would break the required clearance of link 1), and which side of each arm the
-   240 mm strut gap is on (`strut_wide_side` per arm in `rig.json`, assumed toward -x).
-
-## Decisions taken by the orchestrator that Pete has been told about
+## Decisions taken by the orchestrator that Pete has been told about (2026-09-29)
 
 - planning allowance on steel lowered from 0.013 to 0.003 (the old number paid for the old
   checker's sampling error); required clearances unchanged

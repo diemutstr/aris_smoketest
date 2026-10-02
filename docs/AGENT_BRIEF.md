@@ -15,7 +15,7 @@ Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. Th
 1. `docs/DESIGN.md` — what the system is
 2. `docs/BUILD.md` — layout, import rule, the calls between modules, code rules
 3. `aris/types.py` — the shared data types
-4. `legacy_docs/STAGED_LESSONS_2026-09-29.md` (repository root) — what the old planner learned
+4. `docs/LESSONS_FROM_THE_OLD_PLANNER.md` — what the old planner learned
    the hard way; read the parts that touch your module and do not repeat those mistakes
 5. `docs/OPTIMIZATION_NOTES.md` — ideas parked for later; do not build them now unless
    your task says so
@@ -32,8 +32,8 @@ Repository: branch `aris3`, checked out at `/home/franka/aris_project/aris3`. Th
 ## The old code as a reference
 
 - The old planner was removed from this branch (`aris3`) on 2026-09-30. It lives on branch
-  `aris2` only. Its documentation is kept under `legacy_docs/` at the repository root; the
-  lessons file is `legacy_docs/STAGED_LESSONS_2026-09-29.md`, and file and line references in
+  `aris2` only, with its documents. This branch keeps the lessons file as
+  `docs/LESSONS_FROM_THE_OLD_PLANNER.md`; file and line references in
   it point at branch `aris2`.
 - The new package never imports the old one.
 - Reference numbers produced by the old code are committed as data under `tests/data/`

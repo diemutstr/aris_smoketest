@@ -70,13 +70,12 @@ def kernel_classes(slot, phase, Q, drawing=False) -> dict:
         else np.full(len(Q), np.inf),
         walls=collide.clearance(body, Obstacles(planes=obs.planes[1:]), prune=False, backend=KB),
         parked=collide.clearance(body, Obstacles(capsules=obs.capsules), prune=False, backend=KB),
-        fields=np.full(len(Q), np.inf),
         self=collide.self_clearance(body, arm.self_pairs, RIG.clearance["self_m"],
                                      backend=KB))
 
 
-def my_classes(slot, phase, Q, drawing=False, chunk=500, fields=()) -> dict:
-    scene = build_scene(MINE, slot, phase.walls, phase.parked, drawing, fields=fields)
+def my_classes(slot, phase, Q, drawing=False, chunk=500) -> dict:
+    scene = build_scene(MINE, slot, phase.walls, phase.parked, drawing)
     parts = [clearance(scene, Q[s:s + chunk]).value for s in range(0, len(Q), chunk)]
     return {c: np.concatenate([p[c] for p in parts]) for c in CLASSES}
 
@@ -970,62 +969,46 @@ def test_phase_end_catches_a_touching_pair_and_a_missing_arm():
     _fails(check_phase_end(CONFIG, RIG.phase(1), {"1L": RIG.park_q("1L")}), "well formed")
 
 
-# =========================================================================== footprints
+# =========================================================================== standing arms
 
 
-def _park_footprint_in_31():
-    """Slot 2R standing at park, as a footprint (a distance field of 2 cm cells) in slot 2L's
-    base frame, as the system planner would hand it to slot 2L."""
-    from aris.kernel.footprint import footprint, transform_field
-    q = RIG.park_q("2R")
-    still = Trajectory(np.array([0.0, 1.0]), np.stack([q, q]), np.zeros((2, 7)))
-    f71 = footprint(RIG.arm("2R"), [still], cell=0.02, name="footprint2R")
-    return transform_field(f71, RIG.T_base_table("2L") @ RIG.T_table_base("2R"), "footprint2R")
-
-
-def test_field_readings_never_exceed_the_exact_distance():
-    """Slot 2L against slot 2R at park, 3000 random configurations: the checker's reading and the
-    kernel's reading of the footprint are both lower bounds on the exact distance to 2R's
-    capsules."""
-    f = _park_footprint_in_31()
-    rng = np.random.default_rng(12)
-    Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(3000, 7))
-    m = MINE.clearance["arm_to_arm_m"]
-    mine = my_classes("2L", Phase("f", ("2L",), (), ()), Q, fields=(f,))["fields"] + m
-    exact = my_classes("2L", Phase("p", ("2L",), ("2R",), ()), Q)["parked"] + m
-    kern = collide.clearance(RIG.arm("2L").body(Q), Obstacles(fields=(replace(f, margin=0.0),)),
-                             prune=False, backend=KB)
-    near = exact < 0.10
-    print(f"\n{near.sum()} of {len(Q)} within 10 cm; exact minus reading, median / largest: "
-          f"checker {np.median((exact - mine)[near]) * 1e3:.1f} / "
-          f"{(exact - mine)[near].max() * 1e3:.1f} mm, kernel "
-          f"{np.median((exact - kern)[near]) * 1e3:.1f} / {(exact - kern)[near].max() * 1e3:.1f} mm")
-    assert np.all(mine <= exact + 1e-9)
-    assert np.all(kern <= exact + 1e-9)
-    assert near.sum() > 50
-
-
-@pytest.mark.slow
-def test_fault_motion_through_a_footprint():
-    """The motion that touches parked slot 2R, checked with 2R given only as a footprint."""
-    path = find_through("2L", Phase("pair", ("2L",), ("2R",), ()), "parked", seed=3)
-    f = _park_footprint_in_31()
-    v = check(CONFIG, "2L", free_motion("2L", path), Phase("f", ("2L",), (), ()), path[0],
-              fields=(f,))
-    _fails(v, "clearance footprints")
-    assert v.get("clearance footprints").value < 0
+def test_standing_arm_away_from_park(good_free):
+    """`standing`: an arm standing still somewhere other than its park is built at those joints,
+    like a parked arm at its park.  The good free motion of 2L passes with 2R parked; with 2R
+    standing at a configuration that reaches into the motion it is refused; 2R standing at its
+    own park reads exactly as 2R parked."""
+    ph = phase_of("2L")
+    assert "2R" in ph.parked
+    ok = check(CONFIG, "2L", good_free, ph, good_free.q_start)
+    assert ok.passed, ok.failed
+    same = check(CONFIG, "2L", good_free, ph, good_free.q_start,
+                 standing={"2R": RIG.park_q("2R")})
+    assert same.get("clearance parked arms").value == ok.get("clearance parked arms").value
+    rng = np.random.default_rng(21)
+    Q = good_free.traj.q[::max(1, len(good_free.traj.q) // 40)]
+    hit = None
+    for q in rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(400, 7)):
+        scene = build_scene(MINE, "2L", (), (), False, standing={"2R": q})
+        if clearance(scene, Q).value["parked"].min() < -0.01:
+            hit = q
+            break
+    assert hit is not None, "no brushing configuration found"
+    v = check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2R": hit})
+    print(f"\n2R parked: {ok.get('clearance parked arms').value * 1e3:.1f} mm; standing at "
+          f"{np.round(hit, 2)}: {v.get('clearance parked arms').value * 1e3:.1f} mm "
+          f"({v.get('clearance parked arms').detail})")
+    _fails(v, "clearance parked arms")
+    assert "standing2R:" in v.get("clearance parked arms").detail
+    _fails(check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2L": hit}),
+           "well formed")
+    _fails(check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2R": hit[:6]}),
+           "well formed")
 
 
 def test_everything_far_away_is_pruned_without_error(good_free):
-    """Fields, parked arms and boxes all present but far beyond the threshold: every class
-    prunes to nothing and still gives a true (large) answer.  (A far footprint once made the
-    field class stack an empty list.)"""
-    from dataclasses import replace as dc_replace
-    far = replace(_park_footprint_in_31(), origin_base=np.array([20.0, 20.0, 20.0]))
-    v = check(CONFIG, "2L", good_free, phase_of("2L"), good_free.q_start, fields=(far,))
-    assert v.passed, v.failed
-    assert v.get("clearance footprints").value > 1.0
-    scene = build_scene(MINE, "2L", (), ("2R",), False, fields=(far,))
+    """Parked arms and boxes present but far beyond the threshold: every class prunes to
+    nothing and still gives a true (large) answer."""
+    scene = build_scene(MINE, "2L", (), ("2R",), False)
     shift = np.array([30.0, 0.0, 0.0])
     scene = dc_replace(scene, box_lo=scene.box_lo[:1] + 40.0, box_hi=scene.box_hi[:1] + 40.0,
                        box_own=scene.box_own[:1], box_names=scene.box_names[:1],
@@ -1033,8 +1016,8 @@ def test_everything_far_away_is_pruned_without_error(good_free):
     Q = good_free.traj.q
     thr = {c: 0.01 for c in CLASSES}
     cl = clearance(scene, Q, thr)
-    for c in ("steel", "parked", "fields", "self"):
+    for c in ("steel", "parked", "self"):
         assert np.all(cl.value[c] > 0.01), c
     exact = clearance(scene, Q)
-    for c in ("steel", "parked", "fields"):
+    for c in ("steel", "parked"):
         assert np.all(cl.value[c] <= exact.value[c] + 1e-12), c

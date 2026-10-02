@@ -1,7 +1,7 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "a49f44df99326c1022ec1307",
+  "source_digest": "ecdf51466a423b141f8f516d",
   "mounted": [
    "2R",
    "3R"
@@ -302,7 +302,7 @@
   "walls_note": "a wall only between leaders that can reach each other (the diagonal pairs, 1.355 apart); the two end leaders of a column are 2.42 apart and cannot"
  },
  "hanger": {
-  "source": "the steel each arm hangs from, placed relative to its own axis, the same for all six arms (one clocking: every plate sits 25.15 mm toward table +x of its axis; the two columns are not mirrored). Pete, 2026-09-30: placed from the technical drawings, not from his tape. legacy_docs/drawings/plan_centre_datum.pdf, sheet 3 of 4 'PLAN, CENTRE DATUM, SIGNED' (2026-09-16), panel D 'STRUT FACE SCHEDULE' and panel B: left column (axis -305.00) strut faces -476.75..-400.55 and -159.15..-82.95, plate -392.76..-166.94; right column (axis +305.00) strut faces +133.25..+209.45 and +450.85..+527.05, plate +217.24..+443.06 (mm, table x). So: axis to outside face 171.75 on -x and 222.05 on +x, pair 393.8 outside to outside, 241.4 clear between. Struts 3 x 6 in, long side along y, centred on the row line.",
+  "source": "the steel each arm hangs from, placed relative to its own axis, the same for all six arms (one clocking: every plate sits 25.15 mm toward table +x of its axis; the two columns are not mirrored). Pete, 2026-09-30: placed from the technical drawings, not from his tape. docs/drawings/plan_centre_datum.pdf, sheet 3 of 4 'PLAN, CENTRE DATUM, SIGNED' (2026-09-16), panel D 'STRUT FACE SCHEDULE' and panel B: left column (axis -305.00) strut faces -476.75..-400.55 and -159.15..-82.95, plate -392.76..-166.94; right column (axis +305.00) strut faces +133.25..+209.45 and +450.85..+527.05, plate +217.24..+443.06 (mm, table x). So: axis to outside face 171.75 on -x and 222.05 on +x, pair 393.8 outside to outside, 241.4 clear between. Struts 3 x 6 in, long side along y, centred on the row line.",
   "strut_size_x_m": 0.0762,
   "strut_size_y_m": 0.1524,
   "axis_to_minus_x_outer_face_m": 0.17175,
@@ -558,8 +558,6 @@
   "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now). The speed on the paper and the press belong to the pen: pens.table.<pen>.speed_m_per_s and press_m (2026-10-02).",
   "landing_speed_m_per_s": 0.01,
   "landing_speed_note": "the pen tip's speed on a lower as it meets the paper: Diemut's landing rate on the hardware (10 mm/s); a fast landing against the soft normal spring spikes the force (orchestrator, 2026-10-01)",
-  "lift_height_m": 0.025,
-  "lift_height_note": "to be replaced by the pen's clearance to the paper + 0.002 when the sequencer is simplified",
   "min_piece_m": 0.01,
   "speed_fraction": 0.3,
   "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"

@@ -1,7 +1,7 @@
 """The one command: `aris ...`.
 
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
-    aris draw   <drawing.json|.npz> [--note ..] [--server URL]   submit, follow, report; exit
+    aris draw   <drawing.json> [--note ..] [--server URL]   submit, follow, report; exit
                                                      0 on PASS; --rest-of <job> draws its leftovers
     aris status | stop | park | rig   [--server URL]
     aris calibrate <slot>                            touch the paper on a grid: the base part
@@ -110,8 +110,10 @@ def report_lines(rep: dict) -> list[str]:
     if "drawn_m" in rep:
         d = rep.get("drawing", {})
         out.append(f"scale        {d.get('scale', 1.0):.3f}")
-        out.append(f"drawn        {rep['drawn_m']:.3f} m of {rep['length_m']:.3f} m")
-        out.append(f"left over    {rep['left_m']:.3f} m")
+        if rep.get("account_error"):
+            out.append(f"ACCOUNT      {rep['account_error']}")
+        out.append(f"drawn        {rep['drawn_m'] or 0:.3f} m of {rep['length_m']:.3f} m")
+        out.append(f"left over    {rep['left_m'] or 0:.3f} m")
         for reason, m in sorted(rep.get("left_by_reason", {}).items()):
             out.append(f"  {reason:<11}{m:.3f} m")
     c = rep.get("checker")
@@ -143,8 +145,8 @@ def job_passed(rep: dict) -> bool:
 
 def _summary(rep: dict) -> str:
     left = ", ".join(f"{r} {m:.3f} m" for r, m in sorted(rep.get("left_by_reason", {}).items()))
-    return (f"{rep.get('state')}, drawn {rep.get('drawn_m', 0):.3f} m of "
-            f"{rep.get('length_m', 0):.3f} m, left over {rep.get('left_m', 0):.3f} m"
+    return (f"{rep.get('state')}, drawn {rep.get('drawn_m') or 0:.3f} m of "
+            f"{rep.get('length_m') or 0:.3f} m, left over {rep.get('left_m') or 0:.3f} m"
             + (f" ({left})" if left else ""))
 
 
@@ -199,14 +201,7 @@ def cmd_draw(a, http) -> int:
     if not a.drawing:
         return verdict(False, "no drawing given (or --rest-of <job id>)")
     path = Path(a.drawing)
-    if path.suffix.lower() == ".npz":
-        from aris.server import drawing
-        lines = drawing.load(path)
-        if not isinstance(lines, list):
-            return verdict(False, f"{path}: {lines.reason}: {lines.detail}")
-        body = json.dumps(drawing.to_dict(lines)).encode()
-    else:
-        body = path.read_bytes()
+    body = path.read_bytes()
     if _assume(http) is None:
         return verdict(False, "the server does not answer")
     code, r = http.post(f"/jobs?name={urllib.parse.quote(path.name)}" + (f"&{q}" if q else ""),

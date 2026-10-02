@@ -1,6 +1,6 @@
 """The sequencer: from the local planner's bunches to the tour of one arm.
 
-    tour(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=None)
+    tour(arm, bunches, q_start, obstacles, rules, q_end=None)
         -> yields Motion, returns list[Leftover]
 
 Greedy.  From where the arm is, every piece still to draw, in each of its alternatives and each
@@ -71,7 +71,6 @@ class TourReport:
     first_wall: float = -1.0
     cpu: float = 0.0               # s of CPU for the whole tour
     wall: float = 0.0
-    leftovers: list = field(default_factory=list)
 
     @property
     def penup_share(self) -> float:
@@ -85,21 +84,9 @@ def price(q_from: np.ndarray, Q_to: np.ndarray, rules: DrawRules, qd_max: np.nda
     return np.max(np.abs(Q_to - q_from) / (rules.speed_fraction * qd_max), axis=1)
 
 
-def tour_all(arm, bunches, q_start, obstacles, rules, q_end=None, free_options=None, **kw):
-    """The whole tour at once: -> (motions, leftovers, report)."""
-    report = kw.pop("report", None) or TourReport()
-    gen = tour(arm, bunches, q_start, obstacles, rules, q_end, free_options, report=report, **kw)
-    motions = []
-    while True:
-        try:
-            motions.append(next(gen))
-        except StopIteration as stop:
-            return motions, stop.value, report
-
-
 def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRules,
-         q_end=None, free_options=None, *, report: TourReport | None = None,
-         intensity: dict | None = None, options: TourOptions | None = None, verify=None,
+         q_end=None, *, report: TourReport | None = None, intensity: dict | None = None,
+         verify=None,
          batches=None, refill: int = 32):
     """Yields the tour's motions in order; returns the pieces it could not draw.
 
@@ -116,8 +103,7 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
     is ever planned on top of a motion that has not passed."""
     c0, w0 = time.process_time(), time.perf_counter()
     rep = report if report is not None else TourReport()
-    s = _State(arm, bunches, obstacles, rules, free_options or free.Options(),
-               options or TourOptions(), intensity or {}, rep)
+    s = _State(arm, bunches, obstacles, rules, TourOptions(), intensity or {}, rep)
     q_cur = np.array(q_start, float)
     q_end = q_cur.copy() if q_end is None else np.array(q_end, float)
     alive = list(range(len(bunches)))
@@ -184,7 +170,6 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
         rep.move_time += float(home.traj.t[-1])
         rep.free_length += _length(home)
         yield out(home)
-    rep.leftovers = leftovers
     rep.cpu, rep.wall = time.process_time() - c0, time.perf_counter() - w0
     return leftovers
 
@@ -230,9 +215,9 @@ class _State:
     depend on where the arm is, so a failure there kills it for good; a refused move only
     counts from where the arm was."""
 
-    def __init__(self, arm, bunches, obstacles, rules, fopt, opt, intensity, rep):
+    def __init__(self, arm, bunches, obstacles, rules, opt, intensity, rep):
         self.arm, self.bunches, self.obstacles, self.rules = arm, bunches, obstacles, rules
-        self.fopt, self.opt, self.intensity, self.rep = fopt, opt, intensity, rep
+        self.opt, self.intensity, self.rep = opt, intensity, rep
         self.guard = Guard(arm, obstacles, rules.gates)
         papers = [p for p in obstacles.planes if p.kind == "paper"]
         if len(papers) != 1:
@@ -304,8 +289,7 @@ class _State:
     # ------------------------------------------------------------------ the parts
 
     def move(self, q_a, q_b) -> Motion | Refusal:
-        m = free.plan(self.arm, q_a, q_b, self.obstacles, self.rules, self.rules.gates,
-                      options=self.fopt)
+        m = free.plan(self.arm, q_a, q_b, self.obstacles, self.rules, self.rules.gates)
         self.rep.free_calls += 1
         if isinstance(m, Refusal):
             self.rep.refusals[m.reason] = self.rep.refusals.get(m.reason, 0) + 1

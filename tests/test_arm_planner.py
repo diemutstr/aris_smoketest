@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import arm_cases as ac  # noqa: E402
 import local_cases as lc  # noqa: E402
 
-from aris.arm_planner import PlanStats, plan, plan_all, plan_detailed  # noqa: E402
+from aris.arm_planner import PlanStats, plan  # noqa: E402
+from arm_cases import plan_all, plan_detailed  # noqa: E402
 from aris.rig import Rig  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
 from aris.types import Line  # noqa: E402
@@ -206,7 +207,7 @@ def test_batches_give_the_same_tour_with_1_or_8_workers_and_a_slow_feeder(monkey
     arm, obs, rules, _ = lc.problem(RIG, "2L")
     lines = _lines_near("2L", 14)
     q0 = RIG.park_q("2L")
-    kw = dict(batch=4)
+    kw = dict(batch=4, refill=4)              # 14 lines: 4 batches, taken as they are needed
     one = _digest(*plan_all(arm, lines, obs, q0, rules, workers=1, **kw))
     many = _digest(*plan_all(arm, lines, obs, q0, rules, workers=8, **kw))
     _slowed(monkeypatch, 0.5)

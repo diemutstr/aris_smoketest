@@ -9,7 +9,7 @@ configurations at once. Pure geometry: it does not know what any obstacle is.
 
 - **In:** the arm's body (`Body`: K capsules at each of N configurations; each capsule is a
   line segment with a radius), or the joint angles plus the arm's tables (below); and the
-  obstacles (`Obstacles`: boxes of any orientation, flat planes, capsules, distance fields),
+  obstacles (`Obstacles`: boxes of any orientation, flat planes, capsules),
   each carrying the clearance it demands (its margin).
 - **Out:** clearance in metres, per configuration.
 
@@ -48,8 +48,6 @@ Special rules:
 | `clearance_q`, `clearance_detail_q`, `self_clearance_q`, `path_clearance_q`, `path_self_clearance_q` | the same, from joint angles and the tables, without building a `Body` |
 | `edges_clearance_q(tables, reach, Qa, Qb, obstacles, self_pairs=None, self_margin=0, floor=0)` | one lower bound per straight joint-space edge, many edges in one compiled call (below) |
 | `backend()` | "native" when the compiled module is installed, otherwise "numpy" |
-| `footprint.footprint(arm, trajectories, cell=0.02, pad=0.0)` | a neighbour's footprint over a phase, as a distance field in its own base frame (below) |
-| `footprint.transform_field(field, T_ab)` | the same field in another arm's base frame |
 
 Every call takes `backend="numpy"` or `"native"` (for tests) and `threads=` (compiled only; the
 default is 1). The answer does not depend on the thread count.
@@ -138,48 +136,6 @@ bounds. With `floor=None` each edge gets exactly the bound `path_clearance_q` gi
 number (default 0), an edge stops as soon as its bound is proven at least `floor` (free) or a
 point on it is found below 0 (not free). That is all a planner asking "free or not" needs.
 
-## A neighbour's footprint: distance fields
-
-For the follower in step 2 of the system planner, the obstacle is everywhere the leader's body
-goes during a phase. That is thousands of poses of 62 capsules, so it is stored as a grid
-(`types.Field`). Each cell holds a lower bound on the distance from its centre to the
-footprint, negative inside.
-
-**Building it** (`aris/kernel/footprint.py`):
-- The leader's motions are read every 2 ms. From those readings, poses are kept so that no
-  point of the body moves more than half a cell between kept poses (`Arm.reach` bounds the
-  motion).
-- Sample points are laid along every capsule's axis, at most half a cell apart. They are
-  marked in one grid per radius class (the radius rounded up to a quarter cell).
-- One Euclidean distance transform per class (scipy) gives the distance to the nearest marked
-  cell centre. Subtracting everything that can hide a point makes it a bound: half a cell
-  diagonal for the rounding to the centre, half the sample spacing, half the motion between
-  poses, the radius and the pad.
-- The fixed capsules count too: the follower sees the whole leader.
-
-**Reading it**, for one capsule against one field:
-- Sample the capsule's axis at most a cell apart.
-- At each sample, the bound is the best over the 8 surrounding centres of (centre's value
-  minus the distance to it).
-- A point outside the grid is first moved onto it. The distance to the grid is added back in
-  quadrature, because the footprint lies inside the grid.
-- Take the smallest over the samples, less half the sample spacing, the radius and the
-  margin.
-- Both engines do exactly this arithmetic.
-- The group skip treats a field as a whole. For a few levels (0.4, 0.2, 0.1, 0.05, 0 m) `pack`
-  stores the box of cells below that level. A body group whose sphere clears a level's box
-  by half a cell diagonal reads at least that level, less half a diagonal and half a cell.
-
-**What it gives away:**
-- Near the footprint (within 4 cm), a clearance against a field of 2 cm cells reads 38 mm
-  below the exact one at the median and 56 mm at most. The proven bound is 3 half-diagonals
-  plus a cell, 72 mm. With 1 cm cells: 18 mm median, 35 mm at most.
-- Inside, the value is negative everywhere, but no deeper than the deepest single capsule;
-  where capsules overlap, the true depth can be larger. Beyond the grid (a few cells past the
-  body) the value is only a lower bound, not a tight one.
-- `transform_field` re-reads each new centre through the same lookup. It never raises a
-  value and loses 2 mm at the median, 14 mm at most, at 2 cm.
-
 ## What it cannot do
 
 - A capsule inside a box or another capsule reads a gap of 0, not how deep it is.
@@ -230,15 +186,3 @@ Before the group skip these were about 8 100, 3 600 and 1 700 per second with fl
 
 For comparison, 12 capsules against 49 obstacles (588 pairs) runs at 37 000 per second in
 numpy and 470 000 compiled on one thread.
-
-Distance fields, leader 71 in phase 1 of the spiral (21 motions, 267 s of motion, 6 973 kept
-poses):
-
-| | 2 cm cells | 1 cm cells |
-|---|---|---|
-| grid (in 71's frame) | 77 x 99 x 84, 2.6 MB | 148 x 191 x 162, 18 MB |
-| build, CPU | 2.7 s (about 1.7 s of it picking the poses) | 7.0 s |
-| arm 31 against its steel, walls and this field (in its own frame), compiled, one thread, batch 10 000 | 79 000 configurations/s | 48 000 configurations/s |
-| the same without the field | 285 000 configurations/s | |
-
-The field is the closest obstacle for 56-60 % of random configurations of arm 31.

@@ -1,10 +1,5 @@
-"""Operator tools for one arm: which arm is where, small moves, the park, the calibration touch.
-
-None of the moves here comes from the planner, so none is certified.  Each is refused unless
-it is small: a jog of at most `JOG_MAX` on one joint; a park by straight joint interpolation
-only from within `PARK_NEAR` of the park on every joint (anything further goes through the
-server's park job: `aris park` on the planning PC, then `aris-robot run --job <id>`); a touch
-that descends at most `TOUCH_MAX` straight down, slowly, under position control (touch.py).
+"""Read-only diagnostics: which robot answers where (`aris-robot identify`), for when the
+drawing server is down.  Nothing here moves an arm.
 """
 from __future__ import annotations
 
@@ -13,47 +8,7 @@ import socket
 
 import numpy as np
 
-from aris.kernel.retime import retime
-from aris.types import JointPath, Refusal
-
 from aris_robot.site import identity
-
-JOG_MAX = 0.10          # rad
-PARK_NEAR = 0.05        # rad, on every joint
-TOUCH_MAX = 0.06        # m
-
-
-def straight(rig, arm_id: int, q0, q1):
-    """A straight joint move from q0 to q1, timed inside the rig's limits."""
-    return retime(JointPath(np.array([q0, q1], float)), rig.arm(arm_id).limits, rig.rules())
-
-
-def jog_target(rig, arm_id: int, q, joint: int, delta: float):
-    """q with joint `joint` (1..7) moved by `delta`, or a Refusal."""
-    if not 1 <= joint <= 7:
-        return Refusal("bad_joint", "joints are numbered 1 to 7")
-    if abs(delta) > JOG_MAX:
-        return Refusal("too_far", f"a jog moves at most {JOG_MAX} rad")
-    lim = rig.arm(arm_id).limits
-    out = np.array(q, float)
-    out[joint - 1] += delta
-    if not (lim.q_min[joint - 1] + 0.05 <= out[joint - 1] <= lim.q_max[joint - 1] - 0.05):
-        return Refusal("limit", f"joint {joint} would come within 0.05 rad of its limit")
-    return out
-
-
-def park_move(rig, arm_id: int, q):
-    """The uncertified straight move to the park, only from close by; or a Refusal."""
-    park = rig.park_q(arm_id)
-    gap = np.abs(np.asarray(q, float) - park)
-    if gap.max() <= 1e-4:
-        return Refusal("at_park", f"arm {arm_id} stands at its park")
-    if gap.max() > PARK_NEAR:
-        j = int(gap.argmax())
-        return Refusal("too_far", f"arm {arm_id} is {gap[j]:.3f} rad from its park on joint "
-                       f"{j + 1} (straight moves only within {PARK_NEAR}); run the server's park "
-                       f"job: `aris park` there, then `aris-robot run --job <id>` here")
-    return straight(rig, arm_id, q, park)
 
 
 def identify(site, rig, timeout: float = 3.0) -> list[dict]:

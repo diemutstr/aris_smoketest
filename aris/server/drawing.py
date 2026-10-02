@@ -6,10 +6,7 @@ The drawing file (JSON):
      "lines": [{"id": "a", "points": [[x, y], ...], "intensity": 1.0}, ...]}
 
 `units` is "mm" or "m"; `frame` must be "table" (origin at the table centre, on the paper);
-`intensity` (0 to 1, how hard to press) is optional, default 1.  One pen.  The same content
-is accepted as a `.npz` file (`lines` an object array of such dicts, or of (N, 2) arrays with
-the ids in `ids`); a `.npz` is read only from a local file, never from the network, because
-object arrays are pickles.
+`intensity` (0 to 1, how hard to press) is optional, default 1.  One pen.  One format.
 
 `fit` scales a drawing that does not lie inside the drawing area uniformly about the area's
 centre (`Rig.drawing_area_centre_m`) until it does.  A drawing that fits is not touched; one that would have to shrink below
@@ -17,7 +14,6 @@ half its size is refused.
 """
 from __future__ import annotations
 
-import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,13 +37,13 @@ class Fit:
 
 
 def load(path) -> list[Line] | Refusal:
-    """A drawing file (.json or .npz) -> table-frame Lines in metres, z = 0."""
+    """A drawing file (JSON) -> table-frame Lines in metres, z = 0."""
     p = Path(path)
     try:
         data = p.read_bytes()
     except OSError as e:
         return Refusal("unreadable", f"{p}: {e}")
-    return from_npz(data) if p.suffix.lower() == ".npz" else parse(data)
+    return parse(data)
 
 
 def parse(data: bytes) -> list[Line] | Refusal:
@@ -57,25 +53,6 @@ def parse(data: bytes) -> list[Line] | Refusal:
     except (ValueError, UnicodeDecodeError) as e:
         return Refusal("not_json", str(e))
     return from_dict(d)
-
-
-def from_npz(data: bytes) -> list[Line] | Refusal:
-    try:
-        with np.load(io.BytesIO(data), allow_pickle=True) as z:
-            d = {k: z[k] for k in z.files}
-    except (OSError, ValueError) as e:
-        return Refusal("not_npz", str(e))
-    if "lines" not in d:
-        return Refusal("no_lines", "the .npz file has no 'lines'")
-    ids = [str(x) for x in d["ids"]] if "ids" in d else None
-    lines = []
-    for k, x in enumerate(d["lines"]):
-        if isinstance(x, dict):
-            lines.append(dict(x, points=np.asarray(x.get("points")).tolist()))
-        else:
-            lines.append(dict(id=ids[k] if ids else str(k), points=np.asarray(x).tolist()))
-    return from_dict(dict(units=str(d.get("units", "mm")), frame=str(d.get("frame", "table")),
-                          lines=lines))
 
 
 def from_dict(d) -> list[Line] | Refusal:

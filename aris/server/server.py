@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 
 from aris.calib import files as calib_files
 from aris.server import drawing, operator, remote, runner
+from aris.server import park as park_job
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
 
@@ -69,7 +70,7 @@ def arms_view(st) -> dict:
     for a, d in st.drivers.items():
         s = d.state()
         out[str(a)] = dict(q=s.q, qd=s.qd, ok=s.ok, flags=list(s.flags),
-                           at_park=bool(np.max(np.abs(s.q - st.rig.park_q(a))) <= 1e-6))
+                           at_park=bool(st.rig.at_park(a, s.q)))
     return plain(out)
 
 
@@ -129,7 +130,7 @@ def create_app(st) -> FastAPI:
 
     @app.post("/park")
     def park():
-        rec = runner.submit_park(st, store)
+        rec = park_job.submit_park(st, store)
         if isinstance(rec, Refusal):
             return _refused(409, rec)
         return plain(dict(id=rec.id, state=rec.state))

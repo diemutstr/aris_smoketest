@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aris.execute.log import EventLog
-from aris.types import Refusal
+from aris.types import Refusal, Slot
 
 FINAL = ("done", "stopped", "failed")
 
@@ -62,7 +62,7 @@ class JobRecord:
             self.state, self.why = state, why
         self.log.write("job state", job=self.id, state=state, why=why, **fields)
 
-    def count_queued(self, phase: str, arm: int) -> int:
+    def count_queued(self, phase: str, arm: Slot) -> int:
         with self.lock:
             n = self.queued.get((phase, arm), 0) + 1
             self.queued[(phase, arm)] = n

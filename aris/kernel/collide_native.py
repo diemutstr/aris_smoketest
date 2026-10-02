@@ -71,13 +71,6 @@ class Packed:
     og_r: np.ndarray | None = None
     # per box, the body groups (capsule name before the first ".") it is not checked against
     box_exempt: tuple | None = None
-    # distance fields (types.Field), after the capsules in the obstacle order; see pack_fields
-    fields: tuple = ()
-    field_arrays: tuple | None = None     # pack_fields(fields), made once by pack
-
-    @property
-    def n_fields(self) -> int:
-        return len(self.fields)
 
     @property
     def tool_m(self) -> np.ndarray:
@@ -105,8 +98,7 @@ class Packed:
         return (self.box_R, self.box_c, self.box_h, self.box_m, self.pl_n, self.pl_off, self.pl_m,
                 self.pl_pen_m, self.pl_paper.astype(np.uint8), self.cap_a, self.cap_b, self.cap_rm,
                 c(self.tool_m, float)) + tuple(
-                    c(x, np.int64) if i < 2 else c(x, float) for i, x in enumerate(self.groups)) + \
-            (self.field_arrays if self.field_arrays is not None else pack_fields(self.fields))
+                    c(x, np.int64) if i < 2 else c(x, float) for i, x in enumerate(self.groups))
 
 
 def pack(obs: Obstacles | Packed) -> Packed:
@@ -128,7 +120,7 @@ def pack(obs: Obstacles | Packed) -> Packed:
         cap_a=f([x.p0 for x in c], (len(c), 3)),
         cap_b=f([x.p1 for x in c], (len(c), 3)),
         cap_rm=f([x.radius + x.margin for x in c], (len(c),)),
-        names=tuple(x.name for x in (*b, *p, *c, *getattr(obs, "fields", ()))),
+        names=tuple(x.name for x in (*b, *p, *c)),
         pl_tool_m=f([x.margin if getattr(x, "tool_margin", None) is None else x.tool_margin
                      for x in p], (len(p),)),
         cap_r=f([x.radius for x in c], (len(c),)),
@@ -136,41 +128,7 @@ def pack(obs: Obstacles | Packed) -> Packed:
     g = obstacle_groups(P.box_R, P.box_c, P.box_h, P.cap_a, P.cap_b, P.cap_r,
                         [x.name for x in c], len(p))
     return replace(P, og_start=g[0], og_members=g[1], og_a=g[2], og_b=g[3], og_r=g[4],
-                   box_exempt=tuple(tuple(getattr(x, "exempt", ())) for x in b),
-                   fields=tuple(getattr(obs, "fields", ())),
-                   field_arrays=pack_fields(tuple(getattr(obs, "fields", ()))))
-
-
-FIELD_LEVELS = (0.4, 0.2, 0.1, 0.05, 0.0)   # m, see pack_fields
-
-
-def pack_fields(fields) -> tuple:
-    """The fields as the compiled module takes them: origin (F,3), cell (F,), dims (F,3),
-    margin (F,), offsets (F+1,), dist (all cells, float32), and for the far test per field and
-    level tau in FIELD_LEVELS the box (lo, hi) of the cell centres with dist < tau (empty: lo >
-    hi), and the smallest dist.  A capsule clear of a level's box by more than its sphere and
-    half a cell diagonal reads at least tau less half a diagonal and half a cell."""
-    F, NL = len(fields), len(FIELD_LEVELS)
-    origin = np.zeros((F, 3))
-    cell, marg, dmin = np.zeros(F), np.zeros(F), np.zeros(F)
-    dims = np.zeros((F, 3), np.int64)
-    box = np.zeros((F, NL, 6))
-    data = []
-    for f, fl in enumerate(fields):
-        d = np.ascontiguousarray(fl.dist, np.float32)
-        origin[f], cell[f], marg[f], dims[f] = fl.origin_base, fl.cell, fl.margin, d.shape
-        dmin[f] = float(d.min())
-        for lv, tau in enumerate(FIELD_LEVELS):
-            idx = np.argwhere(d < tau)
-            if len(idx):
-                box[f, lv, :3] = origin[f] + idx.min(axis=0) * cell[f]
-                box[f, lv, 3:] = origin[f] + idx.max(axis=0) * cell[f]
-            else:
-                box[f, lv, :3], box[f, lv, 3:] = np.inf, -np.inf
-        data.append(d.ravel())
-    off = np.cumsum([0] + [len(x) for x in data]).astype(np.int64)
-    flat = np.concatenate(data) if data else np.zeros(0, np.float32)
-    return (origin, cell, dims, marg, off, flat, np.array(FIELD_LEVELS, float), box, dmin)
+                   box_exempt=tuple(tuple(getattr(x, "exempt", ())) for x in b))
 
 
 def exempt_mask(names, P: Packed) -> np.ndarray:

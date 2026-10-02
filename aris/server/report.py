@@ -1,100 +1,71 @@
 """The job report: what was drawn and what was not, with reasons.
 
-Every line of the (fitted) drawing is accounted for by arc length: the stretches whose drawing
-motion ran to the end are drawn; everything else is left over, with the first reason that
-applies:
-  1. the planner's reason (unreachable, blocked, too short, no free path, ...),
-  2. "failed_check": the checker refused the motion, or it was dropped after a refusal,
-  3. the job's end: "stopped" or "failed" (queued but not run, or not planned yet).
-When a job is done, 3 must be empty; anything there is reported as "unaccounted" (a bug).
+The account is the system planner's no-drop account (`aris.system.account`), taken on what ran:
+the stretches whose drawing motion ran to the end are drawn; the left-over stretches are
+  1. the planner's leftovers, with its reasons (unreachable, blocked, too short,
+     failed_check, ...),
+  2. drawing motions queued but not run, with the job's end ("stopped" or "failed"),
+  3. what was never planned (a job stopped or failed while the planner still worked), with the
+     job's end; on a job that is done there must be none, and any would be "unaccounted".
+The account then holds that drawn and left over cover every line exactly, joins aside.
 """
 from __future__ import annotations
-
-import json
 
 import numpy as np
 
 from aris.execute.queue import Job
-from aris.server.pipeline import phase_from
-from aris.system.planner import AT_PARK
+from aris.system import NoDropViolation, line_length
+from aris.system import account as no_drop_account
+from aris.types import Leftover, Piece
 
-TINY = 1e-6              # m, stretches shorter than this are rounding, not leftovers
-
-
-def line_length(line) -> float:
-    p = np.asarray(line.points, float)
-    return float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
+TINY = 1e-6              # m, gaps shorter than this are rounding
 
 
-def _union(iv):
+def gaps(lines, pieces) -> list[Piece]:
+    """The stretches of `lines` that none of `pieces` covers: what was never planned."""
+    by = {}
+    for p in pieces:
+        by.setdefault(p.line_id, []).append((p.s0, p.s1))
     out = []
-    for a, b in sorted(tuple(x) for x in iv):
-        if out and a <= out[-1][1] + 1e-12:
-            out[-1][1] = max(out[-1][1], b)
-        else:
-            out.append([a, b])
+    for x in lines:
+        at = 0.0
+        for a, b in sorted(by.get(x.id, [])):
+            if a > at + TINY:
+                out.append(Piece(x.id, at, a))
+            at = max(at, b)
+        L = line_length(x)
+        if L > at + TINY:
+            out.append(Piece(x.id, at, L))
     return out
 
 
-def _minus(a, b, covered):
-    """[a, b] without the (sorted, disjoint) covered intervals."""
-    out, x = [], a
-    for c0, c1 in covered:
-        if c1 <= x or c0 >= b:
-            continue
-        if c0 > x:
-            out.append((x, c0))
-        x = max(x, c1)
-    if x < b:
-        out.append((x, b))
-    return out
-
-
-def account(lines, drawn, left, rest_reason: str) -> dict:
-    """`drawn`: Pieces drawn.  `left`: (Piece, reason, detail) in order of priority.
-    -> drawn length, left over by reason, and every leftover stretch."""
-    by_line = {x.id: line_length(x) for x in lines}
-    drawn_iv = {k: [] for k in by_line}
-    for p in drawn:
-        drawn_iv.setdefault(p.line_id, []).append((p.s0, p.s1))
-    covered = {k: _union(v) for k, v in drawn_iv.items()}
-    drawn_m = sum(b - a for v in covered.values() for a, b in v)
-    stretches = []
-    for piece, reason, detail in left:
-        cov = covered.setdefault(piece.line_id, [])
-        for a, b in _minus(piece.s0, piece.s1, cov):
-            if b - a > TINY:
-                stretches.append(dict(line=piece.line_id, s0=a, s1=b, length=b - a,
-                                      reason=reason, detail=detail))
-        covered[piece.line_id] = _union(cov + [(piece.s0, piece.s1)])
-    for lid, L in by_line.items():
-        for a, b in _minus(0.0, L, covered.get(lid, [])):
-            if b - a > TINY:
-                stretches.append(dict(line=lid, s0=a, s1=b, length=b - a, reason=rest_reason,
-                                      detail=""))
-    by_reason = {}
-    for s in stretches:
-        by_reason[s["reason"]] = by_reason.get(s["reason"], 0.0) + s["length"]
-    return dict(length_m=sum(by_line.values()), drawn_m=drawn_m,
-                left_m=sum(by_reason.values()), left_by_reason=by_reason, leftovers=stretches)
+def account(lines, ran, leftovers, rest: str, join: float) -> dict:
+    """Drawn and left over, by the system planner's account.  `ran`: drawn Pieces;
+    `leftovers`: Leftovers; what neither covers is left over as `rest`."""
+    left = list(leftovers) + [Leftover(p, rest, "not planned") for p in
+                              gaps(lines, list(ran) + [x.piece for x in leftovers])]
+    stretches = [dict(line=x.piece.line_id, s0=x.piece.s0, s1=x.piece.s1,
+                      length=x.piece.s1 - x.piece.s0, reason=x.reason, detail=x.detail)
+                 for x in left]
+    try:
+        acc = no_drop_account(lines, list(ran), left, join)
+    except NoDropViolation as e:                   # a bug: reported, never hidden
+        return dict(length_m=sum(line_length(x) for x in lines), drawn_m=None, left_m=None,
+                    left_by_reason={}, leftovers=stretches, account_error=str(e))
+    return dict(length_m=acc.length, drawn_m=acc.drawn, left_m=acc.left if acc.left > TINY else 0.0,
+                left_by_reason={k: v for k, v in acc.left_by_reason.items() if v > TINY},
+                leftovers=stretches)
 
 
 def queued_entries(job: Job) -> dict:
     """(phase, arm) -> the queue's entries, for every queue of the job."""
     out = {}
-    for ph in job_phases(job):
+    for ph, _ in job.phases():
         for a in ph.active:
             q = job.queue(ph.name, a)
             if q.path.exists():
                 out[(ph.name, a)] = q.read()
     return out
-
-
-def job_phases(job: Job) -> list:
-    """The phases written to the job so far, in order."""
-    path = job.dir / "phases.jsonl"
-    rows = [json.loads(x) for x in path.read_text().splitlines() if x] if path.exists() else []
-    return [phase_from(d) for d in rows if not d.get("end")]
 
 
 def split_run(entries: dict, done: dict) -> tuple[list, list]:
@@ -115,9 +86,8 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
     entries = queued_entries(job)
     ran, not_run = split_run(entries, done)
     rest = "unaccounted" if state == "done" or run is None else state
-    left = [(x.piece, x.reason, x.detail) for x in out.leftovers]
-    left += [(p, rest, "queued, not run") for p in not_run]
-    acc = account(rec.lines, ran, left, rest)
+    left = list(out.leftovers) + [Leftover(p, rest, "queued, not run") for p in not_run]
+    acc = account(rec.lines, ran, left, rest, st.rules.min_piece)
     rep = dict(state=state, why=why, kind="draw", name=rec.name, note=rec.note,
                rest_of=rec.rest_of, pen=st.pen().get("name"), tracking=st.tracking,
                drawing=dict(lines=len(rec.lines), scale=rec.fit.scale if rec.fit else 1.0,
@@ -139,8 +109,7 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
         rep["phases"] = [dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
                          for n, p, t, c in run.phase_ends]
         rep["where"] = {str(a): [float(v) for v in q] for a, q in run.where.items()}
-        rep["at_park"] = {str(a): bool(np.max(np.abs(np.asarray(q) - st.rig.park_q(a)))
-                                       <= AT_PARK) for a, q in run.where.items()}
+        rep["at_park"] = {str(a): bool(st.rig.at_park(a, q)) for a, q in run.where.items()}
     return rep
 
 

@@ -2,8 +2,9 @@
 
 Six Franka FR3 arms hang upside down from a frame over a paper-covered table and draw with
 pens. This repository is the clean rebuild of the planning and execution software (branch
-`aris3`). The old code lives on branch `aris2` only; its documentation is kept under
-`legacy_docs/` because it is the record of what the old planner got wrong.
+`aris3`). The old code and its documents live on branch `aris2` only; what this branch keeps of
+them is `docs/LESSONS_FROM_THE_OLD_PLANNER.md` (what the old planner learned the hard way) and
+the technical drawings under `docs/drawings/`.
 
 This page says how to use it: which computer runs what, how to install each, what a drawing
 day looks like as commands, the drawing file, where the results end up, and what is not
@@ -194,5 +195,4 @@ tests/            tests, fixed test sets, reference data
 docs/             design, build plan, status, one page per module
 tools/            the Meshcat viewer and the rig drawing
 assets/           the installation model (URDF, meshes), the vendor arm description, drawings
-legacy_docs/      the old planner's documentation: decisions, lessons, audits, drawings
 ```

@@ -1,9 +1,9 @@
 """`aris check <job dir>`: the independent checker again on every motion of a job's queues.
 
-Each queue is checked in the phase it was planned in: the named phase, or the context saved
-next to the queue (a follower's view with its leader's footprint; a park phase with the arms
-that were not parked yet).  Each motion from where the previous one of its queue ended; the
-first of a queue from its own start (the queue itself guaranteed that the motions join).
+Each queue is checked in its phase as the job's phase list records it, with the arms that
+stood still off their parks (`standing`, recorded in the same line for park and calibrate
+jobs).  Each motion from where the previous one of its queue ended; the first of a queue from
+its own start (the queue itself guaranteed that the motions join).
 """
 from __future__ import annotations
 
@@ -14,15 +14,12 @@ from pathlib import Path
 
 from aris.check import check
 from aris.execute.queue import Job
-from aris.server.pipeline import context_path, load_context
-from aris.server.report import job_phases
-from aris.system import phase_named
 
 
 def check_one(args):
     """One motion through the checker; runs in a worker process."""
-    config_dir, arm, motion, phase, q_before, fields = args
-    return check(config_dir, arm, motion, phase, q_before, fields=fields)
+    config_dir, arm, motion, phase, q_before, standing = args
+    return check(config_dir, arm, motion, phase, q_before, standing=standing)
 
 
 def check_pool(workers: int):
@@ -37,25 +34,6 @@ def submit(pool, args) -> Future:
     f = Future()
     f.set_result(check_one(args))
     return f
-
-
-def contexts(rig, job: Job):
-    """(phase name, arm, Phase to check in, fields, entries) for every queue, in run order."""
-    for ph in job_phases(job):
-        for a in ph.active:
-            q = job.queue(ph.name, a)
-            if not q.path.exists():
-                continue
-            cp = context_path(q)
-            if cp.exists():
-                cph, fields = load_context(cp)
-            else:
-                try:
-                    cph = phase_named(rig, ph.name)
-                except KeyError:
-                    cph = ph
-                fields = ()
-            yield ph.name, a, cph, fields, q.read()
 
 
 def recheck(job_dir: Path, config_dir: Path, workers: int, say, verdict, assumptions_line):
@@ -74,11 +52,16 @@ def recheck(job_dir: Path, config_dir: Path, workers: int, say, verdict, assumpt
     pool = check_pool(workers)
     rows = []
     try:
-        for name, arm, cph, fields, entries in contexts(st.rig, Job(job_dir)):
-            for e in entries:
-                q_before = entries[e.index - 1].motion.q_end if e.index else e.motion.q_start
-                rows.append((name, arm, e, submit(pool, (st.config_dir, arm, e.motion, cph,
-                                                         q_before, fields))))
+        job = Job(job_dir)
+        for phase, standing in job.phases():
+            for arm in phase.active:
+                q = job.queue(phase.name, arm)
+                entries = q.read() if q.path.exists() else []
+                for e in entries:
+                    q_before = entries[e.index - 1].motion.q_end if e.index \
+                        else e.motion.q_start
+                    rows.append((phase.name, arm, e, submit(pool, (
+                        st.config_dir, arm, e.motion, phase, q_before, standing))))
         n_pass = 0
         for name, arm, e, fut in rows:
             v = fut.result()
@@ -95,4 +78,4 @@ def recheck(job_dir: Path, config_dir: Path, workers: int, say, verdict, assumpt
                    + ("" if same else "; the rig or calibration differs"))
 
 
-__all__ = ["recheck", "contexts", "check_one"]
+__all__ = ["recheck", "check_one"]

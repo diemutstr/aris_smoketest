@@ -18,10 +18,6 @@ def dot(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a[..., 0] * b[..., 0] + a[..., 1] * b[..., 1] + a[..., 2] * b[..., 2]
 
 
-def _sum3(a: np.ndarray) -> np.ndarray:
-    return a[..., 0] + a[..., 1] + a[..., 2]
-
-
 def to_local(v: np.ndarray, R: np.ndarray) -> np.ndarray:
     """R^T v for each pair: a base-frame vector into the frame whose axes are R's columns."""
     return np.stack([v[..., 0] * R[..., 0, j] + v[..., 1] * R[..., 1, j] + v[..., 2] * R[..., 2, j]
@@ -138,53 +134,3 @@ def segment_box_distance(p0, p1, R, center, half):
         e = np.maximum(x - h[i], 0.0) + np.minimum(x + h[i], 0.0)
         f += e * e
     return np.sqrt(f)
-
-
-def field_lookup(p, origin, cell, dims, dist):
-    """A lower bound on the distance from points p (..., 3) to a field's footprint.
-
-    The point is first moved to the nearest point q of the box of cell centres (the footprint
-    lies inside that box); a point outside the box gains its distance to the box back, in
-    quadrature.  Then, for each of the 8 centres c around q, dist[c] - |q - c| is a lower
-    bound (distance changes no faster than the point moves); the largest of the 8 is kept.
-    """
-    dims = np.asarray(dims, np.int64)
-    origin = np.asarray(origin, float)
-    hi = origin + (dims - 1) * cell
-    q = np.minimum(np.maximum(p, origin), hi)
-    i = np.floor((q - origin) / cell).astype(np.int64)
-    i = np.minimum(np.maximum(i, 0), np.maximum(dims - 2, 0))
-    best = np.full(q.shape[:-1], -np.inf)
-    for ax in (0, 1):
-        ix = np.minimum(i[..., 0] + ax, dims[0] - 1)
-        dx = q[..., 0] - (origin[0] + ix * cell)
-        for ay in (0, 1):
-            iy = np.minimum(i[..., 1] + ay, dims[1] - 1)
-            dy = q[..., 1] - (origin[1] + iy * cell)
-            for az in (0, 1):
-                iz = np.minimum(i[..., 2] + az, dims[2] - 1)
-                dz = q[..., 2] - (origin[2] + iz * cell)
-                v = dist[ix, iy, iz].astype(float) - np.sqrt(dx * dx + dy * dy + dz * dz)
-                best = np.maximum(best, v)
-    # outside the box: every footprint point y is inside it, so |p - y|^2 >= |q - y|^2 + |p - q|^2
-    e = p - q
-    e2 = e[..., 0] * e[..., 0] + e[..., 1] * e[..., 1] + e[..., 2] * e[..., 2]
-    pos = np.maximum(best, 0.0)
-    return np.where(e2 > 0.0, np.sqrt(pos * pos + e2), best)
-
-
-def segment_field_distance(p0, p1, origin, cell, dims, dist):
-    """A lower bound on the distance from the segment [p0, p1] (..., 3) to a field's footprint.
-
-    The segment is sampled at n = ceil(L / cell) + 1 evenly spaced points (spacing s <= cell);
-    every point of it is within s/2 of a sample, so min over samples of `field_lookup` - s/2.
-    """
-    u = p1 - p0
-    L = np.sqrt(dot(u, u))
-    n = np.where(L > 0.0, np.ceil(L / cell) + 1, 1).astype(np.int64)
-    j = np.arange(int(n.max(initial=1)))
-    t = np.minimum(j, n[..., None] - 1) / np.maximum(n[..., None] - 1, 1)
-    pts = p0[..., None, :] + t[..., None] * u[..., None, :]
-    v = field_lookup(pts, origin, cell, dims, dist).min(axis=-1)
-    s = np.where(n > 1, L / np.maximum(n - 1, 1), 0.0)
-    return v - 0.5 * s

@@ -234,6 +234,15 @@ calibration files from the server, so both machines always hold the same ones. E
 person does, they do on the planning PC with `aris …`; the e-stop is the only thing on the
 operator side.
 
+**Followers, removed 2026-10-02.** Step 2 (a follower drawing against its leader's swept
+footprint, with the footprint as a distance-field obstacle for the planners and the checker)
+was built, measured (the leaders took 98–100 % of the ink under the five laws, so the followers
+drew nothing at 3–25× the planning cost) and removed from the code once mode A was decided, to
+keep one way of doing things. It lives at commit 85d3ac9 (`aris/system/followers.py`,
+`aris/kernel/footprint.py`, `types.Field`, the checker's `fields`). It comes back, with the
+balance law (split a row's lines between leader and follower before the leader plans), as soon
+as the simple thing draws on the hardware.
+
 ## 4c. Decided 2026-10-02, after the first word drawn on the hardware
 
 **Slots and robots.** An arm is named by its slot on the frame, `1L 1R 2L 2R 3L 3R` (row 1 at
@@ -396,8 +405,6 @@ An independent check of everything that goes to a robot. It shares no code with 
 
 ## Open questions
 
-- lift-off height: 5 to 10 mm is the target; it has to exceed the paper height error plus the
-  press depth, so it depends on calibration and contact-finding
 - how much a follower can draw next to a leader's footprint, measured on the corpus
 - how the footprint is represented (swept capsules or a voxel grid)
 - what the fill phase looks like (walls shifted, or one arm at a time)

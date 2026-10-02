@@ -73,7 +73,7 @@ def _class_travel(scene: Scene, T_k: np.ndarray) -> dict:
     two = -np.partition(-T_k, 1, axis=1)[:, :2].sum(axis=1) if T_k.shape[1] > 1 else T_k[:, 0]
     return dict(steel=worst(move), links=worst(move & ~m.is_pen & ~m.is_tool),
                 tool=worst(move & m.is_tool), pen=worst(move & m.is_pen),
-                walls=worst(move), parked=worst(move), fields=worst(move), self=two)
+                walls=worst(move), parked=worst(move), self=two)
 
 
 def _times(scene, tr, at, step):

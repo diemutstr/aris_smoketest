@@ -17,7 +17,3 @@ class Settings:
     # share of it.
     leader_share: float = 0.8
 
-    # ---- step 2
-    # Followers draw in the leader phases against their leaders' footprints.  Off: under the
-    # five laws they draw nothing (measured 2026-09-30) and cost 3 to 25 times the planning time.
-    followers: bool = False

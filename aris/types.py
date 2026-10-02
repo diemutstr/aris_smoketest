@@ -81,27 +81,11 @@ class Capsule:
 
 
 @dataclass(frozen=True)
-class Field:
-    """A distance field on a grid: the footprint of a neighbour over a whole phase.
-
-    `dist[i, j, k]` is a lower bound on the distance from the centre of cell (i, j, k) to the
-    footprint's surface, negative inside.  The footprint lies inside the grid; a point outside
-    the grid is read on the grid's edge, with its distance to the grid added in quadrature.
-    """
-    name: str
-    origin_base: np.ndarray            # (3,) centre of cell (0, 0, 0)
-    cell: float                        # m, the grid spacing
-    dist: np.ndarray                   # (nx, ny, nz) float32, metres
-    margin: float
-
-
-@dataclass(frozen=True)
 class Obstacles:
     """Everything one arm has to stay clear of, in that arm's base frame."""
     boxes: tuple[Box, ...] = ()
     planes: tuple[Plane, ...] = ()
     capsules: tuple[Capsule, ...] = ()
-    fields: tuple[Field, ...] = ()
 
 
 # --------------------------------------------------------------------------- the arm's body
@@ -211,7 +195,6 @@ Reason = Literal[
     "blocked",            # reachable, but an obstacle is in the way
     "too_short",          # shorter than the smallest stretch worth a pen-down
     "no_free_path",       # could be drawn, but the arm cannot fly to it
-    "outside_region",     # not inside this arm's region in this phase
     "failed_check",       # the independent checker refused the motion
     "stopped",            # the job was stopped before this was drawn
     "failed",             # an arm failed before this was drawn
@@ -315,7 +298,6 @@ class DrawRules:
     # 2026-10-01).  The system planner gives the drawing's points this z; the planners below
     # it never know.  The real paper stays the plane the holder and links must clear.
     press: float = 0.0                 # m
-    lift_height: float = 0.025         # m, how far the tip is raised between lines
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down
     speed_fraction: float = 0.30       # fraction of the joint speed limits that may be used

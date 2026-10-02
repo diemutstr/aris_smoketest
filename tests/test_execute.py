@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from aris.check import check
-from aris.execute import Coordinator, EventLog, Executor, Job, Queue, feed, header_for
+from aris.execute import Coordinator, EventLog, Executor, Job, Queue, header_for
 from aris.execute.drivers import Driver
 from aris.execute.drivers.sim import SimArm
 from aris.execute.queue import End, verdict_numbers
@@ -333,57 +333,3 @@ def test_a_queue_cut_short_ends_the_job_after_its_phase(tmp_path, rig, checked):
     assert run.status == "failed" and run.phases_done == []
     assert "arm 3L" in run.why and "motion 2 refused" in run.why
     assert np.max(np.abs(run.where["1L"] - rig.park_q("1L"))) < 1e-9     # the other arm finished
-
-
-# --------------------------------------------------------------------------- slow
-
-
-@pytest.mark.slow
-def test_word_on_six_simulated_arms(tmp_path_factory, rig):
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import system_cases as sc
-    from aris.system import phase_named, plan
-
-    cache = tmp_path_factory.mktemp("system_cache")
-    job_dir = tmp_path_factory.mktemp("jobs") / "word"
-    lines, rules = sc.word(), rig.rules()
-    job = Job.create(job_dir, header_for(rig, lines, rules))
-    arms = {a: SimArm(a, rig.park_q(a), speed=20.0) for a in rig.arm_ids}
-    coord = Coordinator(job, arms, CONFIG, rig)
-    out = {}
-    w0, c0 = time.perf_counter(), time.process_time()
-    th = threading.Thread(target=lambda: out.setdefault("run", coord.run()))
-    th.start()
-    fed = feed(job, plan(rig, lines, rules, cache_dir=cache, workers=4), CONFIG,
-               lambda n: phase_named(rig, n))
-    w_fed = time.perf_counter() - w0
-    th.join(timeout=1800)
-    wall, cpu = time.perf_counter() - w0, time.process_time() - c0
-    run = out["run"]
-    per_arm = {}
-    for name, a, _ in fed.tagged:
-        per_arm[(name, a)] = per_arm.get((name, a), 0) + 1
-    motion_s = sum(float(m.traj.t[-1]) for _, _, m in fed.tagged)
-    ev = EventLog(job.log_path).read()
-    t_first = min(e["time"] for e in ev if e["event"] == "motion started") - ev[0]["time"]
-    t_run = ev[-1]["time"] - ev[0]["time"] - t_first
-    print(f"\nword: {len(fed.tagged)} motions {per_arm}, {motion_s:.1f} s of motion; planned, "
-          f"checked and queued in {w_fed:.1f} s; first motion ran after {t_first:.1f} s; "
-          f"from then to the job's end {t_run:.1f} s at 20x; job done after {wall:.1f} s wall "
-          f"(this process CPU {cpu:.1f} s); phase ends {run.phase_ends}")
-    assert fed.refused == [] and run.status == "done", (fed.refused, run.why)
-    assert len(fed.tagged) > 40 and fed.queued == per_arm
-    for (name, a), n in per_arm.items():            # the queues on disk are what was planned
-        got = job.queue(name, a).read()
-        mine = [m for p, b, m in fed.tagged if (p, b) == (name, a)]
-        assert len(got) == n and all(_same(m, e.motion) for m, e in zip(mine, got))
-        assert all(e.verdict["passed"] for e in got)
-    assert all(ok for _, ok, _, _ in run.phase_ends) and len(run.phase_ends) >= 1
-    for a in rig.arm_ids:
-        assert np.max(np.abs(run.where[a] - rig.park_q(a))) < 1e-9, f"arm {a} not parked"
-    assert all(r.parked for r in run.arms)
-    np.savez(DATA / "execute_word.npz", wall=wall, fed_wall=w_fed, cpu=cpu, first=t_first,
-             running=t_run,
-             motion_s=motion_s, motions=len(fed.tagged),
-             per_arm=np.array([f"{p}|{a}|{n}" for (p, a), n in sorted(per_arm.items())]))

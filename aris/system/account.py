@@ -7,6 +7,14 @@ overlap only by a join (a cut reaches back `min_piece` over the join, so the joi
 twice rather than not at all); any larger overlap means a stretch was handed out twice.
 
 A violation is a bug in the planner, not a refusal, so it raises.
+
+This is the one no-drop account of the package (the server's report uses it too):
+
+    account(lines, drawn, leftovers, join) -> Account        raises NoDropViolation
+
+`drawn`: what was drawn, as Motions, (phase, arm, Motion) tuples or Pieces (only drawing
+motions count); `leftovers`: Leftovers; `join`: the drawing rules' `min_piece`.  Line lengths
+come from `stretch.line_length`, the one place a line's arc length is measured.
 """
 from __future__ import annotations
 
@@ -15,6 +23,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from aris.system.stretch import line_length
+from aris.types import Piece
 
 TOL = 1e-6          # m
 
@@ -78,8 +87,8 @@ def _worst_overlap(iv) -> float:
 
 
 def account(lines, motions, leftovers, join: float) -> Account:
-    """`motions`: Motion or (phase, arm, Motion); `leftovers`: Leftover; `join`: the drawing
-    rules' `min_piece`.  Raises
+    """`motions`: Motion, (phase, arm, Motion) or Piece (a drawn piece); `leftovers`: Leftover;
+    `join`: the drawing rules' `min_piece`.  Raises
     NoDropViolation when a line is not covered end to end, when something lies outside a
     line or belongs to no line, or when two stretches overlap by more than `join`."""
     lengths = {x.id: line_length(x) for x in lines}
@@ -89,7 +98,9 @@ def account(lines, motions, leftovers, join: float) -> Account:
     left = {k: [] for k in lengths}
     for m in motions:
         m = m[-1] if isinstance(m, tuple) else m
-        if m.kind == "draw":
+        if isinstance(m, Piece):
+            _add(drawn, lengths, m, m, "drawn piece")
+        elif m.kind == "draw":
             _add(drawn, lengths, m.piece, m.piece, "drawing motion")
     for x in leftovers:
         _add(left, lengths, x, x.piece, f"leftover ({x.reason})")

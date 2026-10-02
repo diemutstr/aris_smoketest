@@ -35,7 +35,6 @@ robot/                  the operator PC side: the controller (C++, ros2_control)
 tests/                  mirrors the folders above
 docs/                   design, build plan, status, one page per module
 assets/                 the installation model and meshes, the vendor arm description, drawings
-legacy_docs/            the old planner's documentation (its code is on branch aris2 only)
 ```
 
 ## What may import what
@@ -51,9 +50,9 @@ types  <-  kernel, rig  <-  local, free  <-  sequencer, arm_planner  <-  system 
   `kernel.retime` (the simulated arm samples trajectories); nothing above them.
 - `check` imports `types` and nothing else from this package. It has its own kinematics and its
   own distance code, so that it and the planners can only agree by being right.
-- Only `execute/drivers/` may import ROS. Only `rig.py` reads `config/`.
-- The old package `aris_sixarm` is a reference. It is never imported by `aris`. Tests may import
-  it to compare answers.
+- Only `execute/drivers/` may import ROS. Only `rig.py` reads `config/` — and the checker's own reader, by design.
+- The old package `aris_sixarm` lives on branch `aris2` only and is never imported; its reference
+  numbers are committed under `tests/data/`.
 
 ## The contracts between modules
 
@@ -69,8 +68,8 @@ Types are in `aris/types.py`. The calls:
 | free | `plan(arm, q_start, q_goal, obstacles, rules, gates=None, seed_extra=b"", options=None)`; `plan_detailed` also returns counts and times | a free `Motion` (timed, and checked as flown) or a `Refusal` with reason `outside_limits`, `blocked`, `self_collision`, `no_free_path`, `cannot_time` or `bad_input` |
 | sequencer | `tour(arm, bunches, q_start, obstacles, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]`. `verify(motion, q_before) -> dict` (at least `passed`, `tightest`) is the independent checker, handed in by the server: a piece whose group of motions does not all pass is left over as `failed_check`; a motion that passed carries the dict as `Motion.checked` |
 | arm_planner | `plan(arm, lines, obstacles, q_start, rules, verify=None)` | iterator of `Motion`, then `list[Leftover]` |
-| system | `plan(rig, drawing, arm_configs, verify=None)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]`. `verify(arm_id, phase, fields, motion, q_before) -> dict` is picklable (the arm planners run in worker processes); the system planner binds the first three for each arm planner |
-| check | `check(config_dir, slot, motion, phase, q_before, fields=())` | a verdict: pass or fail, every measured number, and the tightest one. Arms are slots (`types.Slot`, e.g. "2R") everywhere: `Phase.active`, `Wall.arms`, queue names, event rows |
+| system | `plan(rig, drawing, arm_configs, verify=None)` | iterator of `(phase, arm_id, Motion)`, then `list[Leftover]`. `verify(slot, phase, motion, q_before) -> dict` is picklable (the arm planners run in worker processes); the system planner binds the first two for each arm planner |
+| check | `check(config_dir, slot, motion, phase, q_before, standing={})` — `standing`: {slot: joints} of arms that stand still somewhere other than their park (park and calibrate jobs); the checker builds their bodies with its own kinematics | a verdict: pass or fail, every measured number, and the tightest one. Arms are slots (`types.Slot`, e.g. "2R") everywhere: `Phase.active`, `Wall.arms`, queue names, event rows |
 
 ## The calibration file (`config/calibration/<slot>.json`)
 

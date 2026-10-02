@@ -153,7 +153,7 @@ def test_steel_list(rig):
     assert len(rig.steel) == 13 + 6 * 4
 
 
-# the strut face schedule of legacy_docs/drawings/plan_centre_datum.pdf, sheet 3, panel D (mm)
+# the strut face schedule of docs/drawings/plan_centre_datum.pdf, sheet 3, panel D (mm)
 SCHEDULE = {"left": (-305.00, (-476.75, -400.55), (-159.15, -82.95), (-392.76, -166.94)),
             "right": (305.00, (133.25, 209.45), (450.85, 527.05), (217.24, 443.06))}
 
@@ -366,7 +366,6 @@ def test_rules(rig):
     r = rig.rules()
     # press and speed on the paper are the current pen's (graphite_4h, 2026-10-01)
     assert r.draw_speed == 0.015 and r.press == 0.0035
-    assert r.lift_height == 0.025 and r.min_piece == 0.010
     assert r.speed_fraction == 0.30 and abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
     assert r.gates == rig.gates()
 

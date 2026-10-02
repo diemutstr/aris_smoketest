@@ -1,4 +1,4 @@
-# The controllers of one arm.  This file is the template: `aris-robot bringup` writes one copy
+# The controllers of one arm.  This file is the template: `aris-robot serve` writes one copy
 # per arm with that arm's pen tip (`tip_offset_flange`, from the rig) and, for fake hardware,
 # the position interface for the trajectory controller.  Node names are wildcards so the same
 # file works in every namespace (arm_<id>).

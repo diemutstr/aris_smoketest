@@ -346,11 +346,24 @@ class Job:
 
     # ---- the phase list: appended by the writer as phases begin, read by the coordinator
 
-    def add_phase(self, phase: Phase) -> None:
-        _append_line(self.dir / "phases.jsonl", _phase_json(phase))
+    def add_phase(self, phase: Phase, standing: dict | None = None) -> None:
+        """Append a phase.  `standing`: {slot: joints} of arms standing still somewhere other
+        than their park while it runs (park and calibrate jobs); kept in the same line, for
+        `aris check` (readers that do not need it ignore the key)."""
+        d = _phase_json(phase)
+        if standing:
+            d["standing"] = {str(a): [float(x) for x in np.asarray(q).ravel()]
+                             for a, q in standing.items()}
+        _append_line(self.dir / "phases.jsonl", d)
 
     def end_phases(self, note: str = "") -> None:
         _append_line(self.dir / "phases.jsonl", dict(end=True, note=note))
+
+    def phases(self) -> list[tuple[Phase, dict]]:
+        """Every phase written so far, in order, with its standing arms ({slot: (7,) joints},
+        empty for most phases)."""
+        return [(_phase_of(d), {a: np.asarray(q, float) for a, q in d.get("standing", {}).items()})
+                for d in _complete_lines(self.dir / "phases.jsonl") if not d.get("end")]
 
     def watch_phases(self, poll: float = 0.01, stop=None):
         """Yields each Phase as it is added; returns at the end line (or when `stop` is set)."""

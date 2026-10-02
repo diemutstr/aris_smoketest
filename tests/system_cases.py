@@ -35,8 +35,8 @@ import local_cases as lc  # noqa: E402
 
 from aris.rig import Rig  # noqa: E402
 from aris.system import account, phase_named, plan_detailed  # noqa: E402
-from aris.system.phases import follower_phase, is_fill  # noqa: E402
-from aris.types import Line, Phase  # noqa: E402
+from aris.system.phases import is_fill  # noqa: E402
+from aris.types import Line  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config"
@@ -135,33 +135,16 @@ def drawing(name: str) -> list[Line]:
 # --------------------------------------------------------------------------- checking
 
 
-_FIELDS: dict = {}            # (phase name, follower) -> Field, set once per checking process
-
-
-def _set_fields(fields):
-    _FIELDS.update(fields)
-
-
-def check_phase(rig, phase_name, arm_id):
-    """The Phase a motion is checked in: a leader's or a fill arm's own; a follower's view of a
-    leader phase (its leader's walls, nothing parked) with its leader's footprint."""
-    ph = phase_named(rig, phase_name)
-    if (phase_name, arm_id) in _FIELDS:
-        return follower_phase(rig, ph, arm_id), (_FIELDS[(phase_name, arm_id)],)
-    return ph, ()
-
-
 def _check_one(job):
     from aris.check import check
     arm_id, phase_name, motion, q_before = job
     rig = Rig.load(CONFIG)
-    ph, fields = check_phase(rig, phase_name, arm_id)
-    v = check(CONFIG, arm_id, motion, ph, q_before, fields=fields)
+    v = check(CONFIG, arm_id, motion, phase_named(rig, phase_name), q_before)
     failed = tuple(m.name for m in v.measurements if not m.passed)
     return v.passed, failed, v.min_clearance
 
 
-def check_all(rig, tagged, fields, workers: int = 16):
+def check_all(rig, tagged, workers: int = 16):
     """Every motion through the checker (q_before: where the same arm's previous motion ended,
     or its park), and `check_phase_end` after every phase.
     -> (motion verdicts [(passed, failed names, min clearance)], phase-end verdicts
@@ -175,52 +158,16 @@ def check_all(rig, tagged, fields, workers: int = 16):
         if ph not in ends:
             order.append(ph)
         ends.setdefault(ph, {b: q[b] for b in phase_named(rig, ph).active})[a] = m.q_end
-    _FIELDS.clear()
-    _set_fields(fields)
     if workers <= 1:
         verdicts = [_check_one(j) for j in jobs]
     else:
-        with ProcessPoolExecutor(workers, initializer=_set_fields, initargs=(fields,)) as pool:
+        with ProcessPoolExecutor(workers) as pool:
             verdicts = list(pool.map(_check_one, jobs, chunksize=4))
     phase_ends = []
     for ph in order:
-        p = phase_named(rig, ph)                   # every arm that moved, followers included
-        p = Phase(p.name, tuple(ends[ph]), tuple(a for a in rig.arm_ids if a not in ends[ph]),
-                  p.walls)
-        v = check_phase_end(CONFIG, p, ends[ph])
+        v = check_phase_end(CONFIG, phase_named(rig, ph), ends[ph])
         phase_ends.append((ph, v.passed, v.tightest))
     return verdicts, phase_ends
-
-
-# --------------------------------------------------------------------------- the footprint's price
-
-
-def _parked_map(job):
-    from aris.system import maps as mp
-    from aris.system.settings import Settings
-    rig, phase_name, f = job
-    ph = phase_named(rig, phase_name)
-    fph = follower_phase(rig, ph, f)
-    obs = rig.obstacles(f, (rig.row_partner(f),), fph.walls)
-    return mp.build(rig, ph, f, rig.rules().gates, Settings(), obstacles=obs)
-
-
-def footprint_price(rig, rep, workers: int = 8) -> dict:
-    """Per (phase, follower): grid points its map refuses against the leader's footprint that
-    pass against the leader standing at its park (where it ends the phase), as a share of the
-    points that pass against the parked leader."""
-    keys = list(rep.follower_maps)
-    if not keys:
-        return {}
-    with ProcessPoolExecutor(min(workers, len(keys))) as pool:
-        parked = list(pool.map(_parked_map, [(rig, ph, f) for ph, f in keys]))
-    from aris.system.maps import DRAWABLE
-    out = {}
-    for (ph, f), mp_ in zip(keys, parked):
-        ok_parked = mp_.state == DRAWABLE
-        ok_field = rep.follower_maps[(ph, f)].state == DRAWABLE
-        out[(ph, f)] = float((ok_parked & ~ok_field).sum() / max(ok_parked.sum(), 1))
-    return out
 
 
 # --------------------------------------------------------------------------- one case
@@ -231,10 +178,9 @@ def run_case(rig, name, lines, cache_dir, workers, check_workers=16, do_check=Tr
     load = os.getloadavg()[0]
     tagged, left, rep = plan_detailed(rig, lines, rules, cache_dir=cache_dir, workers=workers)
     acc = account(lines, tagged, left, rules.min_piece)
-    checks = check_all(rig, tagged, rep.fields, check_workers) if do_check else None
-    price = footprint_price(rig, rep)
+    checks = check_all(rig, tagged, check_workers) if do_check else None
     return dict(name=name, lines=lines, tagged=tagged, left=left, rep=rep, acc=acc,
-                checks=checks, load=load, price=price)
+                checks=checks, load=load)
 
 
 def numbers(res) -> dict:
@@ -248,10 +194,6 @@ def numbers(res) -> dict:
     lead = sum(r.drawn for p in rep.phases if not is_fill(p) for r in p.arms.values())
     out["drawn_phases_12"] = lead
     out["drawn_fill"] = sum(r.drawn for p in rep.phases if is_fill(p) for r in p.arms.values())
-    fol = [(p, a, r) for p in rep.phases for a, r in p.arms.items() if (p.name, a) in rep.fields]
-    out["drawn_followers"] = sum(r.drawn for _, _, r in fol)
-    out["follower_first"] = min((r.first_phase_wall for _, _, r in fol), default=np.nan)
-    out["follower_first_max"] = max((r.first_phase_wall for _, _, r in fol), default=np.nan)
     for reason, m in acc.left_by_reason.items():
         out[f"left_{reason}"] = m
     if res["checks"] is not None:
@@ -270,9 +212,7 @@ def summary(res) -> list[str]:
            f"  drawn {acc.drawn:.2f} m ({acc.drawn / L:.3f}); phases 1+2 "
            f"{n['drawn_phases_12']:.2f} m ({n['drawn_phases_12'] / L:.3f}), fill "
            f"{n['drawn_fill']:.2f} m ({n['drawn_fill'] / L:.3f}); joins drawn twice "
-           f"{acc.twice:.3f} m; {rep.cuts} cuts; followers in phases 1+2 "
-           f"{n['drawn_followers']:.2f} m ({n['drawn_followers'] / L:.3f}), their first motion "
-           f"{n['follower_first']:.1f} to {n['follower_first_max']:.1f} s into the phase",
+           f"{acc.twice:.3f} m; {rep.cuts} cuts",
            "  skipped: " + ("; ".join(f"{p} ({why})" for p, why in rep.skipped) or "none"),
            "  left over: " + (", ".join(f"{k} {m:.3f} m" for k, m in
                                         sorted(acc.left_by_reason.items())) or "nothing"),
@@ -282,17 +222,12 @@ def summary(res) -> list[str]:
            + " + ".join(f"{p.duration:.0f} ({p.name})" for p in rep.phases)]
     for p in rep.phases:
         for a, r in p.arms.items():
-            role = "f" if (p.name, a) in rep.fields else " "
-            out.append(f"    {p.name:8s} arm {a:>3}{role}: {r.stretches:3d} stretches, offered "
+            out.append(f"    {p.name:8s} arm {a:>3}: {r.stretches:3d} stretches, offered "
                        f"{r.offered:6.2f} m, drawn {r.drawn:6.2f} m ({r.drawn / L:.3f}), "
                        f"{r.motions:4d} motions, {r.motion_time:6.0f} s; plan CPU {r.cpu:6.1f} "
                        f"wall {r.wall:6.1f} s, first motion {r.first_phase_wall:5.1f} s; back: "
                        + (", ".join(f"{k} {m:.2f}" for k, m in sorted(r.handed_back.items()))
                           or "-"))
-    if res.get("price"):
-        out.append("  footprint: grid points refused against it that pass against the parked "
-                   "leader: " + ", ".join(f"{ph} arm {f} {x:.3f}"
-                                          for (ph, f), x in res["price"].items()))
     if res["checks"] is not None:
         v, ends = res["checks"]
         fails = {}
@@ -308,8 +243,7 @@ def summary(res) -> list[str]:
 
 # --------------------------------------------------------------------------- figures
 
-PHASE_COLOUR = {"phase 1": "#2a78d6", "phase 2": "#eb6834", "followers, phase 1 or 2": "#eda100",
-                "fill": "#1baf7a"}
+PHASE_COLOUR = {"phase 1": "#2a78d6", "phase 2": "#eb6834", "fill": "#1baf7a"}
 ARM_COLOUR = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
 LEFT_COLOUR = "#d03b3b"
 
@@ -361,8 +295,7 @@ def figure(rig, res, path) -> None:
         if m.kind != "draw":
             continue
         p = rig.to_table(a, m.tip_base)
-        key = "fill" if ph.startswith("fill") else "followers, phase 1 or 2" \
-            if (ph, a) in res["rep"].fields else ph
+        key = "fill" if ph.startswith("fill") else ph
         axes[0].plot(p[:, 0], p[:, 1], color=PHASE_COLOUR[key], lw=1.2)
         axes[1].plot(p[:, 0], p[:, 1], color=ARM_COLOUR[arms.index(a)], lw=1.2)
     for i, x in enumerate(res["left"]):

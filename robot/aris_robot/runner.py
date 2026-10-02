@@ -1,6 +1,4 @@
-"""Run one job of the drawing server on the arms of this operator PC.
-
-    aris-robot run --site robot/site.json --job <id>
+"""Run one job of the drawing server on the arms of this operator PC (serve's "run" command).
 
 1. Reads the job header from the server and refuses when this PC's rig or calibration is not
    the one the job was planned against (the same commit must run on both machines).
@@ -33,75 +31,18 @@ without it (an older job) runs with this PC's rig file.  The "runner started" ro
 
 Nothing here depends on what a job draws: a park job (one arm per phase, free motions) runs
 the same way.
-
-The executor sends lower and lift motions to `move` with the trajectory only.  The pen force
-needs to know them, so `KindRouter` finds each trajectory in the arm's local queues and sends
-lower and lift to the driver's `draw` (until the executor does that itself).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import threading
 from pathlib import Path
 
 from aris.execute import Coordinator, EventLog, Job
-from aris.execute.queue import Cursor, End, Queue, digest
+from aris.execute.queue import Queue, digest
 from aris.types import Refusal
 
 from aris_robot.remote import EventForwarder, Remote
-
-PEN_MOTIONS = ("lower", "draw", "lift")
-
-
-def _key(traj) -> bytes:
-    return hashlib.blake2b(traj.t.tobytes() + traj.q.tobytes(), digest_size=16).digest()
-
-
-class KindRouter:
-    """A driver that sends every pen motion (lower, draw, lift) to `draw`."""
-
-    def __init__(self, driver, job_dir, arm_id: int):
-        self.driver, self.dir, self.arm_id = driver, Path(job_dir), arm_id
-        self._cursors: dict[Path, Cursor] = {}
-        self._kinds: dict[bytes, object] = {}
-        self._lock = threading.Lock()
-
-    def _lookup(self, traj):
-        with self._lock:
-            # the arm's queue files, named as aris.execute.Job names them
-            suffix = Job(self.dir).queue("x", self.arm_id).path.name[1:]
-            for p in self.dir.glob(f"*{suffix}"):
-                cur = self._cursors.setdefault(p, Cursor(p))
-                for item in cur.poll():
-                    if not isinstance(item, End):
-                        self._kinds[_key(item.motion.traj)] = item.motion
-            return self._kinds.get(_key(traj))
-
-    def move(self, traj):
-        m = self._lookup(traj)
-        if m is not None and m.kind in PEN_MOTIONS:
-            return self.driver.draw(m)
-        return self.driver.move(traj)
-
-    def draw(self, motion):
-        return self.driver.draw(motion)
-
-    def touch(self, motion):
-        return self.driver.touch(motion)
-
-    def state(self):
-        return self.driver.state()
-
-    def hold(self):
-        return self.driver.hold()
-
-    def stop(self):
-        return self.driver.stop()
-
-    def recover(self):
-        return self.driver.recover()
-
 
 class ArmLog(EventLog):
     """The job's event log, with where the arm stands on every row about an arm."""
@@ -238,8 +179,7 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings):
     d.mkdir(parents=True, exist_ok=True)
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
     job = Job(d)
-    routed = {a: KindRouter(drv, d, a) for a, drv in drivers.items()}
-    coord = Coordinator(job, routed, config_dir, rig, poll=poll)
+    coord = Coordinator(job, drivers, config_dir, rig, poll=poll)
     coord.log = log = ArmLog(job.log_path, drivers)   # the executors write through it too
     log.write("runner started", job=job_id, where=log.where(), **settings)
     refused: list[str] = []

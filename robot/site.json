@@ -3,7 +3,7 @@
     "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted and its force sign, the tare and contact thresholds, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
     "read_by": "robot/aris_robot/site.py and nothing else",
     "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
-    "force_sign_note": "per arm: +1 when the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading.",
+    "force_sign_note": "per arm: +1 when the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; the first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
     "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table"
   },
   "server_url": "http://192.168.50.1:8420",

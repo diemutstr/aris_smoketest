@@ -8,24 +8,19 @@ operator PC's runner to report the end.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
 from aris.check import check
 from aris.execute import Coordinator
-from aris.kernel.footprint import footprint, transform_field
 from aris.sequencer.guard import Guard
 from aris.kernel.retime import retime_detailed
 from aris.sequencer.lift import lift, rise_path
 from aris.sequencer.tour import TourOptions
 from aris.system.phases import cannot_touch
-from aris.system.planner import AT_PARK
-from aris.types import Capsule, JointPath, Motion, Phase, Refusal, Trajectory
+from aris.types import Capsule, JointPath, Motion, Phase, Refusal
 
-
-
-CELL = 0.01              # m, the footprint grid of an arm standing where it is
 LIFT_EXTRA = 0.005       # m above the pen clearance: how far a pen at the paper rises first
 PEN_DOWN = 0.005         # m: a tip closer to the paper than the pen's clearance plus this
                          # rises before it moves on
@@ -38,13 +33,8 @@ class Step:
     phase: Phase | None = None
     motions: tuple = ()
     verdicts: tuple = ()
-    fields: tuple = ()
+    standing: dict = field(default_factory=dict)   # {slot: joints} standing off their parks
     why: str = ""            # "" when every motion passed; else why the arm stays
-
-
-def at_park(rig, a, q) -> bool:
-    """The arm stands at its park (to the system planner's tolerance)."""
-    return float(np.max(np.abs(np.asarray(q, float) - rig.park_q(a)))) <= AT_PARK
 
 
 def pen_down(rig, a, q) -> bool:
@@ -67,50 +57,38 @@ def standing_capsules(rig, a, b, q_b, margin) -> tuple:
 
 class Scene:
     """The arms where they stand, as one moving arm must see them: what arm a must keep clear
-    of while the arms in `moving` move and the rest stand (parked arms at their parks, the
-    others as their bodies for the planners and their footprints for the checker).  Each
-    standing arm's footprint is made once and kept."""
+    of while the arms in `moving` move and the rest stand (parked arms at their parks; the
+    others where they stand, as their bodies for the planners and as `standing` joints for the
+    checker, which builds their bodies itself)."""
 
     def __init__(self, rig):
         self.rig = rig
         self.margin = rig.clearance["arm_to_arm_m"] + rig.allowance["arm_to_arm_m"]
-        self.prints = {}           # (arm, q bytes) -> its footprint standing there, own frame
-
-    def _print(self, b, q):
-        key = (b, np.asarray(q, float).tobytes())
-        if key not in self.prints:
-            stand = Trajectory(np.array([0.0, 1.0]), np.stack([q, q]), np.zeros((2, 7)))
-            self.prints[key] = footprint(self.rig.arm(b), [stand], cell=CELL, name=f"arm{b}",
-                                         margin=self.margin)
-        return self.prints[key]
 
     def of(self, a, now, moving, walls, name):
-        """-> (obstacles for the planners, fields for the checker, Phase)."""
+        """-> (obstacles for the planners, standing {slot: joints} for the checker, Phase)."""
         rig = self.rig
-        near = [b for b in rig.arm_ids if b not in moving and not cannot_touch(rig, a, b)]
-        off = [b for b in near if not at_park(rig, b, now[b])]
-        # arms that cannot touch a are listed as parked wherever they stand: the checker then
-        # measures a against them at their parks, which a cannot reach either
-        parked = tuple(b for b in rig.arm_ids if b not in moving and b not in off)
-        fields = tuple(transform_field(self._print(b, now[b]),
-                                       rig.T_base_table(a) @ rig.T_table_base(b)) for b in off)
-        mine = tuple(w for w in walls if a in w.arms)
-        obs = rig.obstacles(a, tuple(b for b in near if b not in off), mine)
+        still = [b for b in rig.arm_ids if b not in moving]
+        standing = {b: np.asarray(now[b], float) for b in still if not rig.at_park(b, now[b])}
+        near = [b for b in still if not cannot_touch(rig, a, b)]
+        obs = rig.obstacles(a, tuple(b for b in near if b not in standing),
+                            tuple(w for w in walls if a in w.arms))
         obs = replace(obs, capsules=obs.capsules + tuple(
-            c for b in off for c in standing_capsules(rig, a, b, now[b], self.margin)))
-        return obs, fields, Phase(name, tuple(moving), parked, tuple(walls))
+            c for b in near if b in standing
+            for c in standing_capsules(rig, a, b, now[b], self.margin)))
+        return obs, standing, Phase(name, tuple(moving), tuple(still), tuple(walls))
 
 
-def checked_step(st, a, motions, phase, q, fields) -> Step:
+def checked_step(st, a, motions, phase, q, standing) -> Step:
     """One arm's motions through the checker, one after another from q: a Step, with why
     when any fails."""
     verdicts = []
     for m in motions:
-        verdicts.append(check(st.config_dir, a, m, phase, q, fields=fields))
+        verdicts.append(check(st.config_dir, a, m, phase, q, standing=standing))
         q = m.q_end
     bad = [f"{m.kind}: " + ", ".join(v.failed) for m, v in zip(motions, verdicts)
            if not v.passed]
-    return Step(a, phase, tuple(motions), tuple(verdicts), fields,
+    return Step(a, phase, tuple(motions), tuple(verdicts), dict(standing),
                 "checker: " + "; ".join(bad) if bad else "")
 
 
@@ -141,7 +119,7 @@ def lift_pens(st, scene, now, down) -> list[Step]:
         return [Step(a, why=walls) for a in down]
     steps = []
     for a in down:
-        obs, fields, phase = scene.of(a, now, tuple(down), walls, "lift pens")
+        obs, standing, phase = scene.of(a, now, tuple(down), walls, "lift pens")
         got = None
         for gates in (rules.gates, replace(rules.gates, limit_margin=RECOVERY_LIMIT_MARGIN)):
             got = _rise_from(rig, a, obs, now[a], replace(rules, gates=gates))
@@ -150,7 +128,7 @@ def lift_pens(st, scene, now, down) -> list[Step]:
         if isinstance(got, str):
             steps.append(Step(a, phase, why=got))
             continue
-        steps.append(checked_step(st, a, got, phase, now[a], fields))
+        steps.append(checked_step(st, a, got, phase, now[a], standing))
     return steps
 
 
@@ -213,21 +191,46 @@ def to_surface(arm, guard, paper, q, rules, opt):
     return Motion("lower", res.traj)
 
 
+def steps_work(plan, report):
+    """The work of a job that is a short list of planned steps (park, calibrate, touch-off),
+    for `runner.start`: where every arm stands, `plan(st, where)` (-> an object with `.steps`
+    and `.why`; a why fails the job, with `plan.failed()` extra report fields if it has them),
+    the steps queued and run, and `report(st, rec, plan, run, planning_s) -> (report, state,
+    why)`."""
+    def work(st, rec, job) -> None:
+        import time
+        from aris.server import runner
+        where = runner.where_now(st, need_all=True)
+        if isinstance(where, Refusal):
+            return runner.fail_job(st, rec, job, where.detail)
+        rec.set_state("planning")
+        t0 = time.perf_counter()
+        p = plan(st, where)
+        planning_s = time.perf_counter() - t0
+        if p.why:
+            extra = p.failed() if hasattr(p, "failed") else {}
+            return runner.fail_job(st, rec, job, p.why, **extra)
+        moving = queue_steps(job, rec, p.steps, f"{rec.kind} planned")
+        if moving:
+            rec.set_state("moving")
+        run = run_queued(st, rec, job, moving, where)
+        rep, state, why = report(st, rec, p, run, planning_s)
+        runner.finish_job(rec, job.dir, rep, state, why)
+    return work
+
+
 def queue_steps(job, rec, steps, note: str) -> bool:
     """-> whether anything moves.  Steps with a `why` are not queued."""
-    from aris.server.pipeline import context_path, save_context
     moving = [s for s in steps if s.motions and not s.why]
     for name in dict.fromkeys(s.phase.name for s in moving):        # phases in order
         these = [s for s in moving if s.phase.name == name]
-        job.add_phase(these[0].phase)
+        job.add_phase(these[0].phase, these[0].standing)     # the same for every arm in it
         for arm in dict.fromkeys(s.arm for s in these):
             q = job.queue(name, arm)
             for s in (s for s in these if s.arm == arm):
                 for m, v in zip(s.motions, s.verdicts):
                     q.append(m, v)
                     rec.count_queued(name, arm)
-                if s.fields:
-                    save_context(context_path(q), s.phase, s.fields)
             q.close()
     job.end_phases(note)
     return bool(moving)

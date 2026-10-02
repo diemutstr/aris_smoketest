@@ -378,11 +378,17 @@ class Rig:
         on the paper are the current pen's.  The one source every planner uses."""
         d, p = self.drawing_cfg, self.pen_cfg
         return DrawRules(draw_speed=float(p["speed_m_per_s"]), press=float(p["press_m"]),
-                         lift_height=d["lift_height_m"],
                          landing_speed=d.get("landing_speed_m_per_s", 0.010),
                          lean_max=float(np.deg2rad(self.gate_cfg["pen_lean_max_deg"])),
                          min_piece=d["min_piece_m"], speed_fraction=d["speed_fraction"],
                          gates=self.gates())
+
+    AT_PARK_RAD = 1e-6                 # a configuration this close to the park counts as parked
+
+    def at_park(self, slot: str, q) -> bool:
+        """The arm stands at its park configuration (to the planning tolerance; the executor's
+        start tolerance, rig.json `execution`, is a different, larger number)."""
+        return float(np.max(np.abs(np.asarray(q, float) - self.park_q(slot)))) <= self.AT_PARK_RAD
 
     def pen(self) -> dict:
         """The pen that is in, as plain data: its pens.table entry plus "name".  The server

@@ -25,23 +25,25 @@ PEN_FLOOR = -0.002    # m, pen capsule against the drawing surface, "lower" and 
 _TITLE = dict(steel="clearance steel", links="clearance paper (links)",
               tool="clearance paper (tool)", pen="clearance paper (pen)",
               walls="clearance walls", parked="clearance parked arms",
-              fields="clearance footprints", self="clearance self")
+              self="clearance self")
 PEN_DEPTH = "pen depth (lower, lift)"      # the pen row of a "lower" or "lift" motion
 ON_SURFACE = "tip on surface (lower, lift)"  # a lower ends, a lift starts, on the drawing surface
 TOUCH_PAPER = "tip on paper"                 # a touch's descent ends, its climb starts, there
 
 
 def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, *,
-          fields=(), step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
+          standing=None, step: float = 1e-3, tol: float = 2.5e-4, rate_tol: float = 0.05,
           tip_height_tol: float = 5e-4, line_tol: float = 2e-4, back_tol: float = 1e-5,
           speed_tol: float = 0.03,
           stop_speed: float = 2.5e-4) -> Verdict:
     """Everything that is measured, on the motion as it will be flown.
 
     slot            the arm, by its slot on the frame ("2R"); `phase` names slots too
-    fields          the phase's footprints of other arms (`types.Field`), in this arm's base
-                    frame, as the planners get them in `Obstacles.fields`; held to the demanded
-                    arm-to-arm clearance
+    standing        {slot: (7,) joints}: other arms standing still somewhere other than their
+                    park (park and calibrate jobs); built at those joints like a parked arm
+                    at its park, held to the demanded arm-to-arm clearance (the "parked" row,
+                    named "standing2R:..." where one is closest).  A slot listed here and in
+                    `phase.parked` stands where `standing` says.
 
     step            m, the most any capsule point may move between two clearance samples
     tol             m, how far under the true minimum a reported clearance may lie
@@ -65,14 +67,16 @@ def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, *
         except (OSError, ValueError, KeyError) as e:
             problem = f"cannot read the rig: {e}"
     if problem is None:
-        problem = _wrong_phase(rig, slot, phase)
+        problem = _wrong_phase(rig, slot, phase) or _bad_standing(rig, slot, standing)
     if problem is not None:
         return verdict([measure("well formed", 0.0, 1.0, "min", "", problem, ranked=False)])
 
-    opts = dict(fields=fields, step=step, tol=tol, rate_tol=rate_tol,
+    standing = {p: np.asarray(q, float) for p, q in (standing or {}).items()}
+    opts = dict(standing=standing, step=step, tol=tol, rate_tol=rate_tol,
                 tip_height_tol=tip_height_tol, line_tol=line_tol, back_tol=back_tol,
                 speed_tol=speed_tol, stop_speed=stop_speed)
-    notes = rig.notes + sum((rig.mounts[s].notes for s in (slot, *phase.parked)), ())
+    others = dict.fromkeys((*phase.parked, *standing))
+    notes = rig.notes + sum((rig.mounts[s].notes for s in (slot, *others)), ())
     if motion.kind == "touch":
         return _touch(rig, slot, motion, phase, q_before, notes, opts)
     ms, worst, at = _one(rig, slot, motion, phase, q_before, opts)
@@ -87,7 +91,7 @@ def _one(rig, slot, motion, phase, q_before, o, surface_title=ON_SURFACE):
     setting = motion.kind in ("lower", "lift")
     # The pen's floor is the drawing surface, which lies the press below the real paper plane
     # the scene measures against.
-    scene = build_scene(rig, slot, phase.walls, phase.parked, drawing, fields=o["fields"],
+    scene = build_scene(rig, slot, phase.walls, phase.parked, drawing, standing=o["standing"],
                         pen_floor=PEN_FLOOR - rig.press if setting else None)
     ms = [measure("well formed", 1.0, 1.0, "min", "", ranked=False)]
     ms += _ends(traj, q_before)                                      # items 1-2
@@ -276,4 +280,13 @@ def _wrong_phase(rig, slot, phase) -> str | None:
     unknown = [p for p in phase.parked if p not in rig.mounts or p == slot]
     if unknown:
         return f"parked slots {unknown} are not other arms of this rig"
+    return None
+
+
+def _bad_standing(rig, slot, standing) -> str | None:
+    for p, q in (standing or {}).items():
+        if p not in rig.mounts or p == slot:
+            return f"standing slot {p!r} is not another arm of this rig"
+        if np.shape(q) != (7,) or not np.all(np.isfinite(np.asarray(q, float))):
+            return f"standing slot {p}: the configuration is not 7 numbers"
     return None

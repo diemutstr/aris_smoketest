@@ -5,7 +5,7 @@ motion exactly as the arm will fly it and says pass or fail, with every number i
 shares no code with the planners, so the two can only agree by both being right. In the old code
 every serious bug was found because an independent check disagreed with the planner.
 
-**In.** `check(config_dir, slot, motion, phase, q_before=None, fields=())`: the rig's `config/`
+**In.** `check(config_dir, slot, motion, phase, q_before=None, standing={})`: the rig's `config/`
 folder, which arm by its slot on the frame (`"2R"`; the old robot ids mean nothing here), one
 `Motion` (draw, free, lower, lift or touch), the `Phase` it runs in (who moves, who stands parked, which
 walls, all by slot), and where the arm is before it starts. Optional keywords set the tolerances
@@ -36,8 +36,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 4 | `clearance paper (links)`: the arm's moving links | 0.020 m (`body_to_paper_m`) |
 | 4 | `clearance paper (tool)`: everything bolted to the flange except the pen (gripper, blades, holder, pencil tail) | `tool_to_paper_m`; if rig.json lacks it, `body_to_paper_m`, and the verdict says so |
 | 4 | `clearance walls`: the phase's walls that have this arm on one side, and the fences of rig.json (every phase) | `wall_m`, 0.040 m until x and y are calibrated |
-| 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, base included | 0.050 m |
-| 4 | `clearance footprints`: other arms' footprints over the phase (distance fields), passed as `check(..., fields=...)` in this arm's base frame, as the planners get them in `Obstacles.fields` (`Phase` has no fields) | 0.050 m (the demanded arm-to-arm clearance, not the field's own margin) |
+| 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, and every arm in `standing` ({slot: 7 joints}: arms standing still somewhere other than their park, in park and calibrate jobs), at those joints; bases included. The closest is named `parked2R:…` or `standing2R:…`; a slot in both stands where `standing` says | 0.050 m |
 | 5 | `clearance self`: the capsule pairs at least four joints apart | 0.020 m |
 | 6 | all of 4 and 5 hold between the samples too (below) | |
 | 7 | drawing: `tip on paper`: the tip against the **drawing surface**, which lies the current pen's press (`pens.table.<pen>.press_m`, 3.5 mm for the 4H graphite) below the paper; the planned points lie there, and the press is the same number the planners get from `rig.rules().press` | 0.5 mm |
@@ -68,15 +67,6 @@ This parameter is exactly the planned arc length at every sample and continuous 
 the nearest point of the line is not used, because at a sharp corner it jumps between the two
 legs and briefly runs backwards on a motion that is fine. `never stops` and `never backwards`
 are read on this parameter at 1 kHz.
-
-**Reading a footprint** (`field.py`, written apart from the kernel's lookup). A field holds, at
-each grid centre, a lower bound on the distance to the footprint. At a point inside the grid's
-box the checker takes the nearest centre's value minus the distance to that centre; outside the
-box it reads on the box and adds the distance to the box back in quadrature (the footprint lies
-inside the box). A capsule is read at points along its axis at most half a cell apart; a quarter
-cell (half that spacing) and the radius are subtracted. The kernel reads the 8 surrounding
-centres and samples a cell apart; both are lower bounds, and a test checks both against the
-exact distance to the body the field was built from.
 
 ## Before the next phase: `check_phase_end`
 
@@ -186,8 +176,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | a failing motion, and the same with a sample between every two | same failures; -81.242 and -81.243 mm |
 | reported against the truth (planners' kernel on a 20 kHz sampling) | never above, within 0.25 mm (78.35 reported, 78.60 true) |
 | good free motions (slots 1L, 2L, 3R) | pass |
-| footprint of slot 2R at park (2 cm cells) seen by slot 2L, 3 000 random configurations | both readings below the exact distance everywhere; within 10 cm, exact minus reading: checker 45 mm median, 65 mm at most; kernel 38 / 68 mm |
-| the motion that touches parked slot 2R, with 2R given only as its footprint | fails `clearance footprints` (-95 mm with the 40 mm walls: another test motion is found) |
+| good free motion of 2L with 2R parked / 2R standing at a configuration reaching into it / 2R standing at its own park | passes (156.3 mm) / fails `clearance parked arms` (-28.1 mm, `standing2R:link7.1`) / reads exactly as parked |
 | phase end: all arms at park | pass; tightest slot 2L, link 6 against the west seam bar, 128.6 mm (demanded 50) |
 | own-hanger exemption, slot 2R at park | without it the closest steel is link1.0, 61.9 mm from its own minus-x strut; with it link2.2, 201.4 mm from the plus-x strut |
 | phase end: pair clearance against the planners' kernel, 40 configurations | 1.3e-16 m |
@@ -214,11 +203,9 @@ native code), or a tighter bound on how far a capsule moves.
   passes 8.9 mm above the paper (the old gate measured joint centres, not capsule surfaces).
 - The hanger follows a calibrated base by shifting; a turn of the base is not applied to the
   (axis-aligned) boxes.
-- Parked arms are checked at their park configurations from rig.json only. Arms moving at the
+- Arms standing still are checked where they stand: parked ones at their park configurations
+  from rig.json, the others at the joints given in `standing`. Arms moving at the
   same time are kept apart by the walls; the checker does not compare two moving arms.
 - A class far above the tightest one is reported as "at least" that value.
-- A footprint is read 4 to 7 cm short near the body (2 cm cells), so a configuration that clears
-  the parked arm itself by a few centimetres can fail against its footprint, the end of a motion
-  included (the hold row). Finer cells would buy that back.
 - Drawing: "on the line" is judged against the planned tips as a polyline, locally (the planned
   points around the current sample), so a line that crosses itself is fine.

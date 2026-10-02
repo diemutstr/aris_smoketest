@@ -31,11 +31,6 @@ struct Scene {  // the packed obstacles
     const int64_t *og_start, *og_members;
     const double *og_a, *og_b, *og_r, *og_margin;
     const double* og_soa;    // (8, G): ax ay az, dx dy dz, dd, og_r + og_margin
-    // Distance fields (types.Field), global obstacle indices Mb + Mp + Mc + f; see field.hpp
-    int F = 0, NL = 0;
-    const double *fl_origin, *fl_cell, *fl_margin, *fl_tau, *fl_box, *fl_min;
-    const int64_t *fl_dims, *fl_off;
-    const float* fl_data;
 };
 
 // Fill the row-per-coordinate copies of a scene's boxes and capsules.

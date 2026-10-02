@@ -100,8 +100,8 @@ def digest(rig, phase: Phase, arm_id: Slot, gates: Gates, cfg: Settings, press: 
 
 def build(rig, phase: Phase, arm_id: Slot, gates: Gates, cfg: Settings, obstacles=None,
           press: float = 0.0) -> Map:
-    """The map of one arm in one phase, computed; against `obstacles` if given (a follower
-    with its leader's footprint), else the phase's (`rig.obstacles_for`).  The pen tip is put
+    """The map of one arm in one phase, computed; against `obstacles` if given, else the
+    phase's (`rig.obstacles_for`).  The pen tip is put
     on the drawing surface, `press` below the paper."""
     t0 = time.process_time()
     x, y = grid(rig, cfg.grid_step)

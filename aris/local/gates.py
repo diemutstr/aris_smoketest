@@ -30,7 +30,7 @@ class Judge:
         self.arm, self.gates = arm, gates
         self.paper: Plane = papers[0]
         self.normal = np.asarray(self.paper.normal, float) / np.linalg.norm(self.paper.normal)
-        # everything but the paper, every kind of obstacle (fields too: a neighbour's footprint)
+        # everything but the paper
         self.rest = C.pack(replace(obstacles, planes=tuple(p for p in obstacles.planes
                                                            if p.kind != "paper")))
         self.tables = C.arm_tables(arm)

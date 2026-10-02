@@ -9,7 +9,7 @@ File: `aris/arm_planner.py`.
 
 ## In and out
 
-`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None, verify=None, batch=32)`
+`plan(arm, lines, obstacles, q_start, rules, q_end=None, workers=1, cache_dir=None, *, stats=None, verify=None, batch=32, refill=128)`
 
 - **In:** the arm, the lines (pen-tip polylines in the arm's base frame, each with its pressure),
   the obstacles in the base frame (paper, steel, walls, parked arms), where the arm is, the
@@ -24,10 +24,9 @@ File: `aris/arm_planner.py`.
   before ended and ending where the arm can stand), which at the end returns every leftover: the
   local planner's (stretches it cannot draw: unreachable, blocked, too short) followed by the
   sequencer's (pieces it cannot fly to or time).
-- `plan_all(...)` collects both. `plan_detailed(...)` also returns `PlanStats`: lines, pieces
-  offered, the local planner's CPU and wall time, the time to the first motion and the total,
-  CPU and wall, and the sequencer's `TourReport` (see sequencer.md). CPU counts this process and
-  its finished worker processes.
+- A `PlanStats` passed as `stats` is filled as it goes: lines, pieces offered, batches, the time
+  to the first motion and the total, CPU and wall, and the sequencer's `TourReport` (see
+  sequencer.md). CPU counts this process and its finished worker processes.
 
 ## How it works: batches, nearest first
 
@@ -36,8 +35,8 @@ File: `aris/arm_planner.py`.
    processes at once, in that order, so the pool plans the nearest lines first and keeps
    planning the later batches in the background while the arm draws. A batch is handed to the
    sequencer when all its lines are planned. (With one worker, a batch is planned when the
-   sequencer asks for it.) `batch=None` plans every line before the tour starts, as before.
-2. The sequencer chooses among the pieces it has; whenever fewer than `batch` pieces are left,
+   sequencer asks for it.)
+2. The sequencer chooses among the pieces it has; whenever fewer than `refill` (128) pieces are left,
    it takes the next batch, waiting for it if it has not arrived.
 
 **Why the tour does not depend on timing.** When the sequencer takes the next batch depends only
@@ -47,7 +46,7 @@ busy machine (a test slows the batches down on purpose and gets the same motions
 
 A caller that runs each motion as it comes and a caller that collects everything first use the
 same code; the only difference is when the executor starts. Times reported by `plan` include
-whatever the caller does between two motions; `plan_detailed` measures planning alone.
+whatever the caller does between two motions.
 
 ## What it cannot do
 
@@ -57,7 +56,7 @@ whatever the caller does between two motions; `plan_detailed` measures planning 
 - It does not re-plan after a failure on the rig; the drawing server calls it again with the
   lines still to draw and where the arm is (DESIGN.md section 4).
 
-## Batches against all at once (2026-09-30, 8 workers, machine load 4 to 10)
+## Batches against all at once (2026-09-30, 8 workers, machine load 4 to 10; the all-at-once path was removed 2026-10-02)
 
 `tests/arm_cases.py --batches --big 1000`; "1 000 lines" are the first 1 000 lines of
 `tests/big_cases.big()` wholly within 0.80 m of the arm's axis. First motion: wall time from the

@@ -4,7 +4,7 @@ which walls; runs the arm planners and hands out their motions.
     plan(rig, lines, rules, arm_configs=None, cache_dir=None, workers=1)
         -> yields (phase name, arm id, Motion), returns list[Leftover]
 
-Step 1 of the design (docs/DESIGN.md section 3): leaders only, followers parked.
+The leaders of a phase draw, their row partners stand parked (docs/DESIGN.md section 3).
 
 1. The drawable maps of every (phase, arm) are read from `cache_dir` or built (maps.py).
 2. Before each phase, everything still to draw that has no arm yet is allocated over this phase
@@ -29,16 +29,14 @@ import numpy as np
 
 from aris.system import area
 from aris.system import maps as maps_mod
-from aris.system import followers
-from aris.system.allocate import allocate, take_whole
-from aris.system.phases import follower_phase, is_fill
+from aris.system.allocate import allocate
+from aris.system.phases import is_fill
 from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
 from aris.system.settings import Settings
 from aris.system.stretch import Stretch, of_line
-from aris.types import DrawRules, Leftover, Line, Motion, Phase, Piece, Refusal, Slot
+from aris.types import DrawRules, Leftover, Line, Motion, Piece, Refusal, Slot
 
-AT_PARK = 1e-6          # rad
 
 
 @dataclass
@@ -85,10 +83,6 @@ class Report:
     first_wall: float = -1.0    # s from the call to the first motion
     drawing_centre: np.ndarray | None = None         # (2,) m, its centre (table frame)
     drawing_area: np.ndarray | None = None           # (2,) m, rig.json's, checked against the maps
-    # Step 2: per (phase name, follower) its leader's footprint in its frame (the checker needs
-    # it: `check(..., fields=)`), and its drawable map against it
-    fields: dict = field(default_factory=dict)
-    follower_maps: dict = field(default_factory=dict)
     # the tightest checked clearance over every motion (m beyond the demanded one), and where
     tightest: float = float("inf")
     tightest_at: str = ""
@@ -116,13 +110,9 @@ def start_configs(rig, arm_configs, first_active) -> dict:
         if a not in q:
             raise ValueError(f"arm_configs names arm {a}, which is not on this rig")
         q[a] = np.asarray(qa, float).reshape(7)
-        if not at_park(rig, a, q[a]) and a not in first_active:
+        if not rig.at_park(a, q[a]) and a not in first_active:
             raise ValueError(f"arm {a} is not at its park and does not move in the first phase")
     return q
-
-
-def at_park(rig, arm_id, q) -> bool:
-    return float(np.max(np.abs(np.asarray(q) - rig.park_q(arm_id)))) <= AT_PARK
 
 
 def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir=None,
@@ -135,9 +125,8 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
     stands (default: its park).  `cache_dir`: where the drawable maps and the local planner's
     kinematic table are kept.  `workers`: processes (map building, arms of a phase).
-    `verify(arm_id, phase, fields, motion, q_before) -> dict`: the independent checker,
-    picklable; each arm planner gets it with the first three bound (the Phase and footprints
-    that arm's motions are checked in, `check_view`) and hands on only motions that passed.
+    `verify(slot, phase, motion, q_before) -> dict`: the independent checker, picklable; each
+    arm planner gets it with its slot and phase bound and hands on only motions that passed.
     None: nothing is checked here."""
     cfg = settings or Settings()
     rules = rig.rules() if rules is None else rules
@@ -183,11 +172,11 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
         rep.cuts += cuts
         mine = {a: [s for s in pool if s.target == (k, a)] for a in ph.active}
         pool = [s for s in pool if s.target[0] != k]
-        todo = [a for a in ph.active if mine[a] or not at_park(rig, a, q_now[a])]
-        if not todo and is_fill(ph):
+        todo = [a for a in ph.active if mine[a] or not rig.at_park(a, q_now[a])]
+        if not todo:
             rep.skipped.append((ph.name, "nothing allocated to it"))
             continue
-        pool, final = yield from _phase(rig, phases, maps, k, todo, mine, pool, q_now, rules,
+        pool, final = yield from _phase(rig, phases, k, todo, mine, pool, q_now, rules,
                                         cfg, cache_dir, workers, rep, w0, verify)
         left += final
         for a in todo:
@@ -197,22 +186,17 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     return left + new_left
 
 
-def _phase(rig, phases, maps, k, todo, mine, pool, q_now, rules, cfg, cache_dir, workers, rep,
+def _phase(rig, phases, k, todo, mine, pool, q_now, rules, cfg, cache_dir, workers, rep,
            w0, verify):
-    """Runs phase k: its arms, then (in a leader phase) the followers against their leaders'
-    footprints.  Yields the tagged motions; returns (the pool for the phases after, leftovers)."""
+    """Runs phase k.  Yields the tagged motions; returns (the pool for the phases after,
+    leftovers)."""
     ph = phases[k]
     pr = PhaseReport(ph.name, ph.active)
     rep.phases.append(pr)
     t0 = time.perf_counter()
-    jobs = {a: (rig.obstacles_for(a, ph), mine[a], q_now[a], ph, ()) for a in todo}
-    back, final, trajs = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0,
-                                         verify)
-    if cfg.followers and not is_fill(ph):
-        back, pool, more = yield from _followers(rig, phases, maps, k, back, pool, trajs, rules,
-                                                 cfg, cache_dir, workers, rep, pr, t0, w0,
-                                                 verify)
-        final += more
+    jobs = {a: (rig.obstacles_for(a, ph), mine[a], q_now[a]) for a in todo}
+    back, final = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0,
+                                  verify)
     pr.wall = time.perf_counter() - t0
     for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
         pr.idle[a] = pr.arms.pop(a)
@@ -225,34 +209,6 @@ def _phase(rig, phases, maps, k, todo, mine, pool, q_now, rules, cfg, cache_dir,
     return pool + back, final
 
 
-def _followers(rig, phases, maps, k, back, pool, trajs, rules, cfg, cache_dir, workers, rep, pr,
-               t0, w0, verify):
-    """Step 2.  The leaders' footprints go to their row partners; each follower takes, whole,
-    what its map then holds among what the leaders handed back and what waits for a fill phase
-    (allocate.take_whole), and plans it from its park back to its park.  Yields its motions;
-    returns (handed back, the pool without what was taken, leftovers)."""
-    ph = phases[k]
-    fill_bound = [s.target is not None and is_fill(phases[s.target[0]]) for s in pool]
-    waiting = [s for s, w in zip(pool, fill_bound) if w]
-    kept = [s for s, w in zip(pool, fill_bound) if not w]
-    # The footprint only takes space away: nothing a follower's map without its leader (its fill
-    # phase's, cached) cannot hold whole is worth building footprints for.
-    alone = [(k, f, maps[(p.name, f)]) for _, f in followers.pairs(rig, ph)
-             for p in phases if is_fill(p) and f in p.active]
-    if not take_whole(back + waiting, alone, cfg)[0]:
-        return back, pool, []
-    setups = followers.setup_all(rig, ph, trajs, rules.gates, cfg, workers, rules.press)
-    for f, (fld, _, m) in setups.items():
-        rep.fields[(ph.name, f)], rep.follower_maps[(ph.name, f)] = fld, m
-    taken, rest = take_whole(back + waiting, [(k, f, m) for f, (_, _, m) in setups.items()], cfg)
-    jobs = {f: (obs, [s for s in taken if s.target[1] == f], rig.park_q(f),
-                *check_view(rig, ph, f, rep))
-            for f, (_, obs, _) in setups.items() if any(s.target[1] == f for s in taken)}
-    back2, final, _ = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0,
-                                      verify)
-    return back2, kept + rest, final
-
-
 def on_surface(line: Line, z: float) -> Line:
     """The line with every point at height z (the drawing surface); x and y as drawn."""
     p = np.array(line.points, float).reshape(-1, 3)
@@ -260,35 +216,24 @@ def on_surface(line: Line, z: float) -> Line:
     return replace(line, points=p)
 
 
-def check_view(rig, phase: Phase, arm_id: Slot, report) -> tuple[Phase, tuple]:
-    """The Phase and footprints (`Field`s) an arm's motions in `phase` are checked in: its own
-    phase for a leader or a fill arm; for a follower of a leader phase, the phase as it sees it
-    (its leader's walls, nothing parked) with its leader's footprint from `report.fields`."""
-    if arm_id in phase.active:
-        return phase, ()
-    fld = report.fields.get((phase.name, arm_id)) if report is not None else None
-    return follower_phase(rig, phase, arm_id), (() if fld is None else (fld,))
-
-
 def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify):
-    """The arm planners of `jobs` {arm: (obstacles, stretches, q_start, check phase, check
-    fields)}, in parallel, each back to its park, each with `verify` bound to its arm, phase and
-    fields.  Yields the tagged motions; returns (handed back, leftovers, {arm: [traj]})."""
+    """The arm planners of `jobs` {slot: (obstacles, stretches, q_start)}, in parallel, each
+    back to its park, each with `verify` bound to its slot and the phase.  Yields the tagged
+    motions; returns (handed back, leftovers)."""
     subs, arm_jobs = {}, []
-    for a, (obs, sts, q0, cph, cfields) in jobs.items():
+    for a, (obs, sts, q0) in jobs.items():
         pr.arms[a] = ArmReport(a, len(sts), float(sum(s.length for s in sts)))
         base = []
         for i, st in enumerate(sts):
             subs[(a, f"{st.line_id}#{i}")] = st
             base.append(rig.to_base(a, st.as_line(f"{st.line_id}#{i}")))
-        bound = None if verify is None else partial(verify, a, cph, cfields)
+        bound = None if verify is None else partial(verify, a, ph)
         arm_jobs.append(ArmJob(a, tuple(base), obs, q0, rig.park_q(a), bound))
-    back, final, trajs = [], [], {}
+    back, final = [], []
     for a, kind, payload in run_phase(rig, arm_jobs, rules, cache_dir, workers):
         ar = pr.arms[a]
         if kind == "motion":
             m = _retag(payload, subs, a)
-            trajs.setdefault(a, []).append(m.traj)
             ar.motions += 1
             ar.motion_time += float(m.traj.t[-1] - m.traj.t[0])
             if m.kind == "draw":
@@ -318,7 +263,7 @@ def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify
                 final.append(Leftover(part.piece, x.reason, detail))
             else:
                 back.append(replace(part, reason=x.reason, detail=detail))
-    return back, final, trajs
+    return back, final
 
 
 def _retag(m: Motion, subs: dict, arm_id: Slot) -> Motion:

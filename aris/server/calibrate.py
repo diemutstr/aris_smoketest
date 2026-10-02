@@ -1,7 +1,7 @@
 """The calibrate job, step 1 (DESIGN.md section 6): the paper under one arm, touched with its
 own pen on a grid, and the plane through the touches written as the arm's calibration file.
 
-Planning, for one arm standing at its park with every other arm parked:
+Planning, for one arm, from where every arm stands:
 1. Grid points inside the rig's drawing area and within `radius` of the arm's axis.
 2. One hand spin for every point, pen upright: the 24 spins 15 degrees apart are tried in
    order; the first under which every point the arm can reach at all is reachable is taken.
@@ -32,7 +32,7 @@ from aris.free import plan as free_plan
 from aris.kernel.retime import retime_detailed
 from aris.sequencer.guard import Guard
 from aris.sequencer.lift import reverse, rise_path
-from aris.server.steps import Scene, Step, at_park, lift_pens, pen_down
+from aris.server.steps import Scene, Step, lift_pens, pen_down
 from aris.types import JointPath, Motion, Phase, Refusal, Trajectory
 
 SPINS = np.arange(24) * np.deg2rad(15.0)
@@ -54,6 +54,7 @@ class CalibSettings:
 
 @dataclass(frozen=True)
 class Plan:
+    """The calibrate job's steps for one arm (or why there are none)."""
     arm: str
     phase: Phase
     steps: list                 # park.Step, one per motion, in order (all of this arm)
@@ -61,6 +62,11 @@ class Plan:
     dropped: list               # (x, y) of points no spin reaches
     spin: float | None
     why: str = ""               # why there is no plan
+
+    def failed(self) -> dict:
+        """What a failed job's report says about the plan."""
+        return dict(points=len(self.points_table), dropped=self.dropped,
+                    spin_deg=None if self.spin is None else float(np.rad2deg(self.spin)))
 
 
 def grid_points(rig, arm_id: str, area, cfg: CalibSettings, centre=(0.0, 0.0)) -> np.ndarray:
@@ -136,10 +142,10 @@ def touch_motion(arm, guard, path_up, rules, cfg) -> Motion | str:
     return Motion("touch", traj, tip_base=arm.tip(traj.q), extra_depth=cfg.extra_depth)
 
 
-def check_touch(config_dir, a, m: Motion, phase, q_before, fields=()):
+def check_touch(config_dir, a, m: Motion, phase, q_before, standing=None):
     """The checker on a touch (it splits the touch at its bottom itself: the descent to the
     real paper, the climb).  -> (passed, the numbers the motion carries, the verdict)."""
-    v = check(config_dir, a, m, phase, q_before, fields=fields)
+    v = check(config_dir, a, m, phase, q_before, standing=standing)
     return bool(v.passed), verdict_numbers(v), v
 
 
@@ -153,12 +159,12 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
     now = {b: np.asarray(q, float) for b, q in where.items()}
     scene = Scene(rig)
     steps, q = [], now[a]
-    obs, fields, phase = scene.of(a, now, (a,), (), f"{name} {a}")
-    if not at_park(rig, a, q) and pen_down(rig, a, q):      # as the park job: lift it first
+    obs, standing, phase = scene.of(a, now, (a,), (), f"{name} {a}")
+    if not rig.at_park(a, q) and pen_down(rig, a, q):      # as the park job: lift it first
         up = lift_pens(st, scene, now, [a])[0]
         if up.why:
             return Plan(a, phase, [], np.zeros((0, 2)), [], None, up.why)
-        steps.append(Step(a, phase, up.motions, up.verdicts, fields))
+        steps.append(Step(a, phase, up.motions, up.verdicts, standing))
         q = up.motions[-1].q_end
     arm, gates = rig.arm(a), rules.gates
     guard = Guard(arm, obs, gates)
@@ -174,13 +180,13 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
         if isinstance(go, Refusal) or isinstance(touch, str):
             dropped.append(k)
             continue
-        v = check(st.config_dir, a, go, phase, q, fields=fields)
-        ok, numbers, _ = check_touch(st.config_dir, a, touch, phase, go.q_end, fields)
+        v = check(st.config_dir, a, go, phase, q, standing=standing)
+        ok, numbers, _ = check_touch(st.config_dir, a, touch, phase, go.q_end, standing)
         if not v.passed or not ok:
             dropped.append(k)
             continue
-        steps += [Step(a, phase, (go,), (v,), fields),
-                  Step(a, phase, (replace(touch, checked=numbers),), (None,), fields)]
+        steps += [Step(a, phase, (go,), (v,), standing),
+                  Step(a, phase, (replace(touch, checked=numbers),), (None,), standing)]
         q, kept = touch.q_end, kept + [k]
     out = lambda why, st_=(): Plan(a, phase, list(st_), pts[kept],
                                    [tuple(map(float, pts[k])) for k in dropped], spin, why)
@@ -189,10 +195,10 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
     home = free_plan(arm, q, rig.park_q(a), obs, rules, seed_extra=b"calibrate home")
     if isinstance(home, Refusal):
         return out(f"no way back to the park: {home.reason}: {home.detail}")
-    v = check(st.config_dir, a, home, phase, q, fields=fields)
+    v = check(st.config_dir, a, home, phase, q, standing=standing)
     if not v.passed:
         return out("the way back to the park fails the checker: " + ", ".join(v.failed))
-    steps.append(Step(a, phase, (home,), (v,), fields))
+    steps.append(Step(a, phase, (home,), (v,), standing))
     if len(kept) < min_points:
         return out(f"only {len(kept)} points can be touched (at least {min_points})")
     return out("", steps)
@@ -204,78 +210,24 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
 def submit_calibrate(st, store, arm: str, kind: str = "calibrate"):
     """Admit a calibrate job (`kind` "calibrate") or a touch-off ("touchoff") for `arm` and
     start it (refused like park: another job runs, or with the robot, no position reported)."""
-    import threading
-    from aris.execute import Job
-    from aris.server import runner
+    from aris.server import runner, touchoff
+    from aris.server.steps import steps_work
     from aris.types import Refusal as _Refusal
     if arm not in st.rig.arm_ids:
         return _Refusal("no_arm", f"arm {arm} is not mounted on this rig ({st.rig.arm_ids})")
-    if st.remote:
-        where = runner.reported_where(st, need_all=True)
-        if isinstance(where, _Refusal):
-            return where
-    rec = store.admit(kind, f"{kind} {arm}")
-    if isinstance(rec, _Refusal):
-        return rec
-    job = Job.create(rec.dir, runner.job_header(st, rec, dict(arm=arm)))
-    rec.set_state("received", received=rec.t_received, arm=arm)
-    rec.thread = threading.Thread(target=_run, args=(st, rec, job, arm, kind), daemon=True,
-                                  name=f"job {rec.id}")
-    rec.thread.start()
-    runner.announce(st, rec)
-    return rec
+    cfg = st.calib_settings or CalibSettings()
+    if kind == "touchoff":
+        work = steps_work(lambda st_, where: touchoff.plan(st_, arm, where, cfg),
+                          touchoff.job_report)
+    else:
+        work = steps_work(lambda st_, where: plan_calibrate(st_, arm, where, cfg), _job_report)
+    return runner.start(st, store, kind, f"{kind} {arm}", work, lambda rec: dict(arm=arm),
+                        need_positions=True)
 
 
-def _run(st, rec, job, arm: str, kind: str = "calibrate") -> None:
-    import time
-    import traceback
-    from aris.server import runner
-    from aris.server.steps import queue_steps, run_queued
-    from aris.types import Refusal as _Refusal
-    try:
-        where = runner.reported_where(st, need_all=True) if st.remote \
-            else runner.prepare_arms(st)
-        if isinstance(where, _Refusal):
-            return _fail(st, rec, job, where.detail, None, kind)
-        rec.set_state("planning")
-        t0 = time.perf_counter()
-        cfg = st.calib_settings or CalibSettings()
-        if kind == "touchoff":
-            from aris.server import touchoff
-            plan, ref, source = touchoff.plan(st, arm, where, cfg)
-        else:
-            plan = plan_calibrate(st, arm, where, cfg)
-        planning_s = time.perf_counter() - t0
-        if plan.why:
-            return _fail(st, rec, job, plan.why, plan, kind)
-        moving = queue_steps(job, rec, plan.steps, f"{kind} planned")
-        rec.set_state("moving")
-        run = run_queued(st, rec, job, moving, where)
-        if kind == "touchoff":
-            state, why, result, written = touchoff.solve(st, rec, plan, run, ref, source)
-            rep = touchoff.report(st, rec, plan, run, result, written, planning_s, state, why,
-                                  ref, source)
-        else:
-            state, why, result, written = _solve(st, rec, plan, run)
-            rep = _report(st, rec, plan, run, result, written, planning_s, state, why)
-        runner.finish_job(rec, job.dir, rep, state, why)
-    except Exception as e:
-        if rec.coordinator is not None:
-            rec.coordinator.stop()
-        rec.log.write("error", why=traceback.format_exc())
-        _fail(st, rec, job, f"internal error: {e!r}", None, kind)
-
-
-def _fail(st, rec, job, why, plan=None, kind: str = "calibrate") -> None:
-    from aris.server import runner
-    phases = job.dir / "phases.jsonl"
-    if not phases.exists() or '"end"' not in phases.read_text():
-        job.end_phases("failed")
-    rep = dict(state="failed", why=why, kind=kind, assumptions=st.assumptions())
-    if plan is not None:
-        rep.update(points=len(plan.points_table), dropped=plan.dropped, spin_deg=None
-                   if plan.spin is None else float(np.rad2deg(plan.spin)))
-    runner.finish_job(rec, job.dir, rep, "failed", why)
+def _job_report(st, rec, plan, run, planning_s):
+    state, why, result, written = _solve(st, rec, plan, run)
+    return _report(st, rec, plan, run, result, written, planning_s, state, why), state, why
 
 
 def touch_points(plan: Plan) -> dict:

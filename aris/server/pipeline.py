@@ -8,29 +8,21 @@ it came (the queue refuses anything unchecked; that would be a bug, and ends the
 
 The planner runs in its own thread.  A phase is written to the job's phase list when its first
 motion arrives, and its queues are closed when the next phase begins or the planner is done,
-so the arms can start while the planner still works.  The phase the arms run in lists every
-arm that may move in it (`aris.system.execution_phase`: in a leader phase, the followers too;
-a follower with nothing to do gets an empty queue and holds).  A follower is checked in its
-own view of the phase with its leader's footprint (`aris.system.check_view`); that view is
-saved next to its queue (`<queue>.check.npz`) so `aris check` can check the queue again.
+so the arms can start while the planner still works.
 """
 from __future__ import annotations
 
-import io
-import json
 import queue as queue_mod
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
-
 from aris.server.verify import CheckVerify
 from aris.system import Report as SystemReport
-from aris.system import check_view, execution_phase, phase_named
+from aris.system import phase_named
 from aris.system import plan as system_plan
-from aris.types import Field, Phase, Refusal, Wall
+from aris.types import Phase, Refusal
 
 
 @dataclass
@@ -42,47 +34,6 @@ class Outcome:
     stopped: bool = False
     planning_s: float = 0.0                          # wall, until the planner was done
     motions: int = 0                                 # handed over by the planner
-
-
-# --------------------------------------------------------------------------- phases
-
-
-def phase_json(p: Phase) -> dict:
-    return dict(name=p.name, active=list(p.active), parked=list(p.parked),
-                walls=[dict(name=w.name, arms=list(w.arms), point=w.point_table.tolist(),
-                            normal=w.normal_table.tolist()) for w in p.walls])
-
-
-def phase_from(d: dict) -> Phase:
-    return Phase(d["name"], tuple(d["active"]), tuple(d["parked"]),
-                 tuple(Wall(w["name"], tuple(w["arms"]), np.array(w["point"]),
-                            np.array(w["normal"])) for w in d["walls"]))
-
-
-def save_context(path, phase: Phase, fields) -> None:
-    arrays = {}
-    meta = dict(phase=phase_json(phase), fields=[])
-    for k, f in enumerate(fields):
-        meta["fields"].append(dict(name=f.name, cell=f.cell, margin=f.margin))
-        arrays[f"origin{k}"], arrays[f"dist{k}"] = f.origin_base, f.dist
-    buf = io.BytesIO()
-    np.savez(buf, meta=np.array(json.dumps(meta)), **arrays)
-    Path(path).write_bytes(buf.getvalue())
-
-
-def load_context(path) -> tuple[Phase, tuple]:
-    with np.load(path, allow_pickle=False) as z:
-        meta = json.loads(str(z["meta"]))
-        fields = tuple(Field(f["name"], z[f"origin{k}"], f["cell"], z[f"dist{k}"], f["margin"])
-                       for k, f in enumerate(meta["fields"]))
-    return phase_from(meta["phase"]), fields
-
-
-def context_path(queue) -> Path:
-    return queue.path.with_suffix(".check.npz")
-
-
-# --------------------------------------------------------------------------- checking
 
 
 # --------------------------------------------------------------------------- the stream
@@ -129,7 +80,7 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
     pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box, verify),
                             daemon=True, name=f"planner {rec.id}")
     pump.start()
-    phase, named, saved, queues = None, None, set(), {}
+    phase, queues = None, {}
     try:
         while True:
             if rec.stop.is_set():
@@ -152,13 +103,9 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
             out.motions += 1
             if phase is None or name != phase.name:
                 _close(job, queues, phase)
-                named = phase_named(st.rig, name)
-                phase = execution_phase(st.rig, named)
+                phase = phase_named(st.rig, name)
                 job.add_phase(phase)
             q = queues.get((name, arm)) or queues.setdefault((name, arm), job.queue(name, arm))
-            if (name, arm) not in saved and arm not in named.active:
-                save_context(context_path(q), *check_view(st.rig, named, arm, rep))
-                saved.add((name, arm))
             res = q.append(motion)
             if isinstance(res, Refusal):
                 out.error = f"{name}, arm {arm}: the queue refused a motion ({res.reason}: " \
