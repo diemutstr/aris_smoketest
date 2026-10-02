@@ -18,32 +18,32 @@ def rig():
 
 
 def test_park_only_from_close_by(rig):
-    p = rig.park_q(31)
+    p = rig.park_q("2L")
     near = p + np.array([0.03, -0.02, 0, 0, 0.01, 0, 0])
-    traj = tools.park_move(rig, 31, near)
+    traj = tools.park_move(rig, "2L", near)
     assert np.array_equal(traj.q[0], near) and np.allclose(traj.q[-1], p, atol=1e-12)
-    assert check(traj, rig.arm(31).limits).inside
-    far = tools.park_move(rig, 31, p + 0.2)
+    assert check(traj, rig.arm("2L").limits).inside
+    far = tools.park_move(rig, "2L", p + 0.2)
     assert isinstance(far, Refusal) and far.reason == "too_far" and "park job" in far.detail
-    assert tools.park_move(rig, 31, p).reason == "at_park"
+    assert tools.park_move(rig, "2L", p).reason == "at_park"
 
 
 def test_jog_is_small_and_inside_the_limits(rig):
-    p = rig.park_q(31)
-    q = tools.jog_target(rig, 31, p, 7, 0.05)
+    p = rig.park_q("2L")
+    q = tools.jog_target(rig, "2L", p, 7, 0.05)
     assert np.allclose(q - p, [0, 0, 0, 0, 0, 0, 0.05])
-    assert tools.jog_target(rig, 31, p, 7, 0.2).reason == "too_far"
-    assert tools.jog_target(rig, 31, p, 0, 0.05).reason == "bad_joint"
+    assert tools.jog_target(rig, "2L", p, 7, 0.2).reason == "too_far"
+    assert tools.jog_target(rig, "2L", p, 0, 0.05).reason == "bad_joint"
     edge = p.copy()
-    edge[6] = rig.arm(31).limits.q_max[6] - 0.06
-    assert tools.jog_target(rig, 31, edge, 7, 0.05).reason == "limit"
+    edge[6] = rig.arm("2L").limits.q_max[6] - 0.06
+    assert tools.jog_target(rig, "2L", edge, 7, 0.05).reason == "limit"
 
 
 def test_the_hand_touch_goes_straight_down_and_back(rig):
     from aris_robot.touch import Kinematics, manual_touch
     from sim_touch import hover_q
-    kin = Kinematics.of(rig, 31)
-    q0 = hover_q(rig, 31, height=0.04)
+    kin = Kinematics.of(rig, "2L")
+    q0 = hover_q(rig, "2L", height=0.04)
     m = manual_touch(kin, q0, 0.03, 0.01)
     tips = kin.tip(m.traj.q)
     depth = (tips - tips[0]) @ kin.down

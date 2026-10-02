@@ -21,7 +21,7 @@ from aris.execute import Job
 from aris.execute.queue import Queue
 
 
-def _slug_path(job: Job, phase: str, arm: int) -> Path:
+def _slug_path(job: Job, phase: str, arm: str) -> Path:
     return job.queue(phase, arm).path
 
 
@@ -75,7 +75,7 @@ def create_app(jobs_dir, max_bytes=None) -> FastAPI:
                                  media_type="application/x-ndjson")
 
     @app.get("/jobs/{jid}/queues/{phase}/{arm}")
-    def queue(jid: str, phase: str, arm: int, offset: int = 0):
+    def queue(jid: str, phase: str, arm: str, offset: int = 0):
         path = _slug_path(job(jid), phase, arm)
         if not path.exists():
             raise HTTPException(404, "not written yet")
@@ -119,7 +119,7 @@ def create_app(jobs_dir, max_bytes=None) -> FastAPI:
         return dict(arms=sorted(app.state.calibration))
 
     @app.get("/calibration/{arm}")
-    def calibration(arm: int):
+    def calibration(arm: str):
         if arm not in app.state.calibration:
             raise HTTPException(404, f"no calibration for arm {arm}")
         return app.state.calibration[arm]

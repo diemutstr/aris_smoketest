@@ -8,7 +8,7 @@ steps.
 
 ```
 robot/
-  site.json                    addresses, domains, which arms are mounted, the server, each arm's
+  site.json                    this PC: the server, which slots are mounted, each slot's
                                force sign, the tare and contact thresholds, the touch
   aris_robot/                  the Python package (the command `aris-robot`)
   ros2_ws/src/aris_msgs        the reference and status messages
@@ -89,46 +89,76 @@ python -c "import rclpy, aris_msgs.msg, aris, aris_robot; print('ok')"
 python -m pytest robot/tests -q -m "not slow"      # needs: pip install pytest fastapi uvicorn httpx
 ```
 
-## 4. The site file
+## 4. Slots, the site table and the site file
 
-Edit `robot/site.json`: the server's address (`server_url`, the planning PC, port 8420), and
-per arm its control-box IP, its DDS domain (the arm id), and `mounted`: true only for the arms
-bolted in their places and switched on. The IPs in the file are from the 2026-09-09 briefing;
-arm 71 had no IP on 2026-09-15. Nothing else about this site is typed anywhere else.
+Arms are named by their slot on the frame: `1L 1R 2L 2R 3L 3R` (row 1 at the −y end, L at −x;
+DESIGN 4c). Every command, row and file here uses the slot (`aris-robot jog 2R ...`, rows with
+`"arm": "2R"`, namespace `arm_2R`). The old robot ids (13, 17, 31, 71, 2, 97) live on only in
+the site table.
 
-The file also holds what is a fact of this site or arm about force: each arm's `force_sign`,
-the tare limits and contact thresholds (`force`), and the touch settings (`touch`). How hard
-the pen presses (the force band, levels, cap, ramps, the servo) is a fact of pen and paper. It
-lives in `config/rig.json` (`pen`) on the planning PC, comes with every job, and the runner
-applies the job's values. A job without them (an older one) runs with this PC's rig file.
+- **The site table**, `site/aris_2026-10.json` at the repository root, says which robot hangs
+  in which slot today: per slot the robot (`fr3-71`), its control-box IP, its DDS domain and,
+  once known, its serial. Edit it when a robot is moved. The DDS domain must be an integer,
+  so it is not derived from the slot; it is taken from this table. Today it is the old robot
+  id, as the live stacks use it.
+- **`robot/site.json`** is about this PC. It holds the server's address (`server_url`, the
+  planning PC, port 8420) and the site table it uses (`site_table`). Per slot it holds
+  `mounted` (true only for a slot whose arm hangs there and answers) and `force_sign`. It also
+  holds the tare and contact thresholds (`force`), the touch (`touch`), and the collision
+  thresholds for position tracking (`collision`). One source for each fact: nothing in the
+  site table is repeated here.
+
+How hard the pen presses (the force band, levels, cap, ramps, the servo, the press depth) is
+a fact of pen and paper. It lives in `config/rig.json` (`pens`) on the planning PC, comes
+with every job, and the runner applies the job's values. A job without them (an older one)
+runs with this PC's rig file.
+
+**Which robot is it?** `aris-robot identify` and serve's first row report, per slot, the
+robot the table names and what answers at its address (the robot mode, the address the stack
+was launched with, which park it stands nearest). A job for a slot whose robot is not the one
+the table names is refused. The check needs a serial, and FCI and ROS report none. Until a
+serial can be read, every slot is reported as "unverified". Identify by the address and by
+which park the arm stands at.
+
+**Tracking.** The job header says how the arms follow (DESIGN 4c):
+- `position` (mode A, the default): every motion, the drawing ones included, flies through
+  the stock trajectory controller exactly as planned. The press is geometric: the plan runs
+  the pen's `press_m` (3.5 mm for 4H graphite) below the paper. For the job the collision
+  thresholds are raised to site.json `collision.job` (40 N, as the old stack did before every
+  pass), with a service call at job start; after the job they go back to `collision.normal`.
+- `impedance` (mode B): lower, draw and lift under `aris_joint_impedance_controller` with the
+  pen force (DESIGN 4b). It is chosen on the planning PC (`--tracking impedance` when the job
+  is submitted); nothing changes here.
+
+The calibration touch is under position control in both modes.
 
 ## 5. Launch files
 
 ```
-aris-robot bringup                 # writes robot/generated/arm_<id>.json and _controllers.yaml
+aris-robot bringup                 # writes robot/generated/arm_<slot>.json and _controllers.yaml
 aris-robot --fake bringup          # the same, for fake hardware
 ```
 
-It prints one `ros2 launch` line per arm. Each arm runs in its own terminal, in namespace
-`arm_<id>` on DDS domain `<id>`:
+It prints one `ros2 launch` line per slot. Each runs in its own terminal, in namespace
+`arm_<slot>` on the slot's DDS domain from the site table:
 
 ```
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_31.json
+ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
 ```
 
 The launch refuses an arm that is not mounted (unless the files are for fake hardware). To look
-at one arm with the ROS tools, set its domain: `ROS_DOMAIN_ID=31 ros2 control list_controllers
--c /arm_31/controller_manager` should show `fr3_arm_controller` and the broadcasters active and
+at one arm with the ROS tools, set its domain: `ROS_DOMAIN_ID=71 ros2 control list_controllers
+-c /arm_2R/controller_manager` should show `fr3_arm_controller` and the broadcasters active and
 `aris_joint_impedance_controller` inactive.
 
 ## 6. First run: fake hardware, one arm
 
 ```
 aris-robot --fake bringup
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_31.json
+ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
 aris-robot --fake identify
-aris-robot --fake switch 31 impedance && aris-robot --fake switch 31 trajectory
-aris-robot --fake jog 31 --joint 7 --delta 0.05
+aris-robot --fake switch 2R impedance && aris-robot --fake switch 2R trajectory
+aris-robot --fake jog 2R --joint 7 --delta 0.05
 ```
 
 Not checked here: that franka_description's fake hardware offers a position command interface
@@ -151,10 +181,10 @@ is kept under `out/robot_jobs/<id>/`. A job runs once; a second run of the same 
 
 ```
 aris-robot bringup
-ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_31.json
+ros2 launch aris_bringup arm.launch.py args:=$HOME/aris3/robot/generated/arm_2R.json
 aris-robot identify                 # address, domain, mode, which park the arm stands nearest
-aris-robot jog 31 --joint 7 --delta 0.05
-aris-robot park 31                  # only from within 0.05 rad of the park, straight
+aris-robot jog 2R --joint 7 --delta 0.05
+aris-robot park 2R                  # only from within 0.05 rad of the park, straight
 ```
 
 A park from further away is a planned job, planned from where the arms really stand. The
@@ -175,7 +205,7 @@ the true positions, so run `aris park` again and then the new job.
 The first contact with paper is the touch, with the pen a few centimetres above the paper:
 
 ```
-aris-robot touch 31 --depth 0.04 --extra 0.01
+aris-robot touch 2R --depth 0.04 --extra 0.01
 ```
 
 It goes straight down at 5 mm/s under position control (the trajectory controller), and on
@@ -187,7 +217,7 @@ the sign of the force (site.json, the arm's `force_sign`) here: the reading must
 the paper. Then the first job, in the air first (a drawing planned 30 mm above the paper), then on
 paper.
 
-If an arm faults or was stopped: look at it, clear the cause, then `aris-robot recover 31`
+If an arm faults or was stopped: look at it, clear the cause, then `aris-robot recover 2R`
 (franka error recovery, then the trajectory controller takes the arm again). The runner never
 does this by itself: a failed arm holds, and the next job refuses an arm that is not able to
 move. Never recover an arm in user stop (mode "user stopped") or guiding.
@@ -211,7 +241,7 @@ boot.
 
 What it does, on its own:
 - writes the launch files and starts one ROS stack per mounted arm (site.json), each in its own
-  process group, with its output in `out/operator/stack_arm<id>.log`. A stack that dies is
+  process group, with its output in `out/operator/stack_arm<slot>.log`. A stack that dies is
   started again after 1 s, then 2, 4, ... up to a minute, and every death is reported.
 - asks the drawing server for work (`GET /operator/next`, waiting 30 s at a time), so this PC
   opens no port. "run" runs a job exactly as `aris-robot run --job` does (a drawing, a park or

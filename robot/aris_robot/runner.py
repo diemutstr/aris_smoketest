@@ -20,6 +20,13 @@ cannot move an arm: the executor refuses a motion that does not start within the
 tolerance (0.005 rad per joint) of the arm's joints, writes a "failed" row saying by how much,
 and the arm holds.
 
+The header's `tracking` says how the arms follow (DESIGN 4c): "position" (mode A, the default:
+every motion through the trajectory controller, the press geometric, the collision thresholds
+raised for the job and restored after) or "impedance" (mode B: lower, draw and lift under the
+impedance controller with the pen force).  The "runner started" row says which, with the pen
+(its `press_m` is for the record: the plan already runs that far below the paper) and, per
+slot, the robot the site table names and whether it was verified.
+
 How hard the pen presses (band, levels, cap, ramps, servo) is the job header's `pen` block,
 copied by the server from its rig.json, so both machines use the same numbers; a header
 without it (an older job) runs with this PC's rig file.  The "runner started" row says which.
@@ -62,7 +69,9 @@ class KindRouter:
 
     def _lookup(self, traj):
         with self._lock:
-            for p in self.dir.glob(f"*__arm{self.arm_id}.queue"):
+            # the arm's queue files, named as aris.execute.Job names them
+            suffix = Job(self.dir).queue("x", self.arm_id).path.name[1:]
+            for p in self.dir.glob(f"*{suffix}"):
                 cur = self._cursors.setdefault(p, Cursor(p))
                 for item in cur.poll():
                     if not isinstance(item, End):
@@ -162,10 +171,45 @@ class Mirror:
         self.stop.set()
 
 
+TRACKING = ("position", "impedance")
+
+
+def _job_settings(header: dict, rig, drivers: dict, robots: dict | None):
+    """The job's pen rules and tracking mode, given to every driver; or a Refusal.  `robots`:
+    slot -> {"robot", "identity"} (site.identity); a slot whose robot is not the one the site
+    table names is refused."""
+    tracking = header.get("tracking", "position")
+    if tracking not in TRACKING:
+        return Refusal("bad_header", f"tracking {tracking!r}: position or impedance")
+    bad = {a: r["identity"] for a, r in (robots or {}).items()
+           if a in drivers and str(r.get("identity", "")).startswith("mismatch")}
+    if bad:
+        return Refusal("wrong_robot", "; ".join(f"slot {a}: {w}" for a, w in bad.items()))
+    pen, pen_from = (header["pen"], "job header") if header.get("pen") else (rig.pen(), "rig file")
+    for drv in drivers.values():
+        if hasattr(drv, "set_job"):
+            drv.set_job(pen, tracking)
+        elif hasattr(drv, "set_pen"):
+            drv.set_pen(pen)
+    return dict(pen=pen, pen_from=pen_from, tracking=tracking, robots=robots or {})
+
+
+def _collision(drivers: dict, which: str) -> str:
+    """The site's collision thresholds `which` on every driver that has them; why not, or ""."""
+    whys = []
+    for a, drv in drivers.items():
+        if hasattr(drv, "set_collision"):
+            why = drv.set_collision(which)
+            if why:
+                whys.append(f"slot {a}: {why}")
+    return "; ".join(whys)
+
+
 def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dict,
-            poll: float = 0.01):
-    """Runs the job to its end on `drivers` (arm id -> Driver, the mounted arms).  Returns the
-    coordinator's JobRun, or a Refusal when it cannot start."""
+            poll: float = 0.01, robots: dict | None = None):
+    """Runs the job to its end on `drivers` (slot -> Driver, the mounted arms).  Returns the
+    coordinator's JobRun, or a Refusal when it cannot start.  In position tracking (mode A)
+    the collision thresholds are the site's "job" ones while it runs, "normal" after."""
     header = remote.header(job_id)
     if isinstance(header, Refusal):
         return header
@@ -175,18 +219,29 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     d = Path(work_dir) / job_id
     if (d / "events.jsonl").exists():
         return Refusal("already_run", f"{d} holds a run of this job; a job runs once")
+    settings = _job_settings(header, rig, drivers, robots)
+    if isinstance(settings, Refusal):
+        return settings
+    if settings["tracking"] == "position":
+        why = _collision(drivers, "job")
+        if why:
+            _collision(drivers, "normal")
+            return Refusal("collision_thresholds", why)
+    try:
+        return _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings)
+    finally:
+        if settings["tracking"] == "position":
+            _collision(drivers, "normal")
+
+
+def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings):
     d.mkdir(parents=True, exist_ok=True)
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
     job = Job(d)
-
-    pen, pen_from = (header["pen"], "job header") if header.get("pen") else (rig.pen(), "rig file")
-    for drv in drivers.values():
-        if hasattr(drv, "set_pen"):
-            drv.set_pen(pen)
     routed = {a: KindRouter(drv, d, a) for a, drv in drivers.items()}
     coord = Coordinator(job, routed, config_dir, rig, poll=poll)
     coord.log = log = ArmLog(job.log_path, drivers)   # the executors write through it too
-    log.write("runner started", job=job_id, where=log.where(), pen=pen, pen_from=pen_from)
+    log.write("runner started", job=job_id, where=log.where(), **settings)
     refused: list[str] = []
     halt = threading.Event()
 

@@ -43,14 +43,14 @@ def tip_in_flange(arm) -> np.ndarray:
     return c.R[f] @ np.asarray(arm.tool.tip_hand, float) + c.t[f]
 
 
-def launch_args(rig, site, arm_id: int, controllers_file, fake: bool) -> dict:
-    sa = site.arm(arm_id)
-    T = rig.T_table_base(arm_id)
-    roll, pitch, yaw = rpy(T[:3, :3]) if sa.inverted else (0.0, 0.0, 0.0)
-    return dict(arm=arm_id, namespace=sa.namespace, domain=sa.domain, robot_ip=sa.ip,
-                mounted=sa.mounted, use_fake_hardware=bool(fake), rmw=site.rmw,
-                mount_to_world=bool(sa.inverted), mroll=roll, mpitch=pitch, myaw=yaw,
-                mz=float(T[2, 3]) if sa.inverted else 0.0,
+def launch_args(rig, site, slot: str, controllers_file, fake: bool) -> dict:
+    """Every slot hangs from the frame: its base pose (rig.json) is the robot model's mount."""
+    sa = site.arm(slot)
+    T = rig.T_table_base(slot)
+    roll, pitch, yaw = rpy(T[:3, :3])
+    return dict(arm=slot, robot=sa.robot, namespace=sa.namespace, domain=sa.domain,
+                robot_ip=sa.ip, mounted=sa.mounted, use_fake_hardware=bool(fake), rmw=site.rmw,
+                mount_to_world=True, mroll=roll, mpitch=pitch, myaw=yaw, mz=float(T[2, 3]),
                 controllers=str(controllers_file))
 
 
@@ -78,11 +78,14 @@ def controllers(site, tip_flange, fake: bool, template=TEMPLATE) -> dict:
 
 
 def write(rig, site, out_dir, fake: bool = False, template=TEMPLATE) -> list[Path]:
-    """Writes both files for every arm of the site; returns the paths of the argument files."""
+    """Writes both files for every slot of the site that the rig has; returns the paths of the
+    argument files."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written = []
     for sa in site.arms:
+        if sa.id not in rig.arm_ids:
+            continue
         ctl = out / f"arm_{sa.id}_controllers.yaml"
         tip = tip_in_flange(rig.arm(sa.id))
         ctl.write_text(yaml.safe_dump(controllers(site, tip, fake, template), sort_keys=False))

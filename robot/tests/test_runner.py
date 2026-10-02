@@ -1,7 +1,7 @@
 """The runner against a stand-in drawing server over real HTTP, with simulated arms.
 
 The server side writes the job while the runner runs it: the phase list and the queue of arm
-31 (free, lower, draw, lift) appear motion by motion.  The runner copies them, runs them with
+2L (free, lower, draw, lift) appear motion by motion.  The runner copies them, runs them with
 the package's own coordinator and executors, and posts every event back in order.
 """
 import math
@@ -97,20 +97,20 @@ def test_a_job_runs_as_it_is_written_and_every_event_reaches_the_server(rig, tmp
     server_dir.mkdir()
     job = Job.create(server_dir / "j1", _header(rig))
     app = create_app(server_dir)
-    arm = Recording(SimArm(31, rig.park_q(31), speed=50.0))
+    arm = Recording(SimArm("2L", rig.park_q("2L"), speed=50.0))
     with Served(app) as srv:
-        writer = _writer(rig, job, (31,), _motions(rig, 31))
+        writer = _writer(rig, job, ("2L",), _motions(rig, "2L"))
         t0 = time.perf_counter()
-        res = run_job(Remote(srv.url), "j1", rig, CONFIG, work, {31: arm})
+        res = run_job(Remote(srv.url), "j1", rig, CONFIG, work, {"2L": arm})
         wall = time.perf_counter() - t0
         writer.join()
     print(f"job of 4 motions at 50x: {wall:.2f} s wall")
     assert res.status == "done", res.why
     assert arm.calls == ["move", "draw lower", "draw draw", "draw lift"]
-    assert np.abs(arm.state().q - rig.park_q(31)).max() <= 1e-9
+    assert np.abs(arm.state().q - rig.park_q("2L")).max() <= 1e-9
     local = work / "j1"
-    assert (local / "phase_1__arm31.queue").read_bytes() == \
-        job.queue("phase 1", 31).path.read_bytes()
+    assert (local / "phase_1__2L.queue").read_bytes() == \
+        job.queue("phase 1", "2L").path.read_bytes()
     rows = app.state.received["j1"]
     assert [r["seq"] for r in rows] == list(range(len(rows)))
     lines = (local / "events.jsonl").read_text().splitlines()
@@ -120,18 +120,18 @@ def test_a_job_runs_as_it_is_written_and_every_event_reaches_the_server(rig, tmp
     assert names[-2] == "job done" and names[-1] == "runner finished"
     # where the arm stands: at the start (before anything moved), on every row about the
     # arm, and at the end
-    assert rows[0]["job"] == "j1" and set(rows[0]["where"]) == {"31"}
-    assert np.array_equal(rows[0]["where"]["31"], rig.park_q(31))
+    assert rows[0]["job"] == "j1" and set(rows[0]["where"]) == {"2L"}
+    assert np.array_equal(rows[0]["where"]["2L"], rig.park_q("2L"))
     about_arm = [r for r in rows if "arm" in r]
     assert about_arm and all(len(r["q"]) == 7 for r in about_arm)
-    motions = _motions(rig, 31)
+    motions = _motions(rig, "2L")
     starts = [r["q"] for r in rows if r["event"] == "motion started"]
     ends = [r["q"] for r in rows if r["event"] == "motion done"]
     for m, q0, q1 in zip(motions, starts, ends):
         assert np.abs(np.array(q0) - m.q_start).max() <= 1e-9
         assert np.abs(np.array(q1) - m.q_end).max() <= 1e-9
     assert rows[-1]["status"] == "done"
-    assert np.abs(np.array(rows[-1]["where"]["31"]) - rig.park_q(31)).max() <= 1e-9
+    assert np.abs(np.array(rows[-1]["where"]["2L"]) - rig.park_q("2L")).max() <= 1e-9
     assert names.count("motion started") == 4 and names.count("motion done") == 4
     assert names.index("phase end check") < names.index("phase done")
     assert [r["kind"] for r in rows if r["event"] == "motion started"] == list(KINDS)
@@ -143,20 +143,20 @@ def test_an_arm_not_where_the_plan_starts_is_refused_and_holds(rig, tmp_path):
     server_dir.mkdir()
     job = Job.create(server_dir / "j7", _header(rig))
     app = create_app(server_dir)
-    off = rig.park_q(31) + np.array([0, 0, 0, 0, 0.02, 0, 0])
-    arm = SimArm(31, off, speed=50.0)
+    off = rig.park_q("2L") + np.array([0, 0, 0, 0, 0.02, 0, 0])
+    arm = SimArm("2L", off, speed=50.0)
     with Served(app) as srv:
-        _writer(rig, job, (31,), _motions(rig, 31), pause=0.0).join()
-        res = run_job(Remote(srv.url), "j7", rig, CONFIG, tmp_path / "robot", {31: arm})
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "j7", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "failed" and "not at the start" in res.why
     rows = app.state.received["j7"]
     bad = next(r for r in rows if r["event"] == "failed")
-    assert bad["arm"] == 31 and bad["index"] == 0 and "joint 5" in bad["why"]
+    assert bad["arm"] == "2L" and bad["index"] == 0 and "joint 5" in bad["why"]
     assert "tolerance 0.005" in bad["why"]
     assert np.array_equal(bad["q"], off)                       # where it really stands
     assert "motion started" not in [r["event"] for r in rows]  # nothing moved
     assert np.array_equal(arm.state().q, off) and "holding" in arm.state().flags
-    assert np.array_equal(rows[-1]["where"]["31"], off)
+    assert np.array_equal(rows[-1]["where"]["2L"], off)
 
 
 def test_a_park_job_runs_like_any_other(rig, tmp_path):
@@ -166,9 +166,9 @@ def test_a_park_job_runs_like_any_other(rig, tmp_path):
     server_dir.mkdir()
     job = Job.create(server_dir / "p1", dict(kind="park"))
     app = create_app(server_dir)
-    start = {a: rig.park_q(a) + 0.03 * np.array([1, -1, 1, 1, -1, 1, 1.0]) for a in (31, 71)}
+    start = {a: rig.park_q(a) + 0.03 * np.array([1, -1, 1, 1, -1, 1, 1.0]) for a in ("2L", "2R")}
     arms = {a: SimArm(a, q, speed=50.0) for a, q in start.items()}
-    for a in (31, 71):
+    for a in ("2L", "2R"):
         phase = Phase(f"park arm {a}", (a,), tuple(b for b in rig.arm_ids if b != a), ())
         job.add_phase(phase)
         q = job.queue(phase.name, a)
@@ -181,7 +181,7 @@ def test_a_park_job_runs_like_any_other(rig, tmp_path):
         res = run_job(Remote(srv.url), "p1", rig, CONFIG, tmp_path / "robot", arms)
     assert res.status == "done", res.why
     rows = app.state.received["p1"]
-    for a in (31, 71):
+    for a in ("2L", "2R"):
         assert np.array_equal(rows[0]["where"][str(a)], start[a])
         assert np.abs(np.array(rows[-1]["where"][str(a)]) - rig.park_q(a)).max() <= 1e-9
     assert [r["event"] for r in rows][-2:] == ["job done", "runner finished"]
@@ -192,13 +192,13 @@ def test_a_phase_that_needs_an_unmounted_arm_stops_the_job(rig, tmp_path):
     server_dir.mkdir()
     job = Job.create(server_dir / "j2", _header(rig))
     app = create_app(server_dir)
-    arm = SimArm(31, rig.park_q(31), speed=50.0)
+    arm = SimArm("2L", rig.park_q("2L"), speed=50.0)
     with Served(app) as srv:
-        writer = _writer(rig, job, (31, 71), _motions(rig, 31)[:1], pause=0.0)
-        res = run_job(Remote(srv.url), "j2", rig, CONFIG, tmp_path / "robot", {31: arm})
+        writer = _writer(rig, job, ("2L", "2R"), _motions(rig, "2L")[:1], pause=0.0)
+        res = run_job(Remote(srv.url), "j2", rig, CONFIG, tmp_path / "robot", {"2L": arm})
         writer.join()
     assert res.status != "done"
-    assert "not mounted" in res.why and "71" in res.why
+    assert "not mounted" in res.why and "2R" in res.why
     events = [r["event"] for r in app.state.received["j2"]]
     assert "refused" in events
 
@@ -208,18 +208,18 @@ def test_a_stop_on_the_server_stops_the_arms(rig, tmp_path):
     server_dir.mkdir()
     job = Job.create(server_dir / "j3", _header(rig))
     app = create_app(server_dir)
-    arm = SimArm(31, rig.park_q(31), speed=1.0)        # real time: about 6 s of motion
+    arm = SimArm("2L", rig.park_q("2L"), speed=1.0)        # real time: about 6 s of motion
     with Served(app) as srv:
-        writer = _writer(rig, job, (31,), _motions(rig, 31), pause=0.0)
+        writer = _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0)
         threading.Timer(1.0, lambda: app.state.stop.add("j3")).start()
-        res = run_job(Remote(srv.url), "j3", rig, CONFIG, tmp_path / "robot", {31: arm})
+        res = run_job(Remote(srv.url), "j3", rig, CONFIG, tmp_path / "robot", {"2L": arm})
         writer.join()
     assert res.status == "stopped"
     assert "stopped" in arm.state().flags
     rows = app.state.received["j3"]
     assert [r["event"] for r in rows][-2:] == ["job stopped", "runner finished"]
     assert rows[-1]["status"] == "stopped"
-    assert np.array_equal(rows[-1]["where"]["31"], arm.state().q)   # stopped mid-motion
+    assert np.array_equal(rows[-1]["where"]["2L"], arm.state().q)   # stopped mid-motion
 
 
 def test_a_stop_while_waiting_for_the_plan_ends_the_job(rig, tmp_path):
@@ -230,7 +230,7 @@ def test_a_stop_while_waiting_for_the_plan_ends_the_job(rig, tmp_path):
     with Served(app) as srv:
         threading.Timer(0.5, lambda: app.state.stop.add("j5")).start()
         res = run_job(Remote(srv.url), "j5", rig, CONFIG, tmp_path / "robot",
-                      {31: SimArm(31, rig.park_q(31))})
+                      {"2L": SimArm("2L", rig.park_q("2L"))})
     assert res.status == "stopped"
 
 
@@ -239,13 +239,13 @@ def test_the_copy_survives_a_link_that_keeps_dropping(rig, tmp_path):
     server_dir.mkdir()
     job = Job.create(server_dir / "j6", _header(rig))
     app = create_app(server_dir, max_bytes=2000)              # hangs up every 2000 bytes
-    arm = SimArm(31, rig.park_q(31), speed=math.inf)
+    arm = SimArm("2L", rig.park_q("2L"), speed=math.inf)
     with Served(app) as srv:
-        _writer(rig, job, (31,), _motions(rig, 31), pause=0.0).join()
-        res = run_job(Remote(srv.url), "j6", rig, CONFIG, tmp_path / "robot", {31: arm})
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "j6", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
-    assert (tmp_path / "robot" / "j6" / "phase_1__arm31.queue").read_bytes() == \
-        job.queue("phase 1", 31).path.read_bytes()
+    assert (tmp_path / "robot" / "j6" / "phase_1__2L.queue").read_bytes() == \
+        job.queue("phase 1", "2L").path.read_bytes()
 
 
 class PenRecording(Recording):
@@ -267,16 +267,76 @@ def test_the_job_headers_pen_rules_are_applied(rig, tmp_path, in_header):
         header.pop("pen")
     job = Job.create(server_dir / "pen", header)
     app = create_app(server_dir)
-    arm = PenRecording(SimArm(31, rig.park_q(31), speed=math.inf))
+    arm = PenRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
     with Served(app) as srv:
-        _writer(rig, job, (31,), _motions(rig, 31), pause=0.0).join()
-        res = run_job(Remote(srv.url), "pen", rig, CONFIG, tmp_path / "robot", {31: arm})
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "pen", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
     want = gel if in_header else rig.pen()
     assert arm.pen == want
     first = app.state.received["pen"][0]
     assert first["pen"] == want
     assert first["pen_from"] == ("job header" if in_header else "rig file")
+
+
+class ModeRecording(Recording):
+    """Records the job settings and the collision-threshold calls the runner makes."""
+
+    def __init__(self, driver, collision_fails=False):
+        super().__init__(driver)
+        self.jobs, self.collision, self.fails = [], [], collision_fails
+
+    def set_job(self, pen, tracking):
+        self.jobs.append((pen, tracking))
+
+    def set_collision(self, which):
+        self.collision.append(which)
+        return "refused by the robot" if self.fails and which == "job" else ""
+
+
+@pytest.mark.parametrize("tracking", [None, "position", "impedance"])
+def test_the_tracking_mode_of_the_header_is_applied(rig, tmp_path, tracking):
+    """Mode A (position, the default when the header says nothing) raises the collision
+    thresholds for the job and restores them after; mode B (impedance) leaves them alone."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    header = _header(rig)
+    if tracking:
+        header["tracking"] = tracking
+    job = Job.create(server_dir / "m", header)
+    app = create_app(server_dir)
+    arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
+    robots = {"2L": dict(robot="fr3-31", identity="unverified")}
+    with Served(app) as srv:
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "m", rig, CONFIG, tmp_path / "robot", {"2L": arm},
+                      robots=robots)
+    assert res.status == "done", res.why
+    mode = tracking or "position"
+    assert arm.jobs == [(rig.pen(), mode)]
+    assert arm.collision == (["job", "normal"] if mode == "position" else [])
+    first = app.state.received["m"][0]
+    assert first["tracking"] == mode and first["robots"] == robots
+    assert first["pen"]["press_m"] == rig.pen()["press_m"]
+
+
+def test_refusals_before_anything_moves(rig, tmp_path):
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    Job.create(server_dir / "bad", dict(_header(rig), tracking="fast"))
+    Job.create(server_dir / "ok", _header(rig))
+    arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf), collision_fails=True)
+    with Served(create_app(server_dir)) as srv:
+        r = Remote(srv.url)
+        bad = run_job(r, "bad", rig, CONFIG, tmp_path / "a", {"2L": arm})
+        assert isinstance(bad, Refusal) and bad.reason == "bad_header"
+        wrong = run_job(r, "ok", rig, CONFIG, tmp_path / "b", {"2L": arm},
+                        robots={"2L": dict(robot="fr3-31", identity="mismatch: found fr3-13")})
+        assert isinstance(wrong, Refusal) and wrong.reason == "wrong_robot"
+        thr = run_job(r, "ok", rig, CONFIG, tmp_path / "c", {"2L": arm})
+        assert isinstance(thr, Refusal) and thr.reason == "collision_thresholds"
+        assert arm.collision == ["job", "normal"]                # restored after the refusal
+    assert arm.calls == []                                     # nothing moved
 
 
 def test_a_job_planned_for_another_rig_is_refused(rig, tmp_path):

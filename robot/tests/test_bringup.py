@@ -76,11 +76,11 @@ def test_the_controllers_carry_the_arms_own_pen_tip(written):
 def test_fake_hardware_uses_positions_and_no_model(tmp_path):
     rig, site = Rig.load(CONFIG), site_mod.load(ROBOT / "site.json")
     bringup.write(rig, site, tmp_path, fake=True)
-    d = yaml.safe_load((tmp_path / "arm_31_controllers.yaml").read_text())
+    d = yaml.safe_load((tmp_path / "arm_2L_controllers.yaml").read_text())
     assert d["/**/fr3_arm_controller"]["ros__parameters"]["command_interfaces"] == ["position"]
     assert "gains" not in d["/**/fr3_arm_controller"]["ros__parameters"]
     assert d["/**/aris_joint_impedance_controller"]["ros__parameters"]["use_model"] is False
-    assert json.loads((tmp_path / "arm_31.json").read_text())["use_fake_hardware"] is True
+    assert json.loads((tmp_path / "arm_2L.json").read_text())["use_fake_hardware"] is True
 
 
 def test_the_launch_file_reads_only_what_is_written(written):
@@ -89,10 +89,35 @@ def test_the_launch_file_reads_only_what_is_written(written):
     assert keys and keys <= set(json.loads(files[0].read_text()))
 
 
-def test_site_file_is_checked(tmp_path):
+def _site_files(tmp_path, change_site=None, change_table=None):
     d = json.loads((ROBOT / "site.json").read_text())
-    d["arms"][1]["domain"] = d["arms"][0]["domain"]
-    bad = tmp_path / "site.json"
-    bad.write_text(json.dumps(d))
+    t = json.loads((ROBOT.parent / d["site_table"]).read_text())
+    (change_site or (lambda x: None))(d)
+    (change_table or (lambda x: None))(t)
+    (tmp_path / "robot").mkdir(parents=True)
+    (tmp_path / "site").mkdir(parents=True)
+    d["site_table"] = "site/table.json"
+    (tmp_path / "robot" / "site.json").write_text(json.dumps(d))
+    (tmp_path / "site" / "table.json").write_text(json.dumps(t))
+    return tmp_path / "robot" / "site.json"
+
+
+def test_site_reads_robots_from_the_site_table(tmp_path):
+    s = site_mod.load(_site_files(tmp_path))
+    a = s.arm("2R")
+    assert (a.robot, a.ip, a.domain, a.namespace) == ("fr3-71", "192.168.50.14", 71, "arm_2R")
+    assert s.mounted == ("2R", "3R")
+    assert site_mod.identity(a, None) == "unverified"
+    known = site_mod.SiteArm("2R", "fr3-71", a.ip, 71, True, serial="295341-1234")
+    assert site_mod.identity(known, "295341-1234") == "verified"
+    assert site_mod.identity(known, "295341-9999").startswith("mismatch")
+
+
+def test_site_file_is_checked(tmp_path):
+    def dup(t):
+        t["slots"]["1R"]["domain"] = t["slots"]["1L"]["domain"]
     with pytest.raises(ValueError):
-        site_mod.load(bad)
+        site_mod.load(_site_files(tmp_path / "a", change_table=dup))
+    with pytest.raises(ValueError):
+        site_mod.load(_site_files(tmp_path / "b",
+                                  change_site=lambda d: d["slots"].update({"4L": {"mounted": False}})))

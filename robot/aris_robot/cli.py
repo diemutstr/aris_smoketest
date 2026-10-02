@@ -26,6 +26,7 @@ from aris.rig import Rig
 from aris.types import Refusal
 
 from aris_robot import bringup, site as site_mod, tools
+from aris_robot.site import SLOTS
 from aris_robot.remote import Remote
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,11 +37,18 @@ def _say(ok: bool, what: str) -> int:
     return 0 if ok else 1
 
 
-def _driver(site, rig, arm_id: int, fake: bool):
+def _driver(site, rig, arm_id: str, fake: bool):
     from aris_robot.driver import RosArm
     if arm_id not in site.mounted and not fake:
         raise SystemExit(f"FAIL arm {arm_id} is not mounted in {site.path}")
     return RosArm(site, rig, arm_id, fake=fake)
+
+
+def robots(site) -> dict:
+    """Per mounted slot: the robot the site table names and whether that is verified.  FCI and
+    ROS report no serial, so until one is readable every slot is "unverified"."""
+    return {sa.id: dict(robot=sa.robot, ip=sa.ip, serial_found=None,
+                        identity=site_mod.identity(sa, None)) for sa in site.arms if sa.mounted}
 
 
 def cmd_bringup(a, site, rig) -> int:
@@ -68,7 +76,8 @@ def cmd_run(a, site, rig) -> int:
     else:
         drivers = {i: _driver(site, rig, i, a.fake) for i in site.mounted}
     try:
-        res = run_job(Remote(site.server_url), a.job, rig, a.config, a.work, drivers)
+        res = run_job(Remote(site.server_url), a.job, rig, a.config, a.work, drivers,
+                      robots=robots(site))
     finally:
         for d in drivers.values():
             getattr(d, "close", lambda: None)()
@@ -167,7 +176,8 @@ def cmd_serve(a, site, rig) -> int:
         stacks = Stacks(launch_commands(files), rows, log_dir).start()
         drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
                    for i in mounted}
-    op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows)
+    op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows,
+                  robots=robots(site))
 
     def leave(signum, frame):
         op.quit.set()
@@ -212,7 +222,7 @@ def parser() -> argparse.ArgumentParser:
                    help="simulated arms at this many times real time (inf: at once); no ROS")
     for name in ("park", "jog", "touch", "switch", "recover"):
         s = sub.add_parser(name)
-        s.add_argument("arm", type=int)
+        s.add_argument("arm", choices=SLOTS, help="the slot, e.g. 2R")
         if name == "jog":
             s.add_argument("--joint", type=int, required=True)
             s.add_argument("--delta", type=float, required=True, help="rad")

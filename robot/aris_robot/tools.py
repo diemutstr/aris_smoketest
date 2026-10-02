@@ -16,6 +16,8 @@ import numpy as np
 from aris.kernel.retime import retime
 from aris.types import JointPath, Refusal
 
+from aris_robot.site import identity
+
 JOG_MAX = 0.10          # rad
 PARK_NEAR = 0.05        # rad, on every joint
 TOUCH_MAX = 0.06        # m
@@ -55,14 +57,17 @@ def park_move(rig, arm_id: int, q):
 
 
 def identify(site, rig, timeout: float = 3.0) -> list[dict]:
-    """Per arm of the site: does its address answer, does its domain answer, which address
-    does the hardware there use, the robot mode, and how far it stands from each park."""
+    """Per slot of the site: the robot the site table names; does its address answer, does
+    its domain answer, which address the stack there was launched with, the robot mode, and
+    which slot's park it stands nearest.  No serial: FCI and ROS report none (nor libfranka's
+    server version), so the identity stays "unverified"."""
     from aris_robot.rosarm import MODES, ArmNode
     import time
     rows = []
     for sa in site.arms:
-        row = dict(arm=sa.id, ip=sa.ip, domain=sa.domain, mounted=sa.mounted,
-                   ip_answers=_answers(sa.ip))
+        row = dict(arm=sa.id, robot=sa.robot, table_sure=sa.sure, ip=sa.ip, domain=sa.domain,
+                   mounted=sa.mounted, ip_answers=_answers(sa.ip), serial_found=None,
+                   identity=identity(sa, None))
         node = ArmNode(sa, site.joint_names())
         try:
             t_end = time.monotonic() + timeout

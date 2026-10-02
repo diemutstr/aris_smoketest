@@ -21,7 +21,7 @@ The resident process (`aris-robot serve`, serve.py) also uses:
 
   GET  /operator/next?wait=S                   long-poll, held up to S seconds: the next
                                                command, {"id": c, "command": "run", "job": j}
-                                               | {"id": c, "command": "recover", "arm": a}
+                                               | {"id": c, "command": "recover", "arm": "2R"}
                                                | {"id": c, "command": "report"}; 204 (or {})
                                                when there is none
   POST /operator/ack                           {"id": c}: the command is taken
@@ -30,8 +30,10 @@ The resident process (`aris-robot serve`, serve.py) also uses:
                                                where, report, recovered, stack died, a run
                                                refused, ...); every row has "event" and
                                                "time", rows about arms have "where" or "q"
-  GET  /calibration                            {"arms": [ids that have a calibration file]}
-  GET  /calibration/{arm}                      that file, as JSON (404: none)
+  GET  /calibration                            {"arms": [slots that have a calibration file]}
+  GET  /calibration/{slot}                     that file, as JSON (404: none)
+
+Arms are slots ("2R"), strings everywhere; the key in rows stays "arm".
 
 A lost link stops nothing: the copy resumes from its own length, and what is already copied
 keeps running (DESIGN.md section 5).
@@ -105,9 +107,9 @@ class Remote:
 
     def calibration_arms(self) -> list[int] | Refusal:
         ans = self.get_json("calibration")
-        return ans if isinstance(ans, Refusal) else [int(a) for a in ans.get("arms", [])]
+        return ans if isinstance(ans, Refusal) else [str(a) for a in ans.get("arms", [])]
 
-    def calibration(self, arm: int) -> dict | Refusal:
+    def calibration(self, arm: str) -> dict | Refusal:
         return self.get_json("calibration", arm)
 
     def post_events(self, job: str, rows: list[dict]) -> dict | Refusal:

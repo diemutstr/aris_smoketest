@@ -14,7 +14,7 @@ from aris_robot.touch import FakePaper, Kinematics, TouchSettings, touch
 from sim_touch import SimPositionArm, hover_q, touch_motion
 
 CONFIG = Path(__file__).resolve().parents[2] / "config"
-ARM = 31
+ARM = "2L"
 
 
 @pytest.fixture(scope="module")

@@ -13,6 +13,11 @@
   stop()      at once: the impedance controller latches a hold, a trajectory goal is cancelled
   recover()   franka error recovery, then the trajectory controller re-activated
   switch(n)   "trajectory" or "impedance": that controller takes the arm
+  set_job(pen, tracking)       the job's pen rules and tracking mode (DESIGN 4c): "position"
+              (mode A, the default) flies every motion kind through the trajectory controller,
+              the press being geometric (the plan runs below the paper); "impedance" (mode B)
+              is lower/draw/lift under the impedance controller with the pen force
+  set_collision(which)         the site's "job" or "normal" collision thresholds
 
 With fake hardware the impedance controller cannot move the arm (the fake arm ignores
 torques), so `draw` goes to `move` and there is no pen force; `touch` runs as on the real
@@ -45,6 +50,8 @@ class RosArm:
         paper); its push stands in for the force estimate that fake hardware lacks."""
         self.arm_id, self.fake, self.lead = arm_id, fake, lead
         self._site_force, self._sign = site.force, site.arm(arm_id).force_sign
+        self.collision = site.collision
+        self.tracking = "position"
         self.set_pen(rig.pen())
         self.ts = T.TouchSettings.from_site(site.touch, self.fs.sign)
         self.kin = T.Kinematics.of(rig, arm_id)
@@ -84,6 +91,21 @@ class RosArm:
         """The pen rules (rig.json `pen`, as the job header carries them) for what follows."""
         self.fs = F.ForceSettings.from_parts(pen, self._site_force, self._sign)
 
+    def set_job(self, pen: dict, tracking: str) -> None:
+        if tracking not in ("position", "impedance"):
+            raise ValueError(f"tracking {tracking!r}: position or impedance")
+        self.set_pen(pen)
+        self.tracking = tracking
+
+    def set_collision(self, which: str) -> str:
+        """The site's collision thresholds `which` ("job" or "normal"); "" when set."""
+        c = self.collision.get(which)
+        if c is None:
+            return f"site.json has no {which!r} collision thresholds"
+        if self.fake:
+            return ""
+        return self.ros.set_collision(c["torque_nm"], c["force_n"])
+
     def switch(self, name: str) -> str:
         """The named controller takes the arm ("" when it has it)."""
         want = CONTROLLERS[name]
@@ -106,7 +128,7 @@ class RosArm:
             return self._follow(traj)
 
     def draw(self, motion) -> Result:
-        if motion.kind == "free" or self.fake:
+        if motion.kind == "free" or self.fake or self.tracking == "position":
             return self.move(motion.traj)
         with self._busy:
             refused = self._refuse(motion.q_start)

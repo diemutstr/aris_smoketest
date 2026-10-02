@@ -10,8 +10,29 @@ This is the only place that knows about ROS. Folder: `robot/`. Set-up steps:
 
 | planning PC | operator PC |
 |---|---|
-| drawing server, planners, checker | one ROS launch per arm (namespace `arm_<id>`, DDS domain = arm id) |
+| drawing server, planners, checker | one ROS launch per slot (namespace `arm_<slot>`, the DDS domain from the site table) |
 | writes the job: header, phases, one queue per phase and arm | `aris-robot run --job <id>`: copies the phases and the queues byte for byte, runs them, posts the events back |
+
+**Slots and robots** (DESIGN 4c). Arms are slots, `1L 1R 2L 2R 3L 3R`, strings everywhere
+here (rows keep the key `"arm"`: `"arm": "2R"`). Which robot hangs in which slot, its address
+and its DDS domain are in the site table `site/aris_2026-10.json` (the domain must be an
+integer; today it is the old robot id). `robot/site.json` names that table and keeps only what
+is about this PC: the server, `mounted` and `force_sign` per slot, the tare, contact, touch and
+collision settings. Every run and serve's first row report, per slot, the robot the table
+names and its identity: "verified", "mismatch: ..." (the job is refused), or "unverified" (no
+serial on either side). FCI and ROS report no serial, so it is "unverified" until one can be
+read.
+
+**Tracking** (DESIGN 4c). The job header's `tracking` decides how the arms follow:
+`position` (mode A, the default) sends every kind of motion through the stock trajectory
+controller, and the press is the plan's (the pen's `press_m` below the paper; recorded in
+the first row, nothing to apply). The collision thresholds are set to site.json
+`collision.job` (40 N) by a service call to franka_hardware's
+`set_full_collision_behavior` at job start, before anything moves, and back to
+`collision.normal` after the job, also after a refusal. A service call per job is cleaner
+than a launch parameter: the thresholds belong to the job's mode, not to the stack, and the
+launch has no such parameter. If the robot refuses them, the job is refused. `impedance`
+(mode B) is the impedance controller with the pen force, below, unchanged.
 
 **Where the arms stand.** The server plans from what the runner reports; it cannot see the
 arms. The first row of a run, "runner started", carries `where`, the 7 joints of every
@@ -68,7 +89,7 @@ at boot (`robot/aris-robot.service`, restart always) and:
   `out/operator/rows.jsonl` and `serve.log`. A command that fails is a row; the process goes
   on.
 
-## How the arm follows a motion
+## How the arm follows a motion in mode B (`tracking: impedance`)
 
 Two controllers, one at a time, switched by the driver:
 
@@ -196,7 +217,7 @@ touch settings.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 57 tests, 53 in the quick set (16 s); the 4 slow ones compile the controller
+`robot/tests`: 63 tests, 59 in the quick set; the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -228,6 +249,15 @@ core (6 to 15 s under load).
   cap stops and holds, with no way back flown. Refused before moving: an extra depth over the
   cap, or a 9 N air reading. Through the executor, the "contact" row carries the joints at the
   paper.
+- **Slots and modes.** The site is read from the site table and site.json (robot, address,
+  domain per slot; a duplicate domain and an unknown slot are refused). Identity is
+  verified, mismatched or unverified. Through the stand-in server: the header's tracking
+  (none, position, impedance) reaches every driver. Position raises the collision thresholds
+  and restores them after; impedance leaves them alone. The first row carries the mode, the
+  pen with its press and the robots. Refused before anything moves: an unknown mode, a robot
+  mismatch, thresholds the robot refuses (restored even then). On the fake ROS node, mode A
+  sends lower, draw and lift to the trajectory controller as planned, nothing to the
+  impedance controller, and the thresholds calls carry the site's values.
 - **Pen rules from the job.** The runner hands the header's `pen` to each driver (a gel-pen
   band and cap in the test), or the rig file's when the header has none, and the first row
   says which.

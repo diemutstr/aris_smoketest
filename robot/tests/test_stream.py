@@ -18,7 +18,7 @@ def rig():
     return Rig.load(CONFIG)
 
 
-@pytest.mark.parametrize("arm_id,seed", [(31, 0), (71, 1), (13, 2), (97, 3)])
+@pytest.mark.parametrize("arm_id,seed", [("2L", 0), ("2R", 1), ("1L", 2), ("3R", 3)])
 def test_sampling_at_1khz_matches_the_planners_sample(rig, arm_id, seed):
     traj = random_trajectory(rig, arm_id, seed)
     t = grid(traj.t)
@@ -34,7 +34,7 @@ def test_sampling_at_1khz_matches_the_planners_sample(rig, arm_id, seed):
 
 
 def test_grid_is_every_millisecond_and_ends_on_the_last_knot(rig):
-    traj = random_trajectory(rig, 31, 5)
+    traj = random_trajectory(rig, "2L", 5)
     t = grid(traj.t)
     assert t[0] == traj.t[0] and t[-1] == traj.t[-1]
     assert np.all(np.diff(t) <= 0.001 + 1e-12) and np.all(np.diff(t) > 0)
@@ -42,8 +42,8 @@ def test_grid_is_every_millisecond_and_ends_on_the_last_knot(rig):
 
 
 def test_samples_carry_the_force_into_the_paper(rig):
-    traj = random_trajectory(rig, 31, 6)
-    n = rig.paper(31).normal
+    traj = random_trajectory(rig, "2L", 6)
+    n = rig.paper("2L").normal
     fn = profile("draw", traj.t, None, 1.0, _settings())
     s = samples(traj, fn, n)
     assert s.t[0] == 0.0 and len(s) == len(grid(traj.t))
@@ -55,8 +55,8 @@ def test_samples_carry_the_force_into_the_paper(rig):
 
 
 def test_pacer_sends_everything_once_in_order_ahead_of_time(rig):
-    traj = random_trajectory(rig, 31, 7)
-    s = samples(traj, lambda t: np.zeros_like(t), rig.paper(31).normal)
+    traj = random_trajectory(rig, "2L", 7)
+    s = samples(traj, lambda t: np.zeros_like(t), rig.paper("2L").normal)
     p = Pacer(s, stream=42, lead=0.1, max_chunk=50)
     sent, elapsed = [], 0.0
     while not p.done:

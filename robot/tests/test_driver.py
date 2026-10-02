@@ -54,9 +54,11 @@ def _chain(rig, arm_id, kinds, scale=0.08):
 
 
 def _arm(monkeypatch, rig, site, q0, model=None, **kw):
-    node = fake_ros.FakeArmNode(q0, rig.paper(31).normal, model, **kw)
+    node = fake_ros.FakeArmNode(q0, rig.paper("2L").normal, model, **kw)
     monkeypatch.setattr(D, "ArmNode", lambda site_arm, names: node)
-    return D.RosArm(site, rig, 31), node
+    arm = D.RosArm(site, rig, "2L")
+    arm.set_job(rig.pen(), "impedance")             # these tests are about mode B
+    return arm, node
 
 
 def _forces(node, stream):
@@ -65,8 +67,8 @@ def _forces(node, stream):
 
 
 def test_lower_draw_lift_press_only_while_drawing(monkeypatch, rig, site):
-    lower, draw, lift = _chain(rig, 31, ("lower", "draw", "lift"))
-    paper = Paper(rig.paper(31).normal)
+    lower, draw, lift = _chain(rig, "2L", ("lower", "draw", "lift"))
+    paper = Paper(rig.paper("2L").normal)
     arm, node = _arm(monkeypatch, rig, site, lower.q_start, paper)
     paper.touch_at = 0.6 * float(lower.traj.t[-1])
     r = arm.draw(lower)
@@ -78,7 +80,7 @@ def test_lower_draw_lift_press_only_while_drawing(monkeypatch, rig, site):
     paper.touch_at = 0.0
     r = arm.draw(draw)
     assert r.done, r.why
-    f = _forces(node, arm.last_report["stream"]) @ -rig.paper(31).normal
+    f = _forces(node, arm.last_report["stream"]) @ -rig.paper("2L").normal
     assert f[0] == 0.0 and f.max() == pytest.approx(1.0)          # ramped in, to intensity 1
     # the fake paper reads 0.8 N + 0.8 x the fed force, 1.6 N at 1 N fed: the servo (on by
     # default, 1 s) trims the feed down toward the 1.0 N setpoint
@@ -86,14 +88,14 @@ def test_lower_draw_lift_press_only_while_drawing(monkeypatch, rig, site):
     assert 0.5 < press < 1.0
     r = arm.draw(lift)
     assert r.done, r.why
-    f = _forces(node, arm.last_report["stream"]) @ -rig.paper(31).normal
+    f = _forces(node, arm.last_report["stream"]) @ -rig.paper("2L").normal
     assert f[0] == pytest.approx(press) and f[-1] == 0.0         # ramped out
     assert np.all(np.diff(f) <= 1e-12)
 
 
 def test_a_force_over_the_cap_holds_the_arm(monkeypatch, rig, site):
-    lower, draw = _chain(rig, 31, ("lower", "draw"))
-    paper = Paper(rig.paper(31).normal, touch_at=None)
+    lower, draw = _chain(rig, "2L", ("lower", "draw"))
+    paper = Paper(rig.paper("2L").normal, touch_at=None)
     arm, node = _arm(monkeypatch, rig, site, lower.q_start, paper)
     assert arm.draw(lower).done
     paper.touch_at, paper.extra = 0.0, 4.0                         # something pushes back hard
@@ -103,7 +105,7 @@ def test_a_force_over_the_cap_holds_the_arm(monkeypatch, rig, site):
 
 
 def test_a_stream_that_runs_dry_fails_the_motion(monkeypatch, rig, site):
-    (draw,) = _chain(rig, 31, ("draw",))
+    (draw,) = _chain(rig, "2L", ("draw",))
     arm, node = _arm(monkeypatch, rig, site, draw.q_start, drop_after=0.15)
     arm._zero = BIAS
     r = arm.draw(draw)
@@ -111,16 +113,16 @@ def test_a_stream_that_runs_dry_fails_the_motion(monkeypatch, rig, site):
 
 
 def test_a_landing_refuses_an_implausible_air_reading(monkeypatch, rig, site):
-    (lower,) = _chain(rig, 31, ("lower",))
+    (lower,) = _chain(rig, "2L", ("lower",))
     arm, _ = _arm(monkeypatch, rig, site, lower.q_start,
-                  lambda t, f: 9.0 * rig.paper(31).normal)
+                  lambda t, f: 9.0 * rig.paper("2L").normal)
     r = arm.draw(lower)
     assert not r.done and r.why.startswith("tare_too_large")
 
 
 def test_stop_then_recover(monkeypatch, rig, site):
     import threading
-    (draw,) = _chain(rig, 31, ("draw",), scale=0.2)
+    (draw,) = _chain(rig, "2L", ("draw",), scale=0.2)
     arm, node = _arm(monkeypatch, rig, site, draw.q_start)
     arm._zero = BIAS
     threading.Timer(0.2, arm.stop).start()
@@ -135,7 +137,7 @@ def test_stop_then_recover(monkeypatch, rig, site):
 
 
 def test_a_stream_not_starting_at_the_arm_is_refused(monkeypatch, rig, site):
-    (draw,) = _chain(rig, 31, ("draw",))
+    (draw,) = _chain(rig, "2L", ("draw",))
     arm, node = _arm(monkeypatch, rig, site, draw.q_start)
     node.q_d = draw.q_start + 0.004                                # within the driver's 5 mrad
     node.switch(["aris_joint_impedance_controller"], ["fr3_arm_controller"])
@@ -144,3 +146,23 @@ def test_a_stream_not_starting_at_the_arm_is_refused(monkeypatch, rig, site):
     node.trigger("hold")                                           # a latched hold
     r = arm.draw(draw)
     assert not r.done and r.why.startswith("stream refused")
+
+
+def test_position_tracking_flies_every_kind_through_the_trajectory_controller(monkeypatch, rig,
+                                                                             site):
+    """Mode A: lower, draw and lift go to the trajectory controller exactly as planned; the
+    impedance controller is never streamed to; the collision thresholds are the site's."""
+    motions = _chain(rig, "2L", ("lower", "draw", "lift"))
+    arm, node = _arm(monkeypatch, rig, site, motions[0].q_start)
+    arm.set_job(rig.pen(), "position")
+    for m in motions:
+        r = arm.draw(m)
+        assert r.done, r.why
+    assert node.goals == [m.traj for m in motions] and not node.published
+    assert "aris_joint_impedance_controller" not in node.active
+    assert arm.set_collision("job") == "" and arm.set_collision("normal") == ""
+    c = site.collision
+    assert node.collision_calls == [(c["job"]["torque_nm"], c["job"]["force_n"]),
+                                    (c["normal"]["torque_nm"], c["normal"]["force_n"])]
+    with pytest.raises(ValueError):
+        arm.set_job(rig.pen(), "fast")

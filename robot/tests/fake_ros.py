@@ -15,7 +15,7 @@ STUBS = ["rclpy", "rclpy.action", "rclpy.executors", "rclpy.qos", "action_msgs",
          "action_msgs.msg", "aris_msgs", "aris_msgs.msg", "builtin_interfaces",
          "builtin_interfaces.msg", "control_msgs", "control_msgs.action",
          "controller_manager_msgs", "controller_manager_msgs.srv", "franka_msgs",
-         "franka_msgs.action", "franka_msgs.msg", "sensor_msgs", "sensor_msgs.msg", "std_srvs",
+         "franka_msgs.action", "franka_msgs.msg", "franka_msgs.srv", "sensor_msgs", "sensor_msgs.msg", "std_srvs",
          "std_srvs.srv", "trajectory_msgs", "trajectory_msgs.msg"]
 
 
@@ -51,6 +51,7 @@ class FakeArmNode:
         self._lock = threading.Lock()
         self.statuses, self.status = [], None
         self.published = []
+        self.goals, self.collision_calls = [], []
         self._reset()
         self._quit = False
         threading.Thread(target=self._run, daemon=True).start()
@@ -109,6 +110,21 @@ class FakeArmNode:
                 self.samples += list(zip(chunk.t, chunk.q, f))
                 self.last = chunk.last
 
+    # ---- the trajectory controller: flies a goal at once and exactly
+    @property
+    def follow(self):
+        return _FakeAction(self)
+
+    def drain_readings(self, joints_only=False):
+        return []
+
+    def trajectory_goal(self, traj):
+        return traj
+
+    def set_collision(self, torque_nm, force_n, timeout=3.0):
+        self.collision_calls.append((list(torque_nm), list(force_n)))
+        return ""
+
     def error_recovery(self, timeout=15.0):
         return ""
 
@@ -140,3 +156,36 @@ class FakeArmNode:
                     force=self.force_model(self.t, self.f_ff), f_ff=self.f_ff.copy())
                 self.status = st
                 self.statuses.append(st)
+
+
+class _Done:
+    """A future that is already done."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def add_done_callback(self, fn):
+        fn(self)
+
+    def done(self):
+        return True
+
+    def result(self):
+        return self.value
+
+
+class _FakeAction:
+    def __init__(self, node):
+        self.node = node
+
+    def wait_for_server(self, timeout_sec=None):
+        return True
+
+    def send_goal_async(self, traj):
+        node = self.node
+        with node._lock:
+            node.goals.append(traj)
+            node.q_d = np.array(traj.q[-1], float)
+        result = SimpleNamespace(status=4, result=SimpleNamespace(error_code=0, error_string=""))
+        return _Done(SimpleNamespace(accepted=True, get_result_async=lambda: _Done(result),
+                                     cancel_goal_async=lambda: _Done(None)))

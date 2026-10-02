@@ -1,21 +1,18 @@
 {
   "about": {
-    "what": "Everything about THIS installation that is not geometry: which arm answers on which address and DDS domain, which arms are bolted in, where the drawing server is, and how hard the pen presses. Geometry (poses, parks, pens) is in config/rig.json and is never repeated here.",
+    "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted and its force sign, the tare and contact thresholds, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
     "read_by": "robot/aris_robot/site.py and nothing else",
-    "addresses_source": "control-box IPs and domains from the 2026-09-09 control-stack briefing (section 5, arm_registry.py). Arm 71 had no IP on 2026-09-15 (HARDWARE_DAY1 section 1.6). Verify every row with `aris-robot identify` before the first run.",
-    "mounted_source": "HARDWARE_DAY1 (2026-09-16): arms 31 and 71 were mounted. Set `mounted` true for an arm only when it hangs in its place in rig.json and answers on its address.",
+    "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
     "force_sign_note": "per arm: +1 when the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; check with `aris-robot touch` before trusting a reading.",
-    "inverted_note": "rig.json hangs all six arms upside down; `inverted` true makes the launch hang the robot model from the frame (mount_to_world, as the operator patches do)."
+    "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table"
   },
-
   "server_url": "http://192.168.50.1:8420",
-
+  "site_table": "site/aris_2026-10.json",
   "ros": {
     "joint_prefix": "fr3",
     "joint_prefix_note": "joint names are <joint_prefix>_joint1..7; the briefing notes one stack that used fr3v2",
     "rmw": "rmw_fastrtps_cpp"
   },
-
   "force": {
     "source": "facts of this site about the force estimate (control-stack briefing 2026-09-09). How hard the pen presses (band, levels, cap, ramps, servo) is a fact of pen and paper: config/rig.json `pen`, carried in every job header.",
     "tare_s": 0.2,
@@ -26,7 +23,6 @@
     "cap_ticks": 12,
     "cap_ticks_note": "readings in a row over the pen's force cap before the arm holds"
   },
-
   "touch": {
     "source": "the calibration touch under position control (DESIGN section 6 step 1; orchestrator 2026-10-01)",
     "contact_n": 1.0,
@@ -37,13 +33,24 @@
     "extra_max": 0.03,
     "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed"
   },
-
-  "arms": [
-    {"id": 13, "ip": "192.168.50.11", "domain": 13, "mounted": false, "inverted": true, "force_sign": 1.0},
-    {"id": 17, "ip": "192.168.50.16", "domain": 17, "mounted": false, "inverted": true, "force_sign": 1.0},
-    {"id": 31, "ip": "192.168.50.12", "domain": 31, "mounted": true,  "inverted": true, "force_sign": 1.0},
-    {"id": 71, "ip": "192.168.50.14", "domain": 71, "mounted": true,  "inverted": true, "force_sign": 1.0},
-    {"id": 2,  "ip": "192.168.50.13", "domain": 2,  "mounted": false, "inverted": true, "force_sign": 1.0},
-    {"id": 97, "ip": "192.168.50.15", "domain": 97, "mounted": false, "inverted": true, "force_sign": 1.0}
-  ]
+  "collision": {
+    "source": "set for a job in position tracking (mode A) and restored after it, as the old stack raised them before every pass (control-stack briefing 2026-09-09 section 9: 20 N -> 40 N; HARDWARE_DAY1 1.5: the installation operator's 40/40/36/36/32/28/24 Nm, fr3drivers' 'sensitive' 20 Nm / 20 N). Lower and upper thresholds, acceleration and nominal, all set to these.",
+    "job": {
+      "torque_nm": [40, 40, 36, 36, 32, 28, 24],
+      "force_n": [40, 40, 40, 40, 40, 40]
+    },
+    "normal": {
+      "torque_nm": [20, 20, 20, 20, 10, 10, 10],
+      "force_n": [20, 20, 20, 20, 20, 20]
+    },
+    "force_n_note": "the Cartesian thresholds: x, y, z in N, then the three torques in Nm"
+  },
+  "slots": {
+    "1L": {"mounted": false, "force_sign": 1.0},
+    "1R": {"mounted": false, "force_sign": 1.0},
+    "2L": {"mounted": false, "force_sign": 1.0},
+    "2R": {"mounted": true, "force_sign": 1.0},
+    "3L": {"mounted": false, "force_sign": 1.0},
+    "3R": {"mounted": true, "force_sign": 1.0}
+  }
 }

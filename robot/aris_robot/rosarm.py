@@ -9,6 +9,7 @@ This is the only file besides driver.py and tools.py that imports ROS.  Names, a
   fr3_arm_controller/follow_joint_trajectory             control_msgs action
   action_server/error_recovery                           franka_msgs/ErrorRecovery action
   controller_manager/{list,switch}_controller(s)         controller_manager_msgs
+  service_server/set_full_collision_behavior             franka_msgs/SetFullCollisionBehavior
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import ListControllers, SwitchController
 from franka_msgs.action import ErrorRecovery
 from franka_msgs.msg import FrankaRobotState
+from franka_msgs.srv import SetFullCollisionBehavior
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -80,6 +82,8 @@ class ArmNode:
         self.list_srv = n.create_client(ListControllers, f"{ns}/controller_manager/list_controllers")
         self.hold_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/hold")
         self.resume_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/resume")
+        self.collision_srv = n.create_client(
+            SetFullCollisionBehavior, f"{ns}/service_server/set_full_collision_behavior")
         self.executor = MultiThreadedExecutor(context=self.ctx)
         self.executor.add_node(n)
         self._spin = threading.Thread(target=self.executor.spin, daemon=True)
@@ -194,6 +198,22 @@ class ArmNode:
                 positions=[float(x) for x in q], velocities=[float(x) for x in qd],
                 time_from_start=duration(float(t) - t0)))
         return goal
+
+    def set_collision(self, torque_nm, force_n, timeout: float = 3.0) -> str:
+        """The robot's collision thresholds: lower = upper, acceleration = nominal phase.
+        "" when set."""
+        if not self.collision_srv.wait_for_service(timeout_sec=timeout):
+            return "the collision behavior service is not available"
+        t, f = [float(x) for x in torque_nm], [float(x) for x in force_n]
+        req = SetFullCollisionBehavior.Request(
+            lower_torque_thresholds_acceleration=t, upper_torque_thresholds_acceleration=t,
+            lower_torque_thresholds_nominal=t, upper_torque_thresholds_nominal=t,
+            lower_force_thresholds_acceleration=f, upper_force_thresholds_acceleration=f,
+            lower_force_thresholds_nominal=f, upper_force_thresholds_nominal=f)
+        res = wait(self.collision_srv.call_async(req), timeout)
+        if res is None:
+            return "setting the collision thresholds timed out"
+        return "" if res.success else f"the robot refused the collision thresholds: {res.error}"
 
     def error_recovery(self, timeout: float = 15.0) -> str:
         """franka_hardware's automatic error recovery; "" when it succeeded."""

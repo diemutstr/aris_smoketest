@@ -52,9 +52,9 @@ def _follow(exe, s, dt):
 @pytest.mark.parametrize("dt", [0.001, 0.0007])
 def test_controller_reference_is_the_planned_trajectory(core_test, dt):
     rig = Rig.load(CONFIG)
-    traj = random_trajectory(rig, 31, 11)
+    traj = random_trajectory(rig, "2L", 11)
     fn = profile("draw", traj.t, None, 1.0, ForceSettings())
-    s = samples(traj, fn, rig.paper(31).normal)
+    s = samples(traj, fn, rig.paper("2L").normal)
     got = _follow(core_test, s, dt)
     t = got[:, 0]
     q_ref, qd_ref, _ = sample(traj, traj.t[0] + t)

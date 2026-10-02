@@ -131,7 +131,7 @@ class Stacks:
 
 def sync_calibration(remote, config_dir) -> list[int] | Refusal:
     """The server's calibration files into `config_dir/calibration`; a local file the server
-    does not have is removed.  -> the arms that have one."""
+    does not have is removed.  -> the slots that have one."""
     arms = remote.calibration_arms()
     if isinstance(arms, Refusal):
         return arms
@@ -144,7 +144,7 @@ def sync_calibration(remote, config_dir) -> list[int] | Refusal:
     d = Path(config_dir) / "calibration"
     d.mkdir(parents=True, exist_ok=True)
     for p in d.glob("*.json"):
-        if p.stem.isdigit() and int(p.stem) not in files:
+        if p.stem not in files:
             p.unlink()
     for a, f in files.items():
         tmp = d / f"{a}.json.tmp"
@@ -158,11 +158,15 @@ class Operator:
     process's life.  `stacks`: the Stacks, or None (simulated arms)."""
 
     def __init__(self, remote, config_dir, work_dir, drivers: dict, log_dir, stacks=None,
-                 idle_s: float = 10.0, wait_s: float = 30.0, rows: Rows | None = None):
+                 idle_s: float = 10.0, wait_s: float = 30.0, rows: Rows | None = None,
+                 robots: dict | None = None):
+        """`robots`: slot -> {"robot", "ip", "serial_found", "identity"}: who the site table
+        says hangs in each slot and whether that was verified (site.identity)."""
         self.remote, self.config, self.work = remote, Path(config_dir), Path(work_dir)
         self.drivers, self.stacks = drivers, stacks
         self.idle_s, self.wait_s = idle_s, wait_s
         self.rows = rows or Rows(remote, Path(log_dir))
+        self.robots = robots or {}
         self.busy = threading.Event()
         self.quit = threading.Event()
 
@@ -172,6 +176,7 @@ class Operator:
     def serve(self) -> None:
         """Until `quit` is set."""
         self.rows.say("operator started", where=self.where(), arms=sorted(self.drivers),
+                      robots=self.robots,
                       stacks=None if self.stacks is None else self.stacks.state)
         idle = threading.Thread(target=self._idle, daemon=True)
         idle.start()
@@ -199,7 +204,7 @@ class Operator:
             if what == "run":
                 self.run(str(cmd["job"]))
             elif what == "recover":
-                self.recover(int(cmd["arm"]))
+                self.recover(str(cmd["arm"]))
             elif what == "report":
                 self.report()
             else:
@@ -222,7 +227,8 @@ class Operator:
             if hasattr(d, "retarget"):
                 d.retarget(rig)
         drivers = {a: d for a, d in self.drivers.items() if a in rig.arm_ids}
-        res = run_job(self.remote, job, rig, self.config, self.work, drivers)
+        res = run_job(self.remote, job, rig, self.config, self.work, drivers,
+                      robots=self.robots)
         if isinstance(res, Refusal):
             self.rows.say("run refused", job=job, reason=res.reason, why=res.detail,
                           where=self.where())
@@ -230,7 +236,7 @@ class Operator:
             self.rows.say("run ended", job=job, status=res.status, why=res.why,
                           where=self.where())
 
-    def recover(self, arm: int) -> None:
+    def recover(self, arm: str) -> None:
         d = self.drivers.get(arm)
         if d is None:
             self.rows.say("recover refused", arm=arm, why="not a mounted arm of this PC")
