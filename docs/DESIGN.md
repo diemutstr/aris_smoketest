@@ -333,12 +333,12 @@ a few millimetres, at worst a centimetre, and its orientation may be off.
 by four arms each, the two outer spots by the two end arms. Every arm reaches exactly two spots,
 1.21 m apart.
 
-| spot (mm from table centre, on the centre line) | arms |
+| spot (mm from table centre, on the centre line) | slots |
 |---|---|
-| -1815 | 13, 17 |
-| -605 | 13, 17, 31, 71 |
-| +605 | 31, 71, 2, 97 |
-| +1815 | 2, 97 |
+| -1815 | 1L, 1R |
+| -605 | 1L, 1R, 2L, 2R |
+| +605 | 2L, 2R, 3L, 3R |
+| +1815 | 3L, 3R |
 
 **Step 1. Paper height and tilt, automatic — built first, on its own (Pete, 2026-10-01).** Each
 arm touches the paper on a grid of about 25 points with its own pen, pen upright, the same hand

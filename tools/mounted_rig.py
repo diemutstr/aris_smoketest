@@ -1,57 +1,67 @@
 """Write a rig file for the arms that are actually mounted, from config/rig.json.
 
-    .venv/bin/python tools/mounted_rig.py --arms 31,71 --area 1.2 1.0 --out config/two_arms
+    .venv/bin/python tools/mounted_rig.py --arms 2R,3R --area 0.5 2.0 --centre 0.355 0.605 \\
+        --out config/two_arms
     .venv/bin/python tools/mounted_rig.py --check config/two_arms      # is it still in step?
 
-The written file is config/rig.json with `"mounted": false` on every other arm and the given
-drawing area (x by y, metres, centred on the table; it must lie inside what the drawable maps
-allow, which the server checks when it starts).  Everything else — steel, hangers, clearances,
-gates — is copied, so there is one source of truth and this file is derived from it; `--check`
-says whether the derived file still matches its source.  A `calibration` link next to the file
-points at config/calibration, so the same calibration files apply.
+The written file is config/rig.json with `"mounted": false` on every other slot and the given
+drawing area (x by y, metres, around the given centre in the table frame, [0, 0] by default; it
+must lie inside what the drawable maps allow, which the server checks when it starts).
+Everything else — steel, hangers, clearances, gates, pens — is copied, so there is one source of
+truth and this file is derived from it; `--check` says whether the derived file still matches
+its source.  A `calibration` link next to the file points at config/calibration, so the same
+calibration files apply.
 """
 import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "config" / "rig.json"
+SLOT = re.compile(r"[123][LR]")
 
 
-def derive(source: dict, arms: list[int], area: tuple[float, float] | None) -> dict:
+def derive(source: dict, slots: list[str], area: tuple[float, float] | None,
+           centre: tuple[float, float] | None = None) -> dict:
     out = json.loads(json.dumps(source))
-    ids = [int(a["id"]) for a in out["arms"]["list"]]
-    for a in arms:
-        if a not in ids:
-            raise SystemExit(f"no arm {a} in {SOURCE}; arms are {ids}")
-    for a in out["arms"]["list"]:
-        a["mounted"] = int(a["id"]) in arms
+    names = [a["slot"] for a in out["slots"]["list"]]
+    for s in slots:
+        if not SLOT.fullmatch(s) or s not in names:
+            raise SystemExit(f"no slot {s!r} in {SOURCE}; slots are {names}")
+    for a in out["slots"]["list"]:
+        a["mounted"] = a["slot"] in slots
     if area is not None:
         out["canvas"]["drawing_area_m"] = [float(area[0]), float(area[1])]
-    out["fences"] = fences(out["arms"]["list"], arms)
+    if centre is not None:
+        out["canvas"]["drawing_area_centre_m"] = [float(centre[0]), float(centre[1])]
+    out["fences"] = fences(out["slots"]["list"], slots)
     out["canvas"]["drawing_area_note"] = (
-        "Chosen for the mounted arms by hand (conservative); it must lie inside the area the "
-        "drawable maps give, which the server checks when it starts (aris/server/station.py).")
+        "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it "
+        "must lie inside the area the drawable maps give, which the server checks when it "
+        "starts (aris/server/station.py).")
     out["about"] = {
         "derived_from": "config/rig.json",
         "source_digest": hashlib.blake2b(SOURCE.read_bytes(), digest_size=12).hexdigest(),
-        "mounted": arms,
-        "note": "Written by tools/mounted_rig.py: the rig with only these arms mounted. Do not "
+        "mounted": list(slots),
+        "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not "
                 "edit by hand; change config/rig.json and run the tool again.",
     }
     return out
 
 
-def fences(arm_list: list[dict], mounted: list[int]) -> dict:
+def fences(slot_list: list[dict], mounted: list[str]) -> dict:
     """Planes the mounted arms stay behind: one between every row that has no mounted arm and
     the nearest row that has one, halfway, square to the table's length.  An arm that is
     present but not controlled (switched off, hanging from its hanger) is thereby ignored as a
-    body and fenced off as a region (Pete, 2026-10-01)."""
-    rows = sorted({round(float(a["axis_xy_m"][1]), 6) for a in arm_list})
-    live = sorted({round(float(a["axis_xy_m"][1]), 6) for a in arm_list if int(a["id"]) in mounted})
+    body and fenced off as a region (Pete, 2026-10-01).  A row with one arm controlled gets no
+    fence: an uncontrolled arm beside a controlled one in the same row is not guarded."""
+    rows = sorted({round(float(a["axis_xy_m"][1]), 6) for a in slot_list})
+    live = sorted({round(float(a["axis_xy_m"][1]), 6) for a in slot_list
+                   if a["slot"] in mounted})
     planes = []
     for y in rows:
         if y in live or not live:
@@ -62,17 +72,52 @@ def fences(arm_list: list[dict], mounted: list[int]) -> dict:
                            point_m=[0.0, round(mid, 6), 0.0], normal=[0.0, sign, 0.0],
                            source=f"halfway between the row at y = {y:+.4f} m (no arm controlled) "
                                   f"and the nearest controlled row at y = {near:+.4f} m"))
+    planes += column_fences(slot_list, mounted)
     return dict(source="walls that hold in every phase and job: every controlled arm's whole body "
                        "stays on the normal's side, at the wall clearance. Written by "
-                       "tools/mounted_rig.py for the rows without a controlled arm.",
+                       "tools/mounted_rig.py for the rows without a controlled arm and for the "
+                       "uncontrolled arms beside a controlled one in its row.",
                 planes=planes)
+
+
+def column_fences(slot_list: list[dict], mounted: list[str]) -> list[dict]:
+    """For every slot not controlled in a row that has a controlled arm: a plane halfway
+    between the row's two axes, square to x, normal toward the controlled arm.  The same plane
+    from several rows is written once (orchestrator, 2026-10-02: the robots in the other slots
+    hang there switched off)."""
+    out = {}
+    for row in sorted({a["slot"][0] for a in slot_list}):
+        here = [a for a in slot_list if a["slot"][0] == row]
+        live = [a for a in here if a["slot"] in mounted]
+        dead = [a for a in here if a["slot"] not in mounted]
+        if not live:
+            continue                                     # the row fence covers it
+        for d in dead:
+            for m in live:
+                xd, xm = float(d["axis_xy_m"][0]), float(m["axis_xy_m"][0])
+                mid, sign = round(0.5 * (xd + xm), 6), 1.0 if xm > xd else -1.0
+                name = f"fence_col_{'minus' if xd < xm else 'plus'}_x"
+                if name in out and out[name]["point_m"][0] != mid:
+                    name = f"{name}_{mid:+.3f}".replace(".", "p")
+                rows = out.get(name, {}).get("rows", []) + [row]
+                out[name] = dict(name=name, point_m=[mid, 0.0, 0.0], normal=[sign, 0.0, 0.0],
+                                 rows=rows)
+    planes = []
+    for f in out.values():
+        rows = f.pop("rows")
+        f["source"] = (f"halfway between the columns at x = {f['point_m'][0]:+.4f} m: the "
+                       f"uncontrolled arm(s) of row(s) {', '.join(rows)} on the far side")
+        planes.append(f)
+    return planes
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--arms", help="comma-separated arm ids that are mounted")
+    ap.add_argument("--arms", help="comma-separated slots that are mounted, e.g. 2R,3R")
     ap.add_argument("--area", nargs=2, type=float, metavar=("X", "Y"),
-                    help="drawing area in metres, centred on the table")
+                    help="drawing area in metres, x by y")
+    ap.add_argument("--centre", nargs=2, type=float, metavar=("X", "Y"),
+                    help="centre of the drawing area, table frame, metres (default 0 0)")
     ap.add_argument("--out", help="the config directory to write")
     ap.add_argument("--check", help="a config directory written by this tool: is it in step?")
     a = ap.parse_args()
@@ -80,7 +125,9 @@ def main() -> int:
     if a.check:
         path = Path(a.check) / "rig.json"
         have = json.loads(path.read_text())
-        want = derive(source, have["about"]["mounted"], tuple(have["canvas"]["drawing_area_m"]))
+        canvas = have["canvas"]
+        want = derive(source, have["about"]["mounted"], tuple(canvas["drawing_area_m"]),
+                      tuple(canvas.get("drawing_area_centre_m", (0.0, 0.0))))
         if have == want:
             print(f"{path}: in step with {SOURCE}")
             return 0
@@ -88,14 +135,24 @@ def main() -> int:
         return 1
     if not (a.arms and a.out):
         ap.error("--arms and --out are needed (or --check)")
-    arms = [int(x) for x in a.arms.split(",")]
+    slots = [x.strip() for x in a.arms.split(",")]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "rig.json").write_text(json.dumps(derive(source, arms, a.area), indent=1) + "\n")
+    (out / "rig.json").write_text(json.dumps(derive(source, slots, a.area, a.centre), indent=1)
+                                  + "\n")
     link = out / "calibration"
     if not link.exists():
         os.symlink(os.path.relpath(ROOT / "config" / "calibration", out), link)
-    print(f"wrote {out / 'rig.json'} for arms {arms}")
+    canvas = derive(source, slots, a.area, a.centre)["canvas"]
+    area = canvas.get("drawing_area_m")
+    centre = canvas.get("drawing_area_centre_m", [0.0, 0.0])
+    print(f"wrote {out / 'rig.json'} for slots {slots}")
+    print(f"drawing area {area[0]:.3f} x {area[1]:.3f} m about the centre "
+          f"({centre[0]:+.3f}, {centre[1]:+.3f}) m" if area else
+          f"no drawing area; centre ({centre[0]:+.3f}, {centre[1]:+.3f}) m")
+    print("reminder: the area must lie inside the area the drawable maps give for these arms "
+          "about that same centre (the system planner computes it; the server refuses to start "
+          "otherwise)")
     return 0
 
 

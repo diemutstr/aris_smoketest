@@ -1,12 +1,12 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "f4c4a63e0bb1ae711b4a1ce0",
+  "source_digest": "a49f44df99326c1022ec1307",
   "mounted": [
-   31,
-   71
+   "2R",
+   "3R"
   ],
-  "note": "Written by tools/mounted_rig.py: the rig with only these arms mounted. Do not edit by hand; change config/rig.json and run the tool again."
+  "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not edit by hand; change config/rig.json and run the tool again."
  },
  "table": {
   "source": "scripts/draw_axes_frame.py (Pete's tape, 2026-09-16: 416.6 cm long)",
@@ -23,16 +23,22 @@
    0.0
   ],
   "drawing_area_m": [
-   1.2,
-   1.0
+   0.36,
+   2.0
   ],
-  "drawing_area_note": "Chosen for the mounted arms by hand (conservative); it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
+  "drawing_area_centre_m": [
+   0.4,
+   0.605
+  ],
+  "drawing_area_centre_note": "the centre of the drawing area in the table frame (x, y); [0, 0] when absent. The system planner and the drawing server place the area here (2026-10-02).",
+  "drawing_area_note": "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
  },
- "arms": {
-  "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for arm 31, 2026-09-14 against the seam bars, at the lateral holder tool).",
+ "slots": {
+  "about": "An arm is named by its SLOT on the frame, not by the robot that hangs there (decided 2026-10-02): rows 1, 2, 3 along table y (-1.21, 0, +1.21 m), L at table x = -0.305, R at +0.305. Which robot hangs in which slot is in site/ (site/aris_2026-10.json) and nowhere in the planning code. Old robot ids: 13 = 1L, 17 = 1R, 31 = 2L, 71 = 2R, 2 = 3L, 97 = 3R.",
+  "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for slot 2L (then arm 31), 2026-09-14 against the seam bars, at the lateral holder tool).",
   "list": [
    {
-    "id": 13,
+    "slot": "1L",
     "axis_xy_m": [
      -0.305,
      -1.2102133333333334
@@ -67,7 +73,7 @@
     "mounted": false
    },
    {
-    "id": 17,
+    "slot": "1R",
     "axis_xy_m": [
      0.305,
      -1.2102133333333334
@@ -102,7 +108,7 @@
     "mounted": false
    },
    {
-    "id": 31,
+    "slot": "2L",
     "axis_xy_m": [
      -0.305,
      0.0
@@ -134,10 +140,10 @@
      1.2335,
      -1.3841
     ],
-    "mounted": true
+    "mounted": false
    },
    {
-    "id": 71,
+    "slot": "2R",
     "axis_xy_m": [
      0.305,
      0.0
@@ -172,7 +178,7 @@
     "mounted": true
    },
    {
-    "id": 2,
+    "slot": "3L",
     "axis_xy_m": [
      -0.305,
      1.2102133333333334
@@ -207,7 +213,7 @@
     "mounted": false
    },
    {
-    "id": 97,
+    "slot": "3R",
     "axis_xy_m": [
      0.305,
      1.2102133333333334
@@ -239,57 +245,57 @@
      1.3231,
      -0.5932
     ],
-    "mounted": false
+    "mounted": true
    }
   ]
  },
  "rows_and_phases": {
-  "source": "docs/DESIGN.md section 3 (Pete, 2026-09-29): three rows of two arms; phase 1 leaders 13, 71, 2; phase 2 leaders 17, 31, 97",
+  "source": "docs/DESIGN.md section 3 (Pete, 2026-09-29): three rows of two arms; phase 1 leaders 1L, 2R, 3L; phase 2 leaders 1R, 2L, 3R (the old arms 13, 71, 2 and 17, 31, 97)",
   "rows": [
    [
-    13,
-    17
+    "1L",
+    "1R"
    ],
    [
-    31,
-    71
+    "2L",
+    "2R"
    ],
    [
-    2,
-    97
+    "3L",
+    "3R"
    ]
   ],
   "leaders": {
    "1": [
-    13,
-    71,
-    2
+    "1L",
+    "2R",
+    "3L"
    ],
    "2": [
-    17,
-    31,
-    97
+    "1R",
+    "2L",
+    "3R"
    ]
   },
   "walls": {
    "1": [
     [
-     13,
-     71
+     "1L",
+     "2R"
     ],
     [
-     71,
-     2
+     "2R",
+     "3L"
     ]
    ],
    "2": [
     [
-     17,
-     31
+     "1R",
+     "2L"
     ],
     [
-     31,
-     97
+     "2L",
+     "3R"
     ]
    ]
   },
@@ -517,8 +523,8 @@
   "source": "the old gates (docs/STAGED_LESSONS_2026-09-29.md L135); they do not change. The checker demands these.",
   "steel_m": 0.05,
   "arm_to_arm_m": 0.05,
-  "wall_m": 0.025,
-  "wall_note": "half of arm_to_arm: two arms on opposite sides of a wall are then arm_to_arm apart",
+  "wall_m": 0.04,
+  "wall_note": "0.040 until the arms' x and y are calibrated (they are 1-2 cm off today; orchestrator, 2026-10-02); then back to 0.025, half of arm_to_arm, so that two arms on opposite sides of a wall are arm_to_arm apart. Fences use the same clearance.",
   "body_to_paper_m": 0.02,
   "pen_lifted_to_paper_m": 0.02,
   "pen_lifted_to_paper_note": "20 mm until the calibration routine is proven on the rig; then 3 mm (Pete and the orchestrator, 2026-09-30). The sequencer lifts the pen this far plus 2 mm, and the free-space planner keeps it at least this far above the paper.",
@@ -549,8 +555,7 @@
   "pen_lean_max_deg": 15.0
  },
  "drawing": {
-  "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now).",
-  "draw_speed_m_per_s": 0.02,
+  "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now). The speed on the paper and the press belong to the pen: pens.table.<pen>.speed_m_per_s and press_m (2026-10-02).",
   "landing_speed_m_per_s": 0.01,
   "landing_speed_note": "the pen tip's speed on a lower as it meets the paper: Diemut's landing rate on the hardware (10 mm/s); a fast landing against the soft normal spring spikes the force (orchestrator, 2026-10-01)",
   "lift_height_m": 0.025,
@@ -559,21 +564,34 @@
   "speed_fraction": 0.3,
   "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
  },
- "pen": {
-  "source": "facts of pen and paper, from Diemut's hardware tests (control-stack briefing 2026-09-09, sections 9 and 10), moved here from robot/site.json 2026-10-01: they travel in the job header so both machines use the same numbers. Graphite mine (2 mm, 4H / H). A gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N.",
-  "force_band_n": [
-   0.7,
-   1.0
-  ],
-  "force_band_note": "intensity 0..1 maps linearly onto this band; tone is force (about 0.04 N per step of 9)",
-  "force_levels": 9,
-  "force_cap_n": 3.5,
-  "force_ramp_m": 0.002,
-  "force_ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
-  "lift_ramp_s": 0.2,
-  "servo_ki_per_s": 1.0,
-  "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
-  "servo_trim_max_n": 1.0
+ "pens": {
+  "source": "the pens the holder can carry; `current` names the one that is in (DESIGN 4c, 2026-10-02). rig.pen() hands out the current entry (plus its name) and the server copies it into every job header; rig.rules() takes press and drawing speed from it; the tool model takes its length and capsule radius from it unless the slot's calibration has a passing pen part for this pen.",
+  "current": "graphite_4h",
+  "table": {
+   "graphite_4h": {
+    "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule). Force numbers (mode B only): Diemut's hardware tests, control-stack briefing 2026-09-09 sections 9 and 10, moved here from robot/site.json 2026-10-01. A gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N.",
+    "press_m": 0.0035,
+    "press_note": "the drawing surface lies this far below the measured paper: with position control the pen is pressed into the paper by planning it there",
+    "speed_m_per_s": 0.015,
+    "speed_note": "speed of the tip along a line on the paper",
+    "tip_length_nominal_m": 0.02,
+    "tip_length_note": "how far the graphite stands past the cap's outer face, along the bore; the tool model is built for 0.020. A different length moves the tip along the pen axis. A passing pen part of the slot's calibration replaces it with the measured tip.",
+    "capsule_radius_m": 0.005,
+    "force_band_n": [
+     0.7,
+     1.0
+    ],
+    "force_band_note": "mode B: intensity 0..1 maps linearly onto this band; tone is force (about 0.04 N per step of 9)",
+    "force_levels": 9,
+    "force_cap_n": 3.5,
+    "force_ramp_m": 0.002,
+    "force_ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
+    "lift_ramp_s": 0.2,
+    "servo_ki_per_s": 1.0,
+    "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
+    "servo_trim_max_n": 1.0
+   }
+  }
  },
  "execution": {
   "source": "what the executor checks before it runs a motion (orchestrator, 2026-09-30)",
@@ -581,7 +599,7 @@
   "start_tolerance_note": "per joint: what a joint trajectory controller accepts before it starts; the executor refuses a motion whose start is further than this from the measured configuration in any joint"
  },
  "fences": {
-  "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm.",
+  "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm and for the uncontrolled arms beside a controlled one in its row.",
   "planes": [
    {
     "name": "fence_row_-1p210",
@@ -598,18 +616,18 @@
     "source": "halfway between the row at y = -1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
    },
    {
-    "name": "fence_row_+1p210",
+    "name": "fence_col_minus_x",
     "point_m": [
      0.0,
-     0.605106,
+     0.0,
      0.0
     ],
     "normal": [
+     1.0,
      0.0,
-     -1.0,
      0.0
     ],
-    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+    "source": "halfway between the columns at x = +0.0000 m: the uncontrolled arm(s) of row(s) 2, 3 on the far side"
    }
   ]
  }

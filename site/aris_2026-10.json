@@ -1,0 +1,24 @@
+{
+  "about": {
+    "what": "Which robot hangs in which slot of the frame, as of October 2026 (decided 2026-10-02: arms are named by slot; the old prime-number robot ids live on only here). Read by the robot side (robot/), never by the planning code: aris/rig.py does not read site/.",
+    "slots_note": "slot = row 1..3 along table y (-1.21, 0, +1.21 m) and L/R by table x (-0.305 / +0.305); see config/rig.json slots.",
+    "mapping_source": "the orchestrator's brief, 2026-10-02: 13 -> 1L, 17 -> 1R, 31 -> 2L, 71 -> 2R, 2 -> 3L, 97 -> 3R. The ids were permuted on the hardware once already; verify every row with `aris-robot identify` before a run.",
+    "ip_source": "robot/site.json `arms` (control-stack briefing 2026-09-09, section 5, arm_registry.py), carried over by robot id. The DDS domain there was the robot id; it is copied as `domain`.",
+    "live_note": "on 2026-10-02 the arms under control are 2R and 3R (config/two_arms). 2L has no arm hanging (its hanger is steel only).",
+    "sure_note": "`sure: false` marks a row nobody has checked against the hardware since the permutation; the reason is in `why`."
+  },
+  "slots": {
+    "1L": {"robot": "fr3-13", "ip": "192.168.50.11", "domain": 13, "sure": false,
+           "why": "not checked since the permutation; arm not under control"},
+    "1R": {"robot": "fr3-17", "ip": "192.168.50.16", "domain": 17, "sure": false,
+           "why": "not checked since the permutation; arm not under control"},
+    "2L": {"robot": "fr3-31", "ip": "192.168.50.12", "domain": 31, "sure": false,
+           "why": "the 2026-10-02 brief says no arm hangs in 2L today; where robot 31 is now is not known here"},
+    "2R": {"robot": "fr3-71", "ip": "192.168.50.14", "domain": 71, "sure": false,
+           "why": "live today, but robot 71 had no IP on 2026-09-15 (HARDWARE_DAY1 1.6); the address .14 is the briefing's, confirm it"},
+    "3L": {"robot": "fr3-2", "ip": "192.168.50.13", "domain": 2, "sure": false,
+           "why": "not checked since the permutation; whether a robot hangs here (switched off) is not known here"},
+    "3R": {"robot": "fr3-97", "ip": "192.168.50.15", "domain": 97, "sure": false,
+           "why": "live today; address from the briefing, confirm with `aris-robot identify`"}
+  }
+}
