@@ -88,7 +88,14 @@ class Executor:
             kind = item.motion.kind
             r = (self.driver.move(item.motion.traj) if kind == "free"
                  else self.driver.touch(item.motion) if kind == "touch"
+                 else self.driver.guide(item.motion) if kind == "guide"
                  else self.driver.draw(item.motion))
+            if kind == "guide" and r.done:
+                # the mark calibration reads these rows: where the person left the arm with
+                # the pen on the mark, and which button they pressed
+                mark = item.motion.piece.line_id if item.motion.piece is not None else ""
+                self._log("registered", phase, index=item.index, q=r.q, button=r.why, mark=mark)
+                r = Result.ok(self.driver.state().q)
             if kind == "touch":
                 if r.done:
                     # the calibration reads these rows: where the pen met the paper

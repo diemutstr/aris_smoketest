@@ -399,6 +399,30 @@ coincide to within a millimetre. This is looked at, not measured.
 **Output.** One dated file per arm: pose, tip, height map, fit errors, pass or fail. The drawing
 server refuses to draw without a passing calibration.
 
+**Steps 2 and 3 as built (decided 2026-10-05): marks, pivots, pairs.** Checked against the
+drawable maps, the single four-arm spot of the first design does not work (12 % of the pen
+orientations there, and one point shared across two rows leaves the end rows' yaw free). The
+layout is ten spots, each shared by exactly two neighbouring arms (`docs/figures/marks_six_slots.png`):
+the row pairs share two spots on the centre line (A/B at (0, ∓0.40) for the middle row, (0,
+∓0.81) and (0, ∓1.61) for the end rows), the column pairs share one seam spot each at (±0.20,
+±0.605). Every arm therefore has at least two shared spots (its yaw), and every seam is tied by
+two points (the yaw between rows). The frame is a convention: A is at its nominal position and
+A→B is +y; everything else is solved. Per arm: one pivot (3–4 hand orientations at its first
+spot, which gives the pen tip) and a single touch at every other spot; two arms ≈ 10 touches,
+six ≈ 38. The protocol is `docs/figures/mark_protocol.png`: `aris mark` once; then the arm's
+light (blue: stay clear, white: guide) and the pilot buttons (✓ registered, ✗ redo, ○ skip) are
+the whole interface. The person's final position and orientation are the sample; the planned
+hover is only the approach. Calibration is flown by its own driver (libfranka through
+panda-py, with Desk for modes and buttons), with the arm's ROS stack stopped for the job — a
+mode switch never reaches a running controller.
+
+**Subsets.** `aris mark` does every controlled slot; `--group row2 | rows12 | rows23` or a list
+of slots does fewer. x, y and yaw only exist relative to the spots, so a spot's position must be
+known for an arm to be placed by it: a full or group calibration solves arms and spots
+together; a later subset uses the spots solved before as known (`config/calibration/marks.json`
+carries each spot's state, nominal or solved with its date); a single arm needs two already
+solved spots, else the solver refuses with "needs a partner".
+
 ## Checker
 
 An independent check of everything that goes to a robot. It shares no code with the planners.

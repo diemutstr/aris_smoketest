@@ -67,6 +67,13 @@ class Driver(Protocol):
         same way.  done with `q` = the joints at contact; failed("no contact") when nothing was
         met within the depth, with the arm back at the hover."""
 
+    def guide(self, motion: Motion) -> Result:
+        """A "guide" motion: hand the arm to the person (programming mode, light white), wait
+        for a pilot button, take it back (execution mode) and read the joints standing still.
+        done with `q` = those joints and `why` = the button: "check" (registered), "cross"
+        (redo this touch), "circle" (skip this mark).  failed(...) when the hand-over itself
+        failed (no Desk, timeout) — then the arm holds where it is."""
+
     def hold(self) -> None:
         """Stand still where the arm is, for as long as it takes."""
 

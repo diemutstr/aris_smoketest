@@ -85,6 +85,10 @@ Types are in `aris/types.py`. The calls:
 (`rig.json pens.current`); otherwise the nominal values, with the status saying why. The plane
 job writes `base`; `aris touchoff <slot>` writes `pen`; neither touches the other part.
 
+## Calibration marks (`config/rig.json` `marks`, `config/calibration/marks.json`)
+
+rig.json `marks`: `{"frame": "A at its nominal position, A->B is +y", "list": [{"name": "A", "xy_m": [0, -0.40], "shared_by": ["2L", "2R"]}, ...]}`; `tools/mounted_rig.py` keeps the marks whose sharers are all controlled. `calibration/marks.json`: per mark `{"xy_m": [...], "state": "nominal" | "solved", "date", "residual_mm"}`. The server's `aris mark` writes it and every slot's `base` part (`method: "marks"`).
+
 ## What is checked is what is flown
 
 Timing rounds the corners of a path, so the path that is flown is not exactly the path that was

@@ -226,7 +226,12 @@ class Motion:
     # contact, where it reads its joints; finding none by the planned end, it may keep going
     # straight on for `extra_depth` before giving up.  The planned path is what is checked;
     # the extra depth is the declared uncertainty of the paper's height.
-    kind: Literal["draw", "free", "lower", "lift", "touch"]
+    # guide (calibration marks): the arm stands at a hover near a mark; the driver hands it to
+    # the person (programming mode), who seats the pen tip on the mark and presses a pilot
+    # button; the driver takes it back and reads the joints standing still.  `traj` is the
+    # hover (one sample, where the arm is); `piece.line_id` names the mark; `tip_base` the
+    # mark's nominal position.  The registered joints come back as an event row.
+    kind: Literal["draw", "free", "lower", "lift", "touch", "guide"]
     traj: Trajectory
     piece: Piece | None = None         # draw motions: what is being drawn
     tip_base: np.ndarray | None = None # draw and touch motions: (N, 3) tips, same samples as traj
