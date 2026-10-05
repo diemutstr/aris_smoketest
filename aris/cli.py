@@ -91,13 +91,15 @@ def report_lines(rep: dict) -> list[str]:
         for n in rep.get("notes", []) + [f"redone: {x}" for x in rep.get("redone", [])]:
             out.append(f"  {n}")
         for sl, e in rep.get("per_slot", {}).items():
-            out.append(f"slot {sl:<7} moved {e.get('moved_mm')} mm, turned {e.get('turned_mrad')} "
-                       f"mrad, tip {e.get('tip_change_mm')} mm; residual rms "
-                       f"{e.get('residual_rms_mm')} mm, worst {e.get('residual_max_mm')} mm")
+            out.append(f"slot {sl:<7} moved {e.get('moved_mm')} mm, yaw {e.get('yaw_mrad')} mrad, "
+                       f"tip {e.get('tip_change_mm')} mm; rms {e.get('residual_rms_mm')} mm, "
+                       f"pivot {e.get('pivot_residuals_mm')} mm")
         for n, e in rep.get("marks", {}).items():
-            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')}"
-                       + (f", between its arms {e['between_arms_mm']} mm"
-                          if "between_arms_mm" in e else ""))
+            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')}, rms "
+                       f"{e.get('residual_mm')} mm, by {e.get('by')}"
+                       + (f" ({e['note']})" if e.get("note") else ""))
+        for p in rep.get("pairs", []):
+            out.append(f"pair         {p['slots']} on {p['marks']}: {p['disagreement_mm']} mm")
     if rep.get("kind") == "touchoff":
         ref = rep.get("reference", {})
         out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "

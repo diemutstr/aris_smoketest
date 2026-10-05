@@ -242,6 +242,10 @@ class _Recorder:
         self.calls.append(("touch", motion.kind))
         return self.arm.touch(motion)
 
+    def guide(self, motion):
+        self.calls.append(("guide", motion.kind))
+        return self.arm.guide(motion)
+
     def hold(self):
         self.arm.hold()
 

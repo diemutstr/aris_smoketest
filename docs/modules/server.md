@@ -83,6 +83,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `GET /jobs/{id}/queues/{phase}/{slot}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
 | `POST /jobs/{id}/events` | the operator PC: `{source, rows: [{seq, ...}]}`; each row appended to the job's log once, in seq order; answers `{accepted, next_seq, stop}` (stop: the job was stopped here) |
 | `POST /calibrate/{slot}` | the calibrate job for one slot (below): the file's `base` part; 409 if a job runs |
+| `POST /mark?slots=2L,2R&group=rows12` | the mark job (below), for the slots named or a group (default: the group "all", else every controlled slot) |
 | `POST /touchoff/{slot}` | the touch-off job (below): the file's `pen` part |
 | `GET /operator/next?wait=30` | the operator PC: the oldest command it has not acknowledged, or 204 after the wait: `run` a job, `recover` an arm, `report` |
 | `POST /operator/ack` | the operator PC: `{"id": n}`, the command was taken (it is given again until then) |
@@ -101,6 +102,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `aris draw --rest-of <job id>` | draw what that stopped or finished job left over: its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
 | `aris calibrate <slot>` | touch the paper on a grid with that slot's arm: the `base` part of its calibration file |
+| `aris mark [slots ...] [--group all\|row2\|rows12\|rows23]` | the mark job: guide each arm's pen onto its marks; x, y, yaw and the pen tip |
 | `aris touchoff <slot>` | one touch at the slot's reference point: the `pen` part (after every pen switch or handling of the pencil) |
 | `aris recover <slot>` | release an arm after a fault |
 | `aris plan <drawing> [--out dir]` | plan and check only, no server, no arms; writes the job directory and prints the report |
@@ -209,6 +211,49 @@ own pen and joints. `aris calibrate 2R`.
    contact" and goes on, the point is named in the report, and the job fails only if fewer
    than 9 contacts remain.
 
+## The mark job
+
+Steps 2 and 3 of the calibration (DESIGN.md section 6), as `docs/figures/mark_protocol.png`
+draws it: `aris mark` once, then the arms' lights and the pilot buttons.
+
+- **Who.** The slots named, or a group's (`--group all | row2 | rows12 | rows23`; default the
+  group "all", or every controlled slot when the rig has no such group), in rig order, one arm
+  at a time, the others standing (parked, or given to the checker as their joints).
+- **What each arm touches.** Its marks among the group's (`rig.marks_for(slots)`, the ones it
+  shares): at its first mark four hand orientations — the pivot: the pen upright and three
+  tilts of 25 degrees, 120 degrees apart (turned by up to 60 degrees where a tilt is out of
+  reach; tilting, not only turning, is what pins the pen length) — and one upright touch at
+  every other mark.
+- **Planned up front.** For each touch a free move to the hover (the pen 30 mm above the mark,
+  `rig.mark_xy`: the solved position when there is one), by way of 80 mm up when turning the
+  pen near the paper is cramped, then a `guide` there; then home. Every motion is checked
+  (the guide stands at the hover, which the checker held as the move's end), the arm's whole
+  phase is queued at once.
+- **The guide.** The driver hands the arm to the person (light white), who seats the pen on the
+  mark and presses a pilot button; the executor writes the "registered" row (joints, button,
+  mark); the driver lifts the pen 3 cm and returns to the hover itself, so the next move starts
+  there. ✓ check: the touch counts. ✗ cross: never reaches the server (the driver waits for the
+  next button). ○ circle: the touch is marked skipped for the solver; the rest runs. A guide
+  whose hand-over fails fails the job; the arm holds at its hover.
+- **After each arm.** The pivot's own fit (`aris.calib.marks.pivot`): a touch it names as off
+  the common point gets one small extra phase ("mark 2L again": to that hover, the guide,
+  home); then the next arm.
+- **At the end.** The joint solve over every arm of the group (`aris.calib.solve_marks`), the
+  marks solved before as known (`rig.mark_state`; a later subset needs them: a single arm needs
+  two solved marks, else "needs a partner"), the base parts' tips for the height. When it
+  passes, `aris.calib.files.write_mark_solution` writes every slot's `base` (method "marks")
+  and `pen` (the pivot's tip) and `calibration/marks.json`, and the rig reloads. When it fails,
+  the report's why names the slot, mark or touch and **nothing is written**. The report gives
+  per slot the move and yaw against the job's start, the distance from rig.json's nominal axis,
+  the tip change, the pivot's residuals and the slot's RMS; per mark its position, state,
+  residual and who touched it; per pair of arms their disagreement; the buttons, skips and
+  redone touches.
+
+**In simulation** the person is simulated (`aris/server/simtruth.py`): in a "true" world
+(`aris serve --sim-truth <config dir>`, or `--sim-base-error 3,2`: every base 3 mm and 2 mrad
+off in x, y, yaw, the quantities the marks find), they seat the true pen tip on the true mark in
+the hover's hand orientation, 0.3 mm off, and press ✓ (tests script ✗, ○ and a failed hand-over).
+
 ## The touch-off job
 
 `aris touchoff 2R`, after every pen switch or handling of the pencil: with a geometric press
@@ -313,7 +358,8 @@ A park job's report says per arm "parked", "already at its park" or why not.
 
 - Resume after a stop or a failure; re-planning after a failure.
 - SVG drawings.
-- Steps 2 to 5 of the calibration (dimples, pen length, the drawn check).
+- Steps 4 and 5 of the calibration (the pen length against the pin, the drawn check); the
+  mark job (steps 2 and 3) is built.
 - The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them.
 - Pause.
 - Clearing an arm's fault from the server.
@@ -329,6 +375,14 @@ the area is scaled, and a stop in the middle of drawing leaves every arm stopped
 with the rest left over as "stopped"; a drawing too big to fit makes `aris draw` fail; `aris
 park` parks every arm from a random near-park configuration and `aris check` confirms the park
 queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
+
+The mark job (`tests/test_server_mark.py`, simulated person, real executor, queues and solver):
+on the two-arm rig with every base 3 mm and 2 mrad off, 10 touches (a ✗ handled inside the
+driver), the files written, x, y within 1 mm and yaw within 1.5 mrad of the truth, the rig
+reloaded with base and pen applied; a ○ that leaves 2R one mark only: the solve refuses ("needs
+a partner"), nothing written, both arms home; a failed hand-over: the job fails, the arm holds
+at its hover; a touch named bad: one extra phase; `--group rows12` on the six-slot rig: 24
+touches, four slots applied, 3L untouched. 6 tests, 29 s.
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen, tracking and note; `--rest-of` (a job stopped midway, its leftovers

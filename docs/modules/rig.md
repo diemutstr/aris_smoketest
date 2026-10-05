@@ -300,11 +300,12 @@ built", `docs/figures/marks_six_slots.png`), each shared by exactly two neighbou
 | A, B | (0, −0.40), (0, +0.40) | 2L, 2R |
 | R1a, R1b | (0, −1.61), (0, −0.81) | 1L, 1R |
 | R3a, R3b | (0, +0.81), (0, +1.61) | 3L, 3R |
-| S12L, S12R | (−0.20, −0.605), (+0.20, −0.605) | 1L+2L, 1R+2R |
-| S23L, S23R | (−0.20, +0.605), (+0.20, +0.605) | 2L+3L, 2R+3R |
+| S12L, S12R | (−0.30, −0.605), (+0.30, −0.605) | 1L+2L, 1R+2R |
+| S23L, S23R | (−0.30, +0.605), (+0.30, +0.605) | 2L+3L, 2R+3R |
 
-Every slot shares at least two spots (its yaw). The frame is a convention: A stays at its
-nominal position and A→B is +y; everything else is solved. `groups` names the subsets
+Every slot shares at least two spots (its yaw). The frame is anchored on the arms' nominal
+mountings (a rigid fit of the solved slot positions onto them); the marks are solved wherever
+they really are, 2–5 cm from the nominal spots by hand. `groups` names the subsets
 `aris mark --group` takes: `all`, `row2`, `rows12`, `rows23`.
 
 `Rig.marks` (name → nominal xy and the two sharers), `Rig.mark_groups`, and

@@ -31,7 +31,8 @@ MARKS_CONVENTION = (
     "rotation = Rz(yaw) @ the rotation the rig had (a turn about the table's vertical through "
     "the base origin); x, y solved; z, roll and pitch as before (the plane job), z moved by the "
     "hand-z part of the tip change when the solver was given the tip the plane was measured "
-    "with. Frame: mark A at its nominal position, A->B along +y.")
+    "with. Frame: the solved slot axes fitted rigidly onto the nominal mountings (or marks "
+    "solved before held it); see `frame` in calibration/marks.json.")
 
 
 def calibration_file(config_dir, slot: Slot) -> Path:
@@ -122,7 +123,7 @@ def marks_base_part(r: SlotFit, date: str | None = None, before: dict | None = N
         "T_table_base_before": _list(r.T_before, 12),
         "convention": MARKS_CONVENTION,
         "measured_with": {"pen": r.pen, "tip_hand_m": _list(r.tip_hand)},
-        "shift_from_nominal_mm": _mm(r.shift), "yaw_change_mrad": round(r.yaw * 1e3, 5),
+        "shift_from_nominal_mm": _mm(r.shift), "yaw_from_nominal_mrad": round(r.yaw * 1e3, 5),
         "residuals": {"n_points": int(r.n_touches), "rms_mm": _mm(r.rms)},
         "pivot": {"mark": r.pivot_mark, "spread_deg": _deg(r.pivot.spread),
                   "residuals_mm": _list(r.pivot.residuals * 1e3, 4)},
@@ -140,9 +141,9 @@ def write_base(result, config_dir, date: str | None = None) -> Path:
 
 
 def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> Path:
-    """`calibration/marks.json`: every mark this solution solved (A included, it is the frame),
-    as {"marks": {name: {xy_m, state "solved", date, residual_mm}}}; marks it took as known, and
-    marks it did not touch, stay as they were.  Only a passing solution is written."""
+    """`calibration/marks.json`: every mark this solution solved, as {"marks": {name: {xy_m,
+    state "solved", date, from_nominal_mm, residual_mm}}}; marks it took as known, and marks it
+    did not touch, stay as they were.  Only a passing solution is written."""
     if not solution.passed:
         raise ValueError(f"a refused mark solution is not written: {solution.why}")
     path = Path(config_dir) / "calibration" / "marks.json"
@@ -153,9 +154,10 @@ def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> 
         if m.state == "known":
             continue
         marks[name] = {"xy_m": _list(m.xy, 9), "state": "solved", "date": day,
+                       "from_nominal_mm": _list(m.from_nominal * 1e3, 3),
                        "residual_mm": _mm(m.residual), "by": list(m.by),
                        **({"note": m.note} if m.note else {})}
-    return _write_json(path, {"frame": "A at its nominal position, A->B is +y", "marks": marks})
+    return _write_json(path, {"frame": solution.frame, "marks": marks})
 
 
 def write_mark_solution(rig, solution: MarkSolution, config_dir,

@@ -406,8 +406,12 @@ layout is ten spots, each shared by exactly two neighbouring arms (`docs/figures
 the row pairs share two spots on the centre line (A/B at (0, ∓0.40) for the middle row, (0,
 ∓0.81) and (0, ∓1.61) for the end rows), the column pairs share one seam spot each at (±0.20,
 ±0.605). Every arm therefore has at least two shared spots (its yaw), and every seam is tied by
-two points (the yaw between rows). The frame is a convention: A is at its nominal position and
-A→B is +y; everything else is solved. Per arm: one pivot (3–4 hand orientations at its first
+two points (the yaw between rows). The frame is anchored on the arms' mountings, not on the
+marks: a rigid fit (shift and turn) of the solved slot positions onto their nominal ones from
+the technical drawing (1–2 cm) fixes the three free numbers; the marks, drawn by hand 2–5 cm
+from their nominal spots, are solved wherever they are. Anchoring on a mark would shift the
+steel, the fences and the drawing area by the mark's error against the real table (decided
+2026-10-05 after Pete's "expect 2–5 cm"). Per arm: one pivot (3–4 hand orientations at its first
 spot, which gives the pen tip) and a single touch at every other spot; two arms ≈ 10 touches,
 six ≈ 38. The protocol is `docs/figures/mark_protocol.png`: `aris mark` once; then the arm's
 light (blue: stay clear, white: guide) and the pilot buttons (✓ registered, ✗ redo, ○ skip) are

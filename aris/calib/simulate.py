@@ -42,11 +42,14 @@ def _spread_pick(axes, k, start):
 
 
 def simulate_touches(rig_true, rig_nominal, slots, marks, noise=(0.3e-3, 0.3e-3), seed=0,
-                     pivot_touches=4) -> dict:
+                     pivot_touches=6, independent=False) -> dict:
     """{slot: {mark: (K,7)}} for every slot in `slots` and every mark of `marks` ({name: true
     xy}) that the slot shares (rig_nominal.marks).  The slot's first reachable mark gets a pivot
     of `pivot_touches` spread orientations, every other mark one touch.  noise = (guiding error,
-    m, a random horizontal offset of the tip; joint noise, rad, per joint)."""
+    m, a random horizontal offset of the tip; joint noise, rad, per joint).  The guiding error
+    is one offset per slot and mark (a pen seated off a dimple's centre stays there while the
+    hand turns), or with `independent` a fresh one per touch (a cross-hair drawn on the wood,
+    the pen lifted and seated again by eye for every touch)."""
     rng = np.random.default_rng(seed)
     guide, joint = noise
     out = {}
@@ -59,7 +62,7 @@ def simulate_touches(rig_true, rig_nominal, slots, marks, noise=(0.3e-3, 0.3e-3)
         for name, xy in marks.items():
             if slot not in rig_nominal.marks[name][1]:
                 continue
-            Q, s = _poses(arm, R, t, normal, xy, rng, guide, rig_true.paper_z)
+            Q, s = _poses(arm, R, t, normal, xy, rng, guide, rig_true.paper_z, independent)
             ok = np.nonzero(np.isfinite(Q[:, 0]))[0]
             if not len(ok):
                 raise ValueError(f"simulation: {slot} cannot reach mark {name}")
@@ -72,32 +75,27 @@ def simulate_touches(rig_true, rig_nominal, slots, marks, noise=(0.3e-3, 0.3e-3)
     return out
 
 
-def _poses(arm, R, t, normal, xy, rng, guide, paper_z, upright=False):
-    """IK at every orientation (spin x lean; spins only when `upright`) for the tip on the mark
-    plus the guiding error: one offset per mark and slot, as a pen seated off the dimple's
-    centre stays there while the hand turns."""
-    leans = LEANS[:1] if upright else LEANS
+def _poses(arm, R, t, normal, xy, rng, guide, paper_z, independent=False):
+    """IK at every orientation (spin x lean) for the tip on the mark plus the guiding error:
+    one offset for all orientations, or a fresh one per orientation when `independent`."""
+    leans = LEANS
     spin = np.repeat(SPINS, len(leans))
     lean = np.tile(leans, (len(SPINS), 1))
-    ang = rng.uniform(0.0, 2 * np.pi)
-    off = guide * np.array([np.cos(ang), np.sin(ang), 0.0])
+    ang = rng.uniform(0.0, 2 * np.pi, len(spin) if independent else 1)
+    off = guide * np.column_stack([np.cos(ang), np.sin(ang), np.zeros(len(ang))])
     p_base = (np.array([xy[0], xy[1], paper_z]) + off - t) @ R
-    return _reachable(arm, arm.hand_pose(np.repeat(p_base[None], len(spin), 0), normal, spin,
-                                         lean))
+    p_base = np.broadcast_to(p_base, (len(spin), 3))
+    return _reachable(arm, arm.hand_pose(p_base, normal, spin, lean))
 
 
-def true_marks(rig, names, scatter=0.005, seed=0) -> dict:
-    """Mark positions as a person would tape them: nominal plus up to `scatter` m, except the
-    frame's gauge (A exactly nominal, B straight along +y from it)."""
+def true_marks(rig, names, off=(0.02, 0.05), seed=0) -> dict:
+    """Mark positions as a person would draw them on the wood by eye: nominal plus an offset of
+    `off[0]`..`off[1]` m in a random direction."""
     rng = np.random.default_rng(seed)
     out = {}
     for n in names:
-        xy = rig.marks[n][0] + rng.uniform(-scatter, scatter, 2)
-        if n == "A":
-            xy = rig.marks[n][0].copy()
-        out[n] = xy
-    if "A" in out and "B" in out:
-        out["B"][0] = out["A"][0]
+        a, r = rng.uniform(0.0, 2 * np.pi), rng.uniform(*off)
+        out[n] = rig.marks[n][0] + r * np.array([np.cos(a), np.sin(a)])
     return out
 
 

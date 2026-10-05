@@ -101,67 +101,82 @@ is 'gel_07'`.
 
 ## The mark job (base x, y, yaw; and a pen tip)
 
-There are ten marks, small dimpled plates on the table. Each is shared by two neighbouring
-slots: the row pairs share two marks on the centre line, the column pairs one seam mark each
-(rig.json `marks`). A person guides the pen into each mark.
+There are ten marks: sharpie cross-hairs drawn on the wood by eye, 2–5 cm from their nominal
+places. Each is shared by two neighbouring slots: the row pairs share two marks on the centre
+line, and the column pairs one seam mark each (rig.json `marks`). A person guides the pen onto
+each mark. Every touch is a fresh seating: the arm lifts and returns to its hover in between.
 
-- At its **first mark** a slot is guided through 3 or 4 hand orientations, with the pen kept
-  seated. This is the **pivot**. Each touch says "hand pose k times tip = mark", which gives
-  6 unknowns and 3 equations per touch. Least squares gives the tip in the hand (its true
-  length included) and the mark in the base frame.
-- At **every other mark** it touches once, read with that tip.
+- **The pivot.** At its first mark a slot is guided through six hand orientations, tilted and
+  turned, with the tip on the mark.
+  - Each touch says "hand pose k times tip = mark": 6 unknowns, 3 equations per touch.
+  - Least squares gives the tip in the hand (its true length included) and the mark in the
+    base frame.
+  - The tilts matter. Turning the hand only about the vertical leaves the tip's part along
+    that axis free, and the solver refuses such a pivot.
+- **Every other mark** is touched once and read with that tip.
 
-**The solve.** Every touch, seen from the base origin in table axes, is a horizontal vector e.
-The mark is where Rz(yaw)·e + (x, y) puts it. Unknowns: each slot's (x, y, yaw) and each mark's
-(x, y).
-- **The frame** is a convention. Mark A stays at its nominal position and A→B points along +y.
-  If at least two of the touched marks are already known (solved earlier), those fix the frame
-  instead.
-- **Two passes.** First a closed form: each slot is fitted rigidly onto the marks' current
-  estimates, then each mark is averaged from its slots, three rounds. Then one least-squares
-  refinement over everything.
+**The solve** (`planar.py`). Every touch, seen from the base origin in table axes, is a
+horizontal vector e; the mark is where Rz(yaw)·e + (x, y) puts it. The unknowns are each slot's
+(x, y, yaw) and each mark's (x, y).
+- **Two passes.** A closed form places the slots one by one: each by a rigid fit onto two marks
+  already placed, or onto one mark with its turn as before. One least-squares refinement over
+  everything follows.
+- **The frame.** The touches fix everything up to one planar rigid motion of the whole layout.
+  The marks are centimetres off and cannot fix it. Anchoring on one mark would shift the steel,
+  the fences and the drawing area by as much against reality.
+  - The solved layout is moved as a whole onto the nominal mountings (`rig.nominal_pose`): the
+    mean yaw error over the slots in the solve is zero, and the mean axis lands on the mean
+    nominal axis.
+  - The turn comes from the yaws, not from a point fit of the axes. Two arms 0.61 m apart,
+    each 1–2 cm off, would tilt a point fit by up to 4 deg; each arm's own yaw is off by mrad.
+  - When two or more of the touched marks were solved before (`known`), they hold the frame
+    instead (subsets). A single known mark cannot hold it: it is solved again, with a note.
 - **Kept from before.** z, roll and pitch stay as the rig had them (the plane job). When
   `base_tips` names the tip the plane was measured with, z moves by the hand-z part of (pivot
   tip − that tip). This is exact for the plane job's upright touches, where the hand's z axis
   is the paper's normal. It keeps the new tip and the old height consistent. Without it, a pen
   1.3 mm longer than nominal would draw 1.2 mm too high.
 - **Convention** (also in the file): new rotation = Rz(yaw) · rotation before; x and y solved.
+  The frame used is written to `marks.json` (`frame`).
 
-**Subsets.** `known` holds the marks solved earlier. A subset (`rows12`) or a single slot uses
-them as fixed points. Only the marks this solve placed itself go to `marks.json`; known marks
-and untouched marks keep their entries.
+**Subsets.** `known` holds the marks solved earlier. A subset (`rows12`) or a single slot
+uses them as fixed points. Only the marks this solve placed itself go to `marks.json`, each with
+its offset from nominal (information only: a mark may lie anywhere). Known marks and untouched
+marks keep their entries.
 
-**Refusals and flags.** All limits are at the top of `marks.py`.
+**Refusals and flags.** All limits are at the top of `marks.py`. The residual limits are set for
+cross-hairs placed by eye; dimples, which centre the pen, would allow half.
 
 | rule | value | catches |
 |---|---|---|
-| pivot touches | at least 3 | too few to separate the tip from the mark |
+| pivot touches | at least 3 (six planned) | too few to separate the tip from the mark |
 | pivot spread | the pen axes at least 15 deg apart | the tip's length barely seen |
-| pivot condition | at least 0.1 | the hand only turned about one axis: the tip's part along that axis is free. Tilt, do not only spin |
-| pivot residual | 1.0 mm | a touch where the pen left the dimple; the reason names it |
-| anchors | A and B touched, or two known marks | otherwise: "needs two anchors" |
-| partners | each slot needs two marks that something else pins (known, the frame, or touched by another slot) | otherwise: "<slot> needs a partner: only 1 shared mark" |
-| pair distance | two slots measuring the same two marks agree within 1.5 mm | a mark moved between them, or a touch is off; the reason names the pair |
-| pose | within 30 mm of rig.json's axis, and within 3 deg of yaw of the pose before | "refused: 2R 0.045 m … — wrong slot or wrong robot?" |
-| RMS per touch | 1.0 mm | touches that do not fit one rigid layout |
+| pivot condition | at least 0.1 | the hand only turned about one axis: tilt, do not only spin |
+| pivot residual | 1.5 mm | a touch where the pen slipped off the mark; the reason names it |
+| partners | each slot needs two marks pinned by something else (known, or touched by another slot) | otherwise: "<slot> needs a partner: only 1 shared mark" |
+| pair distance | two slots measuring the same two marks agree within 2.5 mm | a mark moved between them, or a touch is off; the reason names the pair |
+| pose, after the frame fit | within 30 mm and 3 deg of the nominal mounting | "refused: 2R 0.050 m … — wrong slot or wrong robot?" |
+| RMS per touch | 1.0 mm | touches that do not fit one rigid layout (an RMS, so below the single-touch limit) |
 | rigidity | full rank | a group of slots hanging on the rest by one mark only |
 
 A mark touched by one slot only, and not known, is solved but flagged "determined by one arm":
 it constrains nothing.
 
 **Pen part from the pivot.** The tip goes into the slot's pen part with `method: "pivot"` and
-`reference_touch` null. A mark is no place for a touch-off, because the pen would sit in its
-dimple, so the next touch-off picks its own reference point. The marks base part keeps the
-plane job's numbers under `plane`.
+`reference_touch` null. A mark is no place for a touch-off, so the next touch-off picks its own
+reference point. The protocol runs a touch-off after the mark job, which sets the pen length
+against the paper again. The marks base part keeps the plane job's numbers under `plane`.
 
 ## What it cannot do
 
 - The plane job cannot see x, y or the turn about the vertical: a flat paper looks the same
   when the arm slides over it. The mark job provides them.
-- The mark job's accuracy is limited by the person and the joints, not by the solver. The
-  numbers below show it. The weakest link is the seam between rows: two seam marks only 0.4 m
-  apart tie each end row to the middle one, so an end row's turn is known several times
-  worse than the middle row's.
+- The mark job's accuracy is limited by the person and the joints, not by the solver; the
+  numbers below show it. The weakest link is the seam between rows: two seam marks tie each end
+  row to the middle one, so an end row's turn is known several times worse than the middle
+  row's.
+- The frame is a convention: the solved layout sits where the mountings say on average. A
+  frame that has turned or moved as a whole cannot be seen.
 - A wrong joint zero bends the measured surface. A small one shows up as tilt and height, a
   large one as scatter and a refusal. It cannot say which joint.
 - The touch-off is one touch and is not averaged: its error is the joint noise of that touch.
@@ -192,37 +207,61 @@ All tests use synthetic touches, with the kernel's forward kinematics as the tru
 - With 0.5 mrad of joint noise, over 10 seeds, the length error is at most 0.31 mm (mean 0.12 mm).
 
 **Mark job.**
-- Truth: every slot is moved 1–2 cm in x and y, 3–8 mrad in yaw, 1 deg in roll and pitch and
-  10 mm in z. The pen is 1.3 mm longer than nominal, and the marks are taped up to 5 mm off
-  nominal (A exactly nominal, B straight along +y from it).
+- Truth:
+  - Every slot is moved 1–2 cm in x and y, 3–8 mrad in yaw, 1 deg in roll and pitch, and
+    10 mm in z.
+  - Then the whole layout is moved onto the nominal mountings, the solver's frame.
+  - The pen is 1.3 mm longer than nominal, and every mark is 2–5 cm off nominal.
 - The rig the solver sees is what the plane job left: the true tilt, the height read with the
-  nominal pen, nominal x, y and yaw.
-- Touches: the pivot uses 4 orientations, spread from turns of 30 deg and tilts of 30 deg. The
-  guiding error is one offset per slot and mark, the pen seated off the dimple's centre. Joint
-  noise is added on every touch.
+  nominal pen, and nominal x, y and yaw.
+- Touches: pivot orientations are drawn from turns of 30 deg and tilts of ±30 deg. Joint noise
+  is 0.3 mrad on every touch.
 - "Seam" is the worst distance between where two neighbours put the pen when both aim at the
   same point of their seam: (0, 0) for 2L/2R, the row seams and the seam marks for the others.
   This is what shows in a drawing.
+- "Marks" is the worst error of a recovered mark position.
 
 Without noise every case is exact: below 1e-6 mm, and below 1e-6 mrad for yaw.
 
+**Cross-hairs** (the protocol as planned): the guiding error is independent per touch, in a
+random direction in the plane. Worst of 5 seeds over the seeds that passed; the last column
+counts refused seeds.
+
+| case | guiding per touch | pivot touches | x, y | yaw | tip | z | seam | marks | refused |
+|---|---|---|---|---|---|---|---|---|---|
+| (a) 2L+2R | 0.3 mm | 6 | 0.22 mm | 0.54 mrad | 0.57 mm | 0.46 mm | 0.62 mm | 0.32 mm | 0 |
+| (a) | 0.3 mm | 4 | 0.21 mm | 0.29 mrad | 1.12 mm | 1.00 mm | 0.93 mm | 0.73 mm | 0 |
+| (a) | 0.5 mm | 6 | 0.36 mm | 0.56 mrad | 0.64 mm | 0.54 mm | 0.92 mm | 0.43 mm | 0 |
+| (a) | 0.5 mm | 4 | 0.27 mm | 0.52 mrad | 1.54 mm | 1.18 mm | 1.20 mm | 0.81 mm | 0 |
+| (b) six slots | 0.3 mm | 6 | 1.07 mm | 2.00 mrad | 0.76 mm | 0.75 mm | 1.07 mm | 1.38 mm | 0 |
+| (b) | 0.3 mm | 4 | 1.27 mm | 2.24 mrad | 1.23 mm | 1.12 mm | 1.95 mm | 1.44 mm | 1 |
+| (b) | 0.5 mm | 6 | 1.21 mm | 3.90 mrad | 1.27 mm | 1.11 mm | 1.20 mm | 2.41 mm | 0 |
+| (b) | 0.5 mm | 4 | 1.57 mm | 2.29 mrad | 1.92 mm | 1.80 mm | 1.69 mm | 2.23 mm | 2 |
+
+Findings:
+- Six pivot touches beat four. The tip and the seam improve most: in (a) at 0.3 mm, from 1.12
+  to 0.57 mm and from 0.93 to 0.62 mm.
+- The 4-touch refusals were pivots whose reachable orientations at a mark 2–5 cm off were all
+  turns about the vertical, with no tilt (condition 0.000). The planned orientations must
+  include tilts.
+- In (b) the end rows carry most of the x, y and yaw error. The seams stay near 1–1.2 mm.
+- The pen-tip error lands mostly in z through the base-tip correction. The touch-off after the
+  mark job sets it against the paper again.
+
+**Dimple model, kept for comparison** (one guiding offset per slot and mark, the pen seated
+off the dimple's centre; six-touch pivot; worst of 3 seeds; (c) rows12 and (d) 2R alone, both
+after (b) with its marks known):
+
 | case | noise (guiding, joints) | x, y | yaw | tip | z | seam |
 |---|---|---|---|---|---|---|
-| (a) 2L+2R, A and B | 0.3 mm, 0.3 mrad | 0.58 mm | 1.06 mrad | 0.49 mm | 0.41 mm | 1.29 mm |
-| (b) six slots, ten marks | 0.3 mm, 0.3 mrad | 3.9 mm | 5.2 mrad | 0.88 mm | 0.75 mm | 1.18 mm |
-| (c) rows12 after (b) | 0.3 mm, 0.3 mrad | 3.8 mm | 4.9 mrad | 1.33 mm | 1.09 mm | 1.23 mm |
-| (d) 2R alone after (b) | 0.3 mm, 0.3 mrad | 0.69 mm | 0.24 mrad | 0.48 mm | 0.35 mm | — |
-| (a) | 0.1 mm, 0.05 mrad | 0.13 mm | 0.23 mrad | 0.10 mm | 0.09 mm | 0.30 mm |
-| (b) | 0.1 mm, 0.05 mrad | 0.72 mm | 0.99 mrad | 0.16 mm | 0.15 mm | 0.26 mm |
-| (c) | 0.1 mm, 0.05 mrad | 0.73 mm | 0.95 mrad | 0.16 mm | 0.12 mm | 0.28 mm |
-| (d) | 0.1 mm, 0.05 mrad | 0.14 mm | 0.11 mrad | 0.10 mm | 0.08 mm | — |
+| (a) | 0.3 mm, 0.3 mrad | 0.32 mm | 0.47 mrad | 0.35 mm | 0.33 mm | 0.62 mm |
+| (b) | 0.3 mm, 0.3 mrad | 1.03 mm | 1.90 mrad | 1.08 mm | 1.05 mm | 1.21 mm |
+| (c) | 0.3 mm, 0.3 mrad | 0.90 mm | 1.90 mrad | 0.72 mm | 0.70 mm | 0.99 mm |
+| (d) | 0.3 mm, 0.3 mrad | 0.54 mm | 1.51 mrad | 0.29 mm | 0.19 mm | — |
+| (a) | 0.1 mm, 0.05 mrad | 0.10 mm | 0.16 mrad | 0.07 mm | 0.06 mm | 0.19 mm |
+| (b) | 0.1 mm, 0.05 mrad | 0.22 mm | 0.53 mrad | 0.14 mm | 0.12 mm | 0.22 mm |
+| (c) | 0.1 mm, 0.05 mrad | 0.25 mm | 0.50 mrad | 0.12 mm | 0.12 mm | 0.30 mm |
+| (d) | 0.1 mm, 0.05 mrad | 0.19 mm | 0.46 mrad | 0.07 mm | 0.06 mm | — |
 
-Each row is the worst of 3 seeds.
-- The large x, y and yaw errors in (b) and (c) are the end rows. They are tied to the middle
-  row by two seam marks 0.4 m apart, and the position error grows with the distance from the
-  frame's anchor A. The seams, which are what a drawing shows, stay near 1.2 mm.
-- With a single pivot of four touches, 0.3 mrad of joint noise alone limits the tip to about
-  0.5 mm.
-
-Tests: `tests/test_calib.py`, 25 tests. 24 quick ones in about 5 s; the noise table is
+Tests: `tests/test_calib.py`, 26 tests. 25 quick ones in about 5 s; the noise table is
 `slow` and takes about 10 s.

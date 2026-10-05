@@ -3,7 +3,8 @@ hand-guiding, as `docs/figures/mark_protocol.png` draws it.
 
 One arm at a time, in rig order, the others standing (parked, or as their joints where they
 stand).  For each arm, its marks (the group's marks this slot shares, rig.json order): at its
-first mark four hand orientations (the pivot: pen upright and three leans of 20 degrees), at
+first mark four hand orientations (the pivot: pen upright and three tilts of 25 degrees in
+three directions; turning about the vertical alone leaves the pen length free), at
 every other mark one.  The whole sequence is planned and checked up front and queued at once:
 a free move to each hover (the pen 30 mm above the mark), the `guide` there, and home.  At a
 guide the driver hands the arm to the person, who seats the pen on the mark and presses a
@@ -37,9 +38,9 @@ from aris.server.steps import Scene, lift_pens, pen_down
 from aris.types import Motion, Piece, Refusal, Trajectory
 
 HOVER = 0.030                    # m, the pen above the mark at the hover
-LEAN = np.deg2rad(20.0)
-LEANS = ((0.0, 0.0), (LEAN, 0.0), (-LEAN / 2, LEAN * np.sqrt(3) / 2),
-         (-LEAN / 2, -LEAN * np.sqrt(3) / 2))
+LEAN = np.deg2rad(25.0)        # the pivot tilts the hand: turning alone leaves the pen length free
+AZIMUTHS = np.deg2rad([0.0, 120.0, 240.0])      # the pivot's three tilts, 120 degrees apart ...
+NUDGES = np.deg2rad([0.0, 30.0, -30.0, 60.0, -60.0])   # ... each turned this much if unreachable
 SPINS = np.arange(24) * np.deg2rad(15.0)
 Q7_TRIES = np.deg2rad([0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0])
 POLL = 0.05                      # s between looks at the event log
@@ -53,7 +54,12 @@ class Task:
 
     @property
     def lean(self):
-        return LEANS[self.orientation]
+        """(tx, ty) at hand spin 0: no lean for the upright touch, else LEAN toward its tilt's
+        azimuth (`ArmPlan.hover` turns it with the spin, keeping the tilt's direction)."""
+        if self.orientation == 0:
+            return (0.0, 0.0)
+        a = AZIMUTHS[self.orientation - 1]
+        return (LEAN * np.cos(a), LEAN * np.sin(a))
 
 
 def tasks_for(rig, slot, slots) -> list[Task]:
@@ -88,15 +94,29 @@ class ArmPlan:
         return T[:3, :3] @ np.array([xy[0], xy[1], rig.paper_z + height]) + T[:3, 3]
 
     def hover(self, task: Task, q_near) -> np.ndarray | None:
-        """A hover for this mark and orientation: over the hand spins (15 degrees apart) and
-        arm shapes whose hover and seated poses pass the gates, the one nearest `q_near` (the
-        arm keeps its shape from touch to touch, so the moves between them stay short)."""
+        """A hover for this mark and orientation: the pen upright, or tilted LEAN toward the
+        orientation's azimuth (turned by up to 60 degrees when that is out of reach); over the
+        hand's turns about the pen (15 degrees apart) and arm shapes whose hover and seated
+        poses pass the gates, the one nearest `q_near` (the arm keeps its shape from touch to
+        touch, so the moves between them stay short)."""
+        if task.orientation == 0:
+            return self._nearest(task.mark, lambda spin: (0.0, 0.0), q_near)
+        base = AZIMUTHS[task.orientation - 1]
+        for nudge in NUDGES:
+            a = base + nudge
+            got = self._nearest(task.mark, lambda spin: (LEAN * np.cos(a - spin),
+                                                          LEAN * np.sin(a - spin)), q_near)
+            if got is not None:
+                return got
+        return None
+
+    def _nearest(self, mark, lean_at, q_near) -> np.ndarray | None:
         arm, g, gates = self.arm, self.guard, self.rules.gates
-        up, seat = self._tip_base(task.mark, HOVER), self._tip_base(task.mark, 0.0)
-        lean = np.array([task.lean])
+        up, seat = self._tip_base(mark, HOVER), self._tip_base(mark, 0.0)
         q7s = self.st.rig.park_q(self.slot)[6] + Q7_TRIES
         best = None
         for spin in SPINS:
+            lean = np.array([lean_at(spin)])
             Th = arm.hand_pose(up[None], self.paper.normal, np.array([spin]), lean)
             Ts = arm.hand_pose(seat[None], self.paper.normal, np.array([spin]), lean)
             Qh, okh = arm.ik(np.repeat(Th, len(q7s), axis=0), q7s)
@@ -264,7 +284,7 @@ def run_phase(st, rec, job, slot, plan) -> list | str:
     return touches
 
 
-def run_arm(st, rec, job, slot, now, slots, book, solve) -> str:
+def run_arm(st, rec, job, slot, now, slots, book) -> str:
     """One arm: its phase, its own solve, at most one extra phase for a touch the solver names
     as bad.  -> "" or why the job ends."""
     plan = plan_arm(st, slot, now, tasks_for(st.rig, slot, slots), f"mark {slot}")
@@ -274,7 +294,7 @@ def run_arm(st, rec, job, slot, now, slots, book, solve) -> str:
     touches = run_phase(st, rec, job, slot, plan)
     if isinstance(touches, str):
         return touches
-    bad = _bad_touch(solve, st.rig, [t for t in touches if not t["skipped"]])
+    bad = _bad_touch(st.rig, slot, [t for t in touches if not t["skipped"]])
     if bad is not None:
         kept = [t for t in touches if not t["skipped"]]
         t = kept[bad]
@@ -295,16 +315,28 @@ def run_arm(st, rec, job, slot, now, slots, book, solve) -> str:
     return ""
 
 
-def _bad_touch(solve, rig, touches) -> int | None:
-    """The touch the solver names as bad among this arm's own (the pivot), or None."""
-    if len(touches) < 2:
+def _bad_touch(rig, slot, touches) -> int | None:
+    """The pivot touch the solver names as off the common point (the pen slipped), as an index
+    into `touches`, or None."""
+    from aris.calib.marks import pivot
+    piv = [k for k, t in enumerate(touches) if t["mark"] == touches[0]["mark"]] if touches \
+        else []
+    if len(piv) < 3:
         return None
-    try:
-        sol = solve(rig, touches, {})
-    except Exception:                                # the arm's own solve is advice only
+    pv = pivot(rig, slot, np.array([touches[k]["q"] for k in piv]))
+    if pv.passed or not len(pv.residuals) or "off the common point" not in pv.why:
         return None
-    bad = getattr(sol, "bad_touch", None)
-    return None if bad is None else int(bad)
+    return piv[int(np.argmax(pv.residuals))]
+
+
+def solver_input(touches) -> dict:
+    """{slot: {mark: (K,7)}} for `aris.calib.solve_marks`, skipped touches left out, each
+    slot's first mark (its pivot) first."""
+    out = {}
+    for t in touches:
+        if not t["skipped"]:
+            out.setdefault(t["slot"], {}).setdefault(t["mark"], []).append(t["q"])
+    return {s: {m: np.asarray(q, float) for m, q in by.items()} for s, by in out.items()}
 
 
 # --------------------------------------------------------------------------- the job
@@ -340,7 +372,6 @@ def submit_mark(st, store, slots=(), group: str | None = None):
 
 def _work(slots):
     def work(st, rec, job):
-        from aris.calib import solve_marks
         from aris.server import runner
         where = runner.where_now(st, need_all=True)
         if isinstance(where, Refusal):
@@ -355,7 +386,7 @@ def _work(slots):
         rec.set_state("planning")
         book, now, why = Book(), {a: np.asarray(q, float) for a, q in where.items()}, ""
         for s in slots:
-            why = run_arm(st, rec, job, s, now, slots, book, solve_marks)
+            why = run_arm(st, rec, job, s, now, slots, book)
             if why:
                 break
             now[s] = st.rig.park_q(s)
@@ -368,5 +399,5 @@ def _work(slots):
             ct.join()
             run = result[0]
         from aris.server.markreport import finish
-        finish(st, rec, job, slots, book, run, why, before, solve_marks)
+        finish(st, rec, job, slots, book, run, why, before)
     return work
