@@ -24,7 +24,7 @@ START_GUARD = 1e-3      # rad, the driver's own refusal: a trajectory that start
 class SimArm:
     def __init__(self, arm_id: Slot, q0, speed: float = 1.0, fail_at: float | None = None,
                  fail_why: str = "injected failure", tick: float = 0.002, paper=None,
-                 tip_of=None):
+                 tip_of=None, person=None):
         """`speed`: times real time (math.inf: at once).  `fail_at`: seconds of the motion
         clock at which the arm faults.  `tick`: wall seconds between two updates.
         `paper`: (normal (3,), offset) of the fake paper in this arm's base frame, the normal
@@ -35,7 +35,7 @@ class SimArm:
         self.arm_id = arm_id
         self.speed, self.tick = float(speed), float(tick)
         self.fail_at, self.fail_why = fail_at, fail_why
-        self.paper, self.tip_of = paper, tip_of
+        self.paper, self.tip_of, self.person = paper, tip_of, person
         self.clock = 0.0                    # s of motion flown, at the trajectories' timing
         self._q = np.asarray(q0, float).reshape(7).copy()
         self._qd = np.zeros(7)
@@ -85,6 +85,21 @@ class SimArm:
         if q is None:
             return Result.failed("no contact", self._q.copy())
         return Result.ok(q)
+
+    def guide(self, motion: Motion) -> Result:
+        """The person seats the pen and presses a button; the answer carries the joints they
+        left the arm at.  Then, as the real driver does, the pen rises and the arm returns to
+        the hover, where it stands again (the simulation does not fly that part)."""
+        with self._lock:
+            if self._fault or self._stopped:
+                return Result.failed("arm will not move; recover first", self._q.copy())
+            if self.person is None:
+                return Result.failed("no person in this simulation", self._q.copy())
+            got = self.person(motion, self._q.copy())
+            if isinstance(got, str):
+                return Result.failed(got, self._q.copy())
+            q, button = got
+            return Result(True, button, np.asarray(q, float).reshape(7).copy())
 
     def draw(self, motion: Motion) -> Result:
         return self.move(motion.traj)

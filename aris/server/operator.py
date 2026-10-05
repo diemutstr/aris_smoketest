@@ -163,6 +163,15 @@ def add_routes(app, st, store) -> None:
             return refused(409, rec)
         return dict(id=rec.id, state=rec.state)
 
+    @app.post("/mark")
+    def mark_job(slots: str = "", group: str = ""):
+        from aris.server import mark
+        rec = mark.submit_mark(st, store, tuple(x for x in slots.split(",") if x),
+                               group or None)
+        if not hasattr(rec, "id"):
+            return refused(409, rec)
+        return dict(id=rec.id, state=rec.state)
+
     @app.post("/touchoff/{arm}")
     def touchoff_arm(arm: str):
         rec = calibrate.submit_calibrate(st, store, arm, kind="touchoff")

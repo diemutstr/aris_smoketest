@@ -106,7 +106,7 @@ def test_site_reads_robots_from_the_site_table(tmp_path):
     s = site_mod.load(_site_files(tmp_path))
     a = s.arm("2R")
     assert (a.robot, a.ip, a.domain, a.namespace) == ("fr3-71", "192.168.50.14", 71, "arm_2R")
-    assert s.mounted == ("2R", "3R")
+    assert s.mounted == ("2L", "2R")
     assert site_mod.identity(a, None) == "unverified"
     known = site_mod.SiteArm("2R", "fr3-71", a.ip, 71, True, serial="295341-1234")
     assert site_mod.identity(known, "295341-1234") == "verified"

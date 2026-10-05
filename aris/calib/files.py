@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+from aris.calib.marks import MarkSolution, SlotFit, pen_from_pivot
 from aris.calib.plane import PlaneCalibration
 from aris.calib.pen import PenCalibration
 from aris.types import Slot
@@ -24,6 +25,13 @@ PLANE_CONVENTION = (
     "table frame (the smallest turn, about a horizontal axis through the base origin); base "
     "table z moved by height_change; x, y and the turn about the vertical are unchanged. The "
     "height includes the length error of the pen named here against the tip named here.")
+
+
+MARKS_CONVENTION = (
+    "rotation = Rz(yaw) @ the rotation the rig had (a turn about the table's vertical through "
+    "the base origin); x, y solved; z, roll and pitch as before (the plane job), z moved by the "
+    "hand-z part of the tip change when the solver was given the tip the plane was measured "
+    "with. Frame: mark A at its nominal position, A->B along +y.")
 
 
 def calibration_file(config_dir, slot: Slot) -> Path:
@@ -64,10 +72,10 @@ def pen_part(r: PenCalibration, date: str | None = None) -> dict:
     """The `pen` part for a touch-off result."""
     return {
         "passed": bool(r.passed), "date": date or datetime.date.today().isoformat(),
-        "pen": r.pen, "why": r.why,
+        "pen": r.pen, "why": r.why, "method": r.method,
         "tip_hand_m": _list(r.tip_hand),
-        "reference_touch": {"xy_table_m": _list(r.reference_xy_table),
-                            "q": _list(r.q, 12)},
+        "reference_touch": (None if r.reference_xy_table is None else
+                            {"xy_table_m": _list(r.reference_xy_table), "q": _list(r.q, 12)}),
         "tip_hand_nominal_m": _list(r.tip_hand_nominal),
         "tip_hand_before_m": _list(r.tip_hand_before),
         "correction_mm": _mm(r.correction), "change_mm": _mm(r.change),
@@ -75,34 +83,99 @@ def pen_part(r: PenCalibration, date: str | None = None) -> dict:
         "touch_xy_table_m": _list(r.touch_xy_table),
         "from_reference_mm": _mm(r.from_reference),
         "against_base": r.base_status,
+        **({} if r.detail is None else {r.method: r.detail}),
     }
 
 
-def _write_part(config_dir, slot: Slot, name: str, part: dict) -> Path:
-    """Read the slot's file (if any), replace one part, write it back whole.  A file that is not
-    a calibration file for this slot is a broken install: raise rather than lose the other part."""
+def _write_json(path: Path, data: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=1) + "\n")
+    os.replace(tmp, path)              # a reader never sees half a file
+    return path
+
+
+def _write_part(config_dir, slot: Slot, name: str, make) -> Path:
+    """Read the slot's file (if any), replace one part with `make(old part or None)`, write it
+    back whole.  A file that is not this slot's calibration file is a broken install: raise
+    rather than lose the other part."""
     path = calibration_file(config_dir, slot)
     cal = {"slot": slot}
     if path.exists():
         cal = json.loads(path.read_text())
         if not isinstance(cal, dict) or cal.get("slot") != slot:
             raise ValueError(f"{path} is not the calibration file of slot {slot}")
-    cal[name] = part
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(cal, indent=1) + "\n")
-    os.replace(tmp, path)              # a reader never sees half a file
-    return path
+    cal[name] = make(cal.get(name))
+    return _write_json(path, cal)
 
 
-def write_base(result: PlaneCalibration, config_dir, date: str | None = None) -> Path:
-    """Write the plane result as the `base` part of its slot's file; the `pen` part stays."""
-    return _write_part(config_dir, result.slot, "base", base_part(result, date))
+def marks_base_part(r: SlotFit, date: str | None = None, before: dict | None = None) -> dict:
+    """The `base` part for one slot of a mark solution.  The plane job's numbers (where z, roll
+    and pitch came from) are kept under "plane"."""
+    plane = None
+    if isinstance(before, dict):
+        plane = before if before.get("method") == "plane" else before.get("plane")
+    return {
+        "passed": True, "date": date or datetime.date.today().isoformat(),
+        "method": "marks", "why": "",
+        "T_table_base": _list(r.T_table_base, 12),
+        "T_table_base_before": _list(r.T_before, 12),
+        "convention": MARKS_CONVENTION,
+        "measured_with": {"pen": r.pen, "tip_hand_m": _list(r.tip_hand)},
+        "shift_from_nominal_mm": _mm(r.shift), "yaw_change_mrad": round(r.yaw * 1e3, 5),
+        "residuals": {"n_points": int(r.n_touches), "rms_mm": _mm(r.rms)},
+        "pivot": {"mark": r.pivot_mark, "spread_deg": _deg(r.pivot.spread),
+                  "residuals_mm": _list(r.pivot.residuals * 1e3, 4)},
+        "plane": plane,
+    }
+
+
+def write_base(result, config_dir, date: str | None = None) -> Path:
+    """Write a plane result (`PlaneCalibration`) or one slot of a mark solution (`SlotFit`) as
+    the `base` part of its slot's file; the `pen` part stays."""
+    if isinstance(result, SlotFit):
+        return _write_part(config_dir, result.slot, "base",
+                           lambda old: marks_base_part(result, date, old))
+    return _write_part(config_dir, result.slot, "base", lambda old: base_part(result, date))
+
+
+def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> Path:
+    """`calibration/marks.json`: every mark this solution solved (A included, it is the frame),
+    as {"marks": {name: {xy_m, state "solved", date, residual_mm}}}; marks it took as known, and
+    marks it did not touch, stay as they were.  Only a passing solution is written."""
+    if not solution.passed:
+        raise ValueError(f"a refused mark solution is not written: {solution.why}")
+    path = Path(config_dir) / "calibration" / "marks.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    marks = data.get("marks", {}) if isinstance(data.get("marks"), dict) else {}
+    day = date or datetime.date.today().isoformat()
+    for name, m in solution.marks.items():
+        if m.state == "known":
+            continue
+        marks[name] = {"xy_m": _list(m.xy, 9), "state": "solved", "date": day,
+                       "residual_mm": _mm(m.residual), "by": list(m.by),
+                       **({"note": m.note} if m.note else {})}
+    return _write_json(path, {"frame": "A at its nominal position, A->B is +y", "marks": marks})
+
+
+def write_mark_solution(rig, solution: MarkSolution, config_dir,
+                        date: str | None = None) -> list[Path]:
+    """The mark job's one writer: every slot's base part (method "marks"), every slot's pen
+    part (the pivot's tip, for the pen that is in) and marks.json."""
+    if not solution.passed:
+        raise ValueError(f"a refused mark solution is not written: {solution.why}")
+    out = []
+    for slot, f in solution.slots.items():
+        out.append(write_base(f, config_dir, date))
+        out.append(write_pen(pen_from_pivot(rig, slot, f.pivot, f.pivot_mark, f.pivot_q),
+                             config_dir, date))
+    out.append(write_marks(solution, config_dir, date))
+    return out
 
 
 def write_pen(result: PenCalibration, config_dir, date: str | None = None) -> Path:
     """Write the touch-off result as the `pen` part of its slot's file; the `base` part stays."""
-    return _write_part(config_dir, result.slot, "pen", pen_part(result, date))
+    return _write_part(config_dir, result.slot, "pen", lambda old: pen_part(result, date))
 
 
 def _summary(part) -> dict | None:
@@ -137,3 +210,15 @@ def read(config_dir, slot: Slot) -> dict | None:
     """One slot's calibration file as written, or None."""
     p = calibration_file(config_dir, slot)
     return json.loads(p.read_text()) if p.exists() else None
+
+
+def base_tips(config_dir, slots) -> dict:
+    """{slot: the tip its base part's height was measured with} for `marks.solve_marks`, from
+    each passing base part's `measured_with`; slots without one are left out (z then kept)."""
+    out = {}
+    for s in slots:
+        base = (read(config_dir, s) or {}).get("base") or {}
+        tip = (base.get("measured_with") or {}).get("tip_hand_m")
+        if base.get("passed") and tip is not None:
+            out[s] = np.asarray(tip, float).reshape(3)
+    return out

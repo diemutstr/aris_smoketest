@@ -27,7 +27,8 @@ PEN_INTO_PAPER_MIN = np.cos(np.deg2rad(60.0))  # the pen must point into the pap
 
 @dataclass(frozen=True)
 class PenCalibration:
-    """What one touch-off found.  Metres, hand frame for tips, table frame for xy."""
+    """What one touch-off (or a pivot, `aris/calib/marks.py`) found.  Metres, hand frame for
+    tips, table frame for xy."""
     slot: Slot
     pen: str
     passed: bool
@@ -39,10 +40,13 @@ class PenCalibration:
     change: float                      # measured minus before, along the pen axis
     height_before: float               # the before-tip's height above the paper at the touch
     touch_xy_table: np.ndarray | None  # (2,) where the measured tip met the paper
-    reference_xy_table: np.ndarray     # (2,)
+    reference_xy_table: np.ndarray | None  # (2,); None for a pivot (a mark is no place to
+                                       # touch off: the pen would sit in its dimple)
     from_reference: float              # distance between the two (m)
     q: np.ndarray                      # (7,) the touch's joints, as given
     base_status: str                   # the rig's base status the plane came from
+    method: str = "touchoff"           # or "pivot"
+    detail: dict | None = None         # method-specific numbers for the file (plain data)
 
 
 def touchoff(rig, slot: Slot, contact_q, reference_xy_table, pen_name: str) -> PenCalibration:

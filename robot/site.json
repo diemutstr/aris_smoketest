@@ -48,10 +48,10 @@
   "slots": {
     "1L": {"mounted": false, "force_sign": 1.0},
     "1R": {"mounted": false, "force_sign": 1.0},
-    "2L": {"mounted": false, "force_sign": 1.0},
+    "2L": {"mounted": true, "force_sign": 1.0},
     "2R": {"mounted": true, "force_sign": 1.0},
     "3L": {"mounted": false, "force_sign": 1.0},
-    "3R": {"mounted": true, "force_sign": 1.0}
+    "3R": {"mounted": false, "force_sign": 1.0}
   },
   "desk": {
     "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper.",

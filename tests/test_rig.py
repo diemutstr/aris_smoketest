@@ -775,7 +775,7 @@ def test_nominal_tool_is_the_uncalibrated_tool(tmp_path, rig):
 def test_the_ten_marks(rig):
     assert len(rig.marks) == 10
     xy, share = rig.marks["S12R"]
-    np.testing.assert_array_equal(xy, [0.20, -0.605])
+    np.testing.assert_array_equal(xy, [0.30, -0.605])
     assert share == ("1R", "2R")
     assert rig.marks_for(("2L", "2R")) == ("A", "B")
     assert rig.marks_for(rig.mark_groups["rows12"]) == ("A", "B", "R1a", "R1b", "S12L", "S12R")

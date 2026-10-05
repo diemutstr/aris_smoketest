@@ -7,6 +7,7 @@
     aris calibrate <slot>                            touch the paper on a grid: the base part
     aris touchoff <slot>                             one touch: the pen part
     aris recover <slot>                              release an arm after a fault
+    aris mark [slots | --group g]                    the marks: guide the pens, x/y/yaw and tip
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
 
@@ -84,6 +85,19 @@ def report_lines(rep: dict) -> list[str]:
     out = [f"AIR RUN      every draw flown {rep['air_mm']:g} mm above the paper, no contact"] \
         if rep.get("air_mm") else []
     out.append(f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else ""))
+    if rep.get("kind") == "mark":
+        out.append(f"marks        {rep.get('touches', 0)} touches by {', '.join(rep.get('slots', []))}"
+                   f"; buttons {rep.get('buttons', {})}")
+        for n in rep.get("notes", []) + [f"redone: {x}" for x in rep.get("redone", [])]:
+            out.append(f"  {n}")
+        for sl, e in rep.get("per_slot", {}).items():
+            out.append(f"slot {sl:<7} moved {e.get('moved_mm')} mm, turned {e.get('turned_mrad')} "
+                       f"mrad, tip {e.get('tip_change_mm')} mm; residual rms "
+                       f"{e.get('residual_rms_mm')} mm, worst {e.get('residual_max_mm')} mm")
+        for n, e in rep.get("marks", {}).items():
+            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')}"
+                       + (f", between its arms {e['between_arms_mm']} mm"
+                          if "between_arms_mm" in e else ""))
     if rep.get("kind") == "touchoff":
         ref = rep.get("reference", {})
         out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "
@@ -222,6 +236,23 @@ def _follow_draw(a, http, code, r) -> int:
     return verdict(job_passed(rep), _summary(rep))
 
 
+def cmd_mark(a, http) -> int:
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    q = urllib.parse.urlencode({k: v for k, v in (("slots", ",".join(a.slots)),
+                                                  ("group", a.group or "")) if v})
+    code, r = http.post("/mark" + (f"?{q}" if q else ""))
+    if code != 200:
+        return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
+    say(f"job {r['id']}: the arms' lights and the pilot buttons from here on "
+        "(white: guide the pen onto the mark, then ✓; ✗ redo; ○ skip)")
+    v = follow(http, r["id"], a.poll)
+    for line in report_lines(v["report"]):
+        say(line)
+    return verdict(v["state"] == "done", f"mark {' '.join(v['report'].get('slots', []))}: "
+                   f"{v['state']}")
+
+
 def cmd_touchoff(a, http) -> int:
     return cmd_calibrate(a, http, "touchoff")
 
@@ -331,7 +362,10 @@ def _station(a, with_arms: bool):
                         jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
                         settings=Settings(grid_step=a.map_grid), with_arms=with_arms,
                         sim_paper=_sim_paper(getattr(a, "sim_paper", None)),
-                        tracking=getattr(a, "tracking", "position"))
+                        tracking=getattr(a, "tracking", "position"),
+                        sim_truth=getattr(a, "sim_truth", None),
+                        sim_base_error=None if not getattr(a, "sim_base_error", None) else
+                        tuple(float(x) for x in a.sim_base_error.split(",")))
 
 
 def _sim_paper(text):
@@ -421,6 +455,10 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--tracking", default="position", choices=("position", "impedance"),
                    help="how the operator PC flies motions: position (mode A, the default) or "
                    "impedance (mode B, the pen force)")
+    s.add_argument("--sim-truth", default=None, metavar="CONFIG_DIR",
+                   help="the simulated arms' true rig for the mark job (another config folder)")
+    s.add_argument("--sim-base-error", default=None, metavar="MM,MRAD",
+                   help="the simulated arms' true bases: every base moved by this much")
     s.add_argument("--sim-paper", default=None,
                    help="simulated arms' paper: dz_mm,roll_deg,pitch_deg against the nominal")
     s.add_argument("--jobs", default="out/jobs", help="where the job directories go")
@@ -442,8 +480,11 @@ def parser() -> argparse.ArgumentParser:
     for name, what in (("status", "the current or last job"), ("stop", "stop the job"),
                        ("park", "park all arms"), ("rig", "the rig the server runs")):
         sub.add_parser(name, help=what)
+    s = sub.add_parser("mark", help="calibrate x, y and yaw by guiding the pens onto the marks")
+    s.add_argument("slots", nargs="*", help="the slots (default: the group)")
+    s.add_argument("--group", default=None, help="all, row2, rows12, rows23 (default: all)")
     for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "calibrate",
-                                       "touchoff", "recover")):
+                                       "touchoff", "recover", "mark")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -461,7 +502,8 @@ def parser() -> argparse.ArgumentParser:
 
 COMMANDS = dict(serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
                 park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check,
-                calibrate=cmd_calibrate, recover=cmd_recover, touchoff=cmd_touchoff)
+                calibrate=cmd_calibrate, recover=cmd_recover, touchoff=cmd_touchoff,
+                mark=cmd_mark)
 
 
 def main(argv=None, http=None) -> int:

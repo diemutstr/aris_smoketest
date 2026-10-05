@@ -61,6 +61,7 @@ class Mount:
     tool: Tool                         # holder and pen: measured tip, or the pen's nominal length
     tip_hand: np.ndarray               # (3,) = tool.tip_hand, the tip every model of this arm uses
     calibration: dict                  # {"base": status, "pen": status}, see calibration_status
+    T_nominal: np.ndarray | None = None  # (4, 4) the pose from rig.json alone, before calibration
 
 
 def _rot_ok(R: np.ndarray) -> bool:
@@ -263,13 +264,14 @@ class Rig:
             T[:3, 3] = [axis[0], axis[1], a["base_z_m"]]
             if not _rot_ok(T[:3, :3]):
                 raise ValueError(f"slot {slot}: R_table_base is not a rotation")
+            T_nominal = T.copy()
             T, tip, status = _read_calibration(config_dir / "calibration" / f"{slot}.json", slot,
                                                T, pen_name)
             # The arm is bolted to its plate: the hanger goes where the calibrated axis is.
             hangers += _hanger_boxes(slot, T[:2, 3], cfg["hanger"])
             tool = _pen_tool(pen, tip)
             mounts[slot] = Mount(slot, axis, T, np.asarray(a["park_q_rad"], float), tool,
-                                 tool.tip_hand.copy(), status)
+                                 tool.tip_hand.copy(), status, T_nominal)
         if not mounts:
             raise ValueError("rig.json: no arm is mounted")
         cage = [SteelBox(b["name"], np.asarray(b["lo_m"], float), np.asarray(b["hi_m"], float),
@@ -355,6 +357,11 @@ class Rig:
         """The arm model with this slot's tool (the measured pen tip when the pen part applies,
         else the current pen's nominal length)."""
         return Arm(self._mount(slot).tool)
+
+    def nominal_pose(self, slot: Slot) -> np.ndarray:
+        """(4, 4) the slot's pose from rig.json alone, before any calibration: what the
+        calibration solvers measure their refusals against."""
+        return self._mount(slot).T_nominal.copy()
 
     def nominal_tool(self) -> Tool:
         """The holder with the current pen at its nominal length, before any calibration."""
