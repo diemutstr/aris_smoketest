@@ -20,7 +20,7 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 
 | blank | value |
 |---|---|
-| which side of the table is **L** (looking along the table from the row-1 end) | ______ |
+| the sides: **row 1 is the end at your desk; L is your left when you stand at your desk facing the table** — Pete confirms this is not mirrored | ______ |
 | the planning laptop's name and its address on the robot network | ______ |
 | the robot PC's login (the user that owns the ROS install) | ______ |
 | Desk login (username / password) for the two robots | ______ |
@@ -30,8 +30,9 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 ## 0. The names of the arms
 
 Every arm is named by its **slot** on the frame, not by the robot's old number. Rows are
-counted along the table (row 1 at one end, row 3 at the other); L and R are the two sides.
-The old numbers (13, 17, 31, 71, 2, 97) are not used anywhere any more; this table translates:
+counted along the table: **row 1 is the end at your desk**, row 3 the far end. **L is your left
+and R your right when you stand at your desk facing the table.** The old numbers (13, 17, 31,
+71, 2, 97) are not used anywhere any more; this table translates:
 
 | slot | where | old number (to be confirmed by Pete on day one) |
 |---|---|---|
@@ -179,8 +180,7 @@ Where (the table is 2.19 m across and 4.17 m long; the paper 1.80 × 3.63 m, cen
 
 - Find the **centre of the table**: the point halfway along its length and halfway across.
 - Both marks lie on the **centre line** along the length of the table, i.e. halfway across.
-- **Mark A**: 0.40 m from the centre toward the row-1 end (the end where the switched-off arms
-  of row 1 hang).
+- **Mark A**: 0.40 m from the centre toward your desk (the row-1 end).
 - **Mark B**: 0.40 m from the centre toward the other end.
 
 So A and B are about 0.80 m apart, straddling the centre, each roughly midway between the two
