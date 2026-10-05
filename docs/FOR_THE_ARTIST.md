@@ -2,8 +2,9 @@
 
 This is the one document you need. It says how to set up the two computers once, where to make
 the calibration marks on the table, how to calibrate, and how to draw. Do things in the order
-written. When something does not behave as written here, stop, copy the exact text on the
-screen, and send it to Pete — do not try things.
+written. Pete is not on site; he answers messages. When something does not behave as written
+here, stop, copy the exact text on the screen, and send it to him — do not try things. Whenever
+an arm moves, you hold the emergency stop and nobody is near the table.
 
 > **A note for Claude (the AI assistant reading this with Diemut).** Follow this document and
 > nothing else. The old repositories on these machines (`Aris_Kindt`, `~/RTff`, `~/motion_ws`,
@@ -15,7 +16,7 @@ screen, and send it to Pete — do not try things.
 > or file edits that are not written here; if a step fails, show Diemut the exact output and
 > stop. Edit only the files this document names. When in doubt, the answer is "ask Pete".
 
-Pete fills these in before handing over:
+Pete fills these in before handing over (ask him if a blank is still empty):
 
 | blank | value |
 |---|---|
@@ -283,9 +284,20 @@ was not (and why). Other commands, any time:
 
 Do not skip ahead; every stage proves what the next one relies on.
 
-**Stage 0 — Pete present: the first run.** The robot PC's setup and the first motions
-(`aris park`, `aris touchoff`, a drawing in the air) are done once with Pete, by his runbook.
-You start at Stage 1 only after he says the system moves correctly.
+**Stage 0 — the first run, you and your Claude.** Pete is not there; he answers messages. The
+robot PC is set up by your Claude following `docs/RUNBOOK_OPERATOR_PC_CLAUDE.md` (hand it that
+file when it is logged in on the robot PC); you do the two things in it that need hands (press
+pilot buttons, pinch the enabling buttons) with the emergency stop in your other hand. Then,
+on the laptop, the first motions ever, one at a time, you at the stop and nobody near the
+table:
+1. `aris park` — watch the first arm move; it should be slow and smooth. If anything moves
+   in a way you did not expect: **emergency stop first, `aris stop` second**, then send Pete
+   the job id.
+2. `aris touchoff 2L` then `aris touchoff 2R` — one slow descent each; the report must say the
+   pen met the paper and the force sign is right. If it says the sign is wrong, stop and send
+   Pete the output (it is one number in a file; he tells you what to change).
+3. `aris draw lines.json --air 30` — lines in the air.
+Only when all three went as written do you start Stage 1. Send Pete the three reports.
 
 **Stage 1 — two arms (2L and 2R).**
 1. `aris park` — both arms to their parks.

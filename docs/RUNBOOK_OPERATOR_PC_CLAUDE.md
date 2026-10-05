@@ -1,16 +1,19 @@
 # Runbook for the Claude on the robot PC (the Dell next to the arms)
 
-You are setting up and verifying the operator side of the Aris drawing rig. Work through the
-steps in order. After every step, report to Pete in the form given at the end: what you ran,
-the exact output, pass or fail. Stop at the first failure you cannot explain from the text
-here and report it; do not improvise a fix.
+You are setting up and verifying the operator side of the Aris drawing rig, together with
+Diemut, who is at the machine; Pete is not on site and answers messages. Work through the steps
+in order. After every step, write the report in the form given at the end (what you ran, the
+exact output, pass or fail) so Diemut can send it to Pete. Stop at the first failure you cannot
+explain from the text here and report it; do not improvise a fix. Where a step needs hands at
+the robot (pilot buttons, enabling buttons, Desk in the browser), Diemut does it, with the
+emergency stop in her other hand; you tell her exactly what to do and wait.
 
 ## Ground rules — read twice
 
 - **Nothing you do may move an arm.** The only things that move arms are `aris …` commands typed
   on the planning laptop by a person. You never run `ros2 control`, `ros2 topic pub`, libfranka,
   panda-py motion calls, or Desk actions that move or unlock an arm. The two read-only checks
-  in step 8 are the only times you touch Desk, and a person is at the emergency stop.
+  in step 8 are the only times Desk is used, Diemut does them, and she holds the emergency stop.
 - The old repositories and workspaces on this machine — `~/RTff`, `~/motion_ws`,
   `~/motion_ws_runner`, `~/aris_orchestrator`, `~/ika_arm31`, `~/impedance_helpers`,
   `~/impedance_ws`, anything named `Aris_Kindt`, `rtff`, `pathway`, `ladder`, `posdraw` — are
@@ -113,8 +116,8 @@ Three files. Change only what is named.
 The calibration driver talks to the robots through `panda-py`, whose wheel is tied to one
 libfranka version, which must match the robots' system version.
 
-1. Ask Pete for the system version shown in Desk under Settings → System for the two robots
-   (or read it yourself in the browser; it is read-only).
+1. Ask Diemut to read the system version shown in Desk under Settings → System for the two
+   robots (read-only, in the browser).
 2. Franka's compatibility table (https://frankaemika.github.io/docs/compatibility.html) gives
    the libfranka version for that system version. Report both numbers.
 3. `pip install -e "robot[calib]"` installs the pinned `panda-python`. Then:
@@ -128,14 +131,16 @@ libfranka version, which must match the robots' system version.
    `pip install <downloaded .whl>`. Report which wheel is installed. Do not connect to a robot
    in this step.
 
-## Step 8 — two read-only checks that need a robot (person at the e-stop)
+## Step 8 — two read-only checks that need a robot (Diemut at the e-stop)
 
 These are the two facts the design could not know without hardware. They move nothing. Do them
-on ONE robot (Pete says which), with Pete present, the arm standing still, brakes as they are.
+on ONE robot (the 2R one), Diemut at the emergency stop, the arm standing still, brakes as they
+are.
 
-**8a. The Desk operating-mode request.** In the browser on this PC, open Desk for that robot,
-open the developer tools (F12 → Network), switch the robot from execution to programming mode
-by hand (and back), and copy the request Desk sent: method, path, request body. Write them into
+**8a. The Desk operating-mode request.** Diemut, in the browser on this PC: open Desk for that
+robot, open the developer tools (F12 → Network), switch the robot from execution to programming
+mode with Desk's own button (and back). You read the request Desk sent off the Network tab:
+method, path, request body. Write them into
 `robot/site.json` under `desk.mode_endpoint` in the shape that is already there (it is a
 guess today). Report the request verbatim.
 
@@ -155,11 +160,11 @@ for ev in desk.buttons(timeout=60):
     print("button event:", ev)
 EOF
 ```
-Report every event line verbatim: the names Desk uses for ✓, ✗ and ○ are what the calibration
-listens for (the code expects "check", "cross", "circle"; if Desk's names differ, that is the
-finding — report them, do not rename anything). Note: `take_control` may ask for the physical
-confirmation Desk sometimes requires (a button on the robot's base within 30 s); Pete does
-that. Then, with Pete pinching the enabling buttons (the arm in guiding), run:
+Diemut presses the buttons when you say so. Report every event line verbatim: the names Desk
+uses for ✓, ✗ and ○ are what the calibration listens for (the code expects "check", "cross",
+"circle"; if Desk's names differ, that is the finding — report them, do not rename anything).
+Note: `take_control` may ask for the physical confirmation Desk sometimes requires (a button on
+the robot's base within 30 s); Diemut does that. Then, with Pete pinching the enabling buttons (the arm in guiding), run:
 ```
 python - <<'EOF'
 import panda_py
@@ -168,21 +173,22 @@ for i in range(5):
     print(r.q)          # the joints, read-only
 EOF
 ```
-Report whether the joints print while the arm is being guided (and the exact error if not).
+(Diemut pinches the enabling buttons while this runs and lets go afterwards.) Report whether
+the joints print while the arm is being guided (and the exact error if not).
 This decides whether a pivot can be one continuous guided motion or needs the button cycle;
 both are built.
 
 ## Step 9 — fake hardware, end to end, nothing real moves
 
-On the planning laptop a person starts `aris serve --config config/two_arms --driver robot
---host 0.0.0.0 --uncalibrated`. Here:
+On the planning laptop Diemut starts `aris serve --config config/two_arms --driver robot
+--host 0.0.0.0 --uncalibrated` (section 4 of her document). Here:
 
 ```
 cd ~/aris-clean/aris && aris-robot --fake serve --config config/two_arms
 ```
 
-Leave it running. From the laptop the person runs `aris arms` (both slots must appear) and
-then `aris draw tests/data/server_small.json --air 30` (a drawing flown in the air on fake
+Leave it running. From the laptop Diemut runs `aris arms` (both slots must appear) and then
+`aris draw tests/data/server_small.json --air 30` (a drawing flown in the air on fake
 hardware). Report the last 30 lines of `out/operator/serve.log` and whether the laptop's report
 ended in PASS. Then stop serve with Ctrl-C.
 
@@ -203,11 +209,11 @@ Expected: `active (running)`; the log shows one stack started per live slot and 
 started". From the laptop, `aris arms` must list `2L` and `2R` with joint angles. Report all
 three outputs.
 
-**Your job ends here.** The first real motions (`aris park`, `aris touchoff`, `aris mark`,
-`aris draw --air`, `aris draw`) are typed on the laptop by Pete, in that order, with a hand at
-the emergency stop. If he asks you to watch, the places to look are `out/operator/serve.log`
-and `out/operator/rows.jsonl`; `aris-robot identify` is the one read-only command you may run
-while serve is stopped.
+**Your job ends here.** The first real motions (`aris park`, `aris touchoff`, `aris draw
+--air`, then `aris mark` and `aris draw`) are typed on the laptop by Diemut, in that order, by
+Stage 0 of her document, with the emergency stop in her hand. If she asks you to watch, the
+places to look are `out/operator/serve.log` and `out/operator/rows.jsonl`; `aris-robot
+identify` is the one read-only command you may run while serve is stopped.
 
 ## How to report each step
 
@@ -218,4 +224,4 @@ output: <verbatim, trimmed to the relevant lines>
 note: <one sentence, only if something differs from the runbook>
 ```
 
-Send the report after every step, not at the end.
+Write the report after every step, not at the end; Diemut sends it to Pete.
