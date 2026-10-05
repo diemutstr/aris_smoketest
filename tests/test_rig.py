@@ -767,3 +767,45 @@ def test_nominal_tool_is_the_uncalibrated_tool(tmp_path, rig):
     np.testing.assert_array_equal(cal.nominal_tip(), rig.arm("2R").tool.tip_hand)
     assert not np.array_equal(cal.nominal_tip(), cal.arm("2L").tool.tip_hand)
     assert cal.pen_name == cal.pen()["name"] == "graphite_4h"
+
+
+# --------------------------------------------------------------------------- calibration marks
+
+
+def test_the_ten_marks(rig):
+    assert len(rig.marks) == 10
+    xy, share = rig.marks["S12R"]
+    np.testing.assert_array_equal(xy, [0.20, -0.605])
+    assert share == ("1R", "2R")
+    assert rig.marks_for(("2L", "2R")) == ("A", "B")
+    assert rig.marks_for(rig.mark_groups["rows12"]) == ("A", "B", "R1a", "R1b", "S12L", "S12R")
+    assert set(rig.marks_for(rig.mark_groups["all"])) == set(rig.marks)
+    every = [s for _, (_, share) in rig.marks.items() for s in share]
+    assert all(every.count(s) >= 3 for s in rig.slot_names)       # every arm: two spots or more
+    assert rig.mark_state("A") == "nominal"
+    np.testing.assert_array_equal(rig.mark_xy("A"), [0.0, -0.40])
+
+
+def test_a_solved_mark_moves(tmp_path, rig):
+    shutil.copy(CONFIG / "rig.json", tmp_path / "rig.json")
+    (tmp_path / "calibration").mkdir()
+    solved = {"marks": {"A": {"xy_m": [0.003, -0.40], "state": "solved", "date": "2026-10-05",
+                              "residual_mm": 0.4},
+                        "B": {"xy_m": [0.0, 0.40], "state": "nominal"},
+                        "Z9": {"xy_m": [0.0, 0.0], "state": "solved"}}}   # not on this rig
+    (tmp_path / "calibration" / "marks.json").write_text(json.dumps(solved))
+    r = Rig.load(tmp_path)
+    assert r.mark_state("A") == "solved" and r.mark_state("B") == "nominal"
+    np.testing.assert_allclose(r.mark_xy("A") - rig.mark_xy("A"), [0.003, 0.0], atol=1e-15)
+    np.testing.assert_array_equal(r.mark_xy("B"), [0.0, 0.40])
+    np.testing.assert_array_equal(r.marks["A"][0], [0.0, -0.40])      # nominal unchanged
+
+
+def test_two_arms_keep_their_marks_and_groups():
+    import subprocess
+    import sys
+    two = Rig.load(CONFIG / "two_arms")
+    assert tuple(two.marks) == ("A", "B") and two.mark_groups == {"row2": ("2L", "2R")}
+    out = subprocess.run([sys.executable, str(DEPLOY / "tools" / "mounted_rig.py"),
+                          "--check", str(CONFIG / "two_arms")], capture_output=True)
+    assert out.returncode == 0, out.stdout.decode() + out.stderr.decode()

@@ -180,6 +180,34 @@ def _pen(cfg: dict) -> tuple[str, dict]:
     return name, pen
 
 
+def _marks(cfg: dict, config_dir: Path, slots: tuple):
+    """-> (name -> (nominal xy, sharers), group -> slots, name -> marks.json entry).  A
+    marks.json entry for a mark this rig does not have is left out: the calibration folder is
+    shared with rigs of fewer arms."""
+    m = cfg.get("marks", {})
+    marks = {}
+    for e in m.get("list", ()):
+        share = tuple(e["shared_by"])
+        if len(share) != 2 or not set(share) <= set(slots) or e["name"] in marks:
+            raise ValueError(f"rig.json: mark {e['name']} shared by {share}")
+        marks[e["name"]] = (np.asarray(e["xy_m"], float).reshape(2), share)
+    groups = {k: tuple(v) for k, v in m.get("groups", {}).items()}
+    if any(not set(v) <= set(slots) for v in groups.values()):
+        raise ValueError(f"rig.json: a mark group names a slot not on the frame: {groups}")
+    path = config_dir / "calibration" / "marks.json"
+    solved = {}
+    if path.exists():
+        d = json.loads(path.read_text())
+        d = d["marks"] if isinstance(d.get("marks"), dict) else d   # {"marks": {...}} or flat
+        for name, e in d.items():
+            if name not in marks or not isinstance(e, dict):
+                continue
+            if e.get("state") not in ("nominal", "solved"):
+                raise ValueError(f"{path}: mark {name} state {e.get('state')!r}")
+            solved[name] = dict(e, xy_m=np.asarray(e["xy_m"], float).reshape(2))
+    return marks, groups, solved
+
+
 def _point_box_distance(p: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> float:
     return float(np.linalg.norm(np.maximum(np.maximum(lo - p, p - hi), 0.0)))
 
@@ -210,6 +238,9 @@ class Rig:
     drawing_area_centre_m: np.ndarray  # (2,) table frame, [0, 0] when rig.json has none
     table_size: np.ndarray             # (2,)
     paper_z: float
+    marks: dict                        # name -> (nominal xy (2,), the two slots sharing it)
+    mark_groups: dict                  # group name -> slots (`aris mark --group`)
+    mark_files: dict                   # name -> its calibration/marks.json entry, when there
 
     # ------------------------------------------------------------------ loading
 
@@ -281,6 +312,8 @@ class Rig:
                                              float).reshape(2),
             table_size=np.array([cfg["table"]["size_x_m"], cfg["table"]["size_y_m"]]),
             paper_z=float(cfg["table"]["paper_surface_z_m"]),
+            **dict(zip(("marks", "mark_groups", "mark_files"),
+                       _marks(cfg, config_dir, tuple(a["slot"] for a in cfg["slots"]["list"])))),
         )
 
     # ------------------------------------------------------------------ arms and frames
@@ -516,3 +549,21 @@ class Rig:
             if slot in (a, b):
                 return b if slot == a else a
         return None
+
+    # ------------------------------------------------------------------ calibration marks
+
+    def marks_for(self, slots) -> tuple[str, ...]:
+        """The marks both of whose sharers are in `slots`, in rig.json order."""
+        return tuple(n for n, (_, share) in self.marks.items() if set(share) <= set(slots))
+
+    def mark_state(self, name: str) -> str:
+        """"solved" or "nominal" (also when calibration/marks.json does not name it)."""
+        if name not in self.marks:
+            raise KeyError(f"no mark {name!r}; marks are {tuple(self.marks)}")
+        return self.mark_files.get(name, {}).get("state", "nominal")
+
+    def mark_xy(self, name: str) -> np.ndarray:
+        """(2,) table frame: the solved position when solved, else the nominal one."""
+        if self.mark_state(name) == "solved":
+            return self.mark_files[name]["xy_m"].copy()
+        return self.marks[name][0].copy()

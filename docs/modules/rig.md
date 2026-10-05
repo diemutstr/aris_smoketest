@@ -290,20 +290,42 @@ The tests move 2L by (3, −2, 1) mm and tilt it 0.5°: that changes 2L's pose, 
 its own hanger, and nothing else (walls, other steel, other arms). Moving 2L 20 mm in x and y
 moves its four hanger boxes by exactly that much.
 
+## Calibration marks
+
+`rig.json` `marks` lists the ten calibration spots of DESIGN section 6 ("Steps 2 and 3 as
+built", `docs/figures/marks_six_slots.png`), each shared by exactly two neighbouring slots:
+
+| mark | nominal (x, y) m | shared by |
+|---|---|---|
+| A, B | (0, −0.40), (0, +0.40) | 2L, 2R |
+| R1a, R1b | (0, −1.61), (0, −0.81) | 1L, 1R |
+| R3a, R3b | (0, +0.81), (0, +1.61) | 3L, 3R |
+| S12L, S12R | (−0.20, −0.605), (+0.20, −0.605) | 1L+2L, 1R+2R |
+| S23L, S23R | (−0.20, +0.605), (+0.20, +0.605) | 2L+3L, 2R+3R |
+
+Every slot shares at least two spots (its yaw). The frame is a convention: A stays at its
+nominal position and A→B is +y; everything else is solved. `groups` names the subsets
+`aris mark --group` takes: `all`, `row2`, `rows12`, `rows23`.
+
+`Rig.marks` (name → nominal xy and the two sharers), `Rig.mark_groups`, and
+`rig.marks_for(slots)`, the marks whose sharers are all in `slots`. `config/calibration/marks.json`,
+when present, gives per mark `xy_m`, `state` (nominal or solved), `date` and `residual_mm`
+(either flat or under a `"marks"` key); `rig.mark_xy(name)` is the solved position when solved,
+else the nominal one, and `rig.mark_state(name)` says which. Entries for marks this rig does not
+have are ignored, because the calibration folder is shared with the rigs of fewer arms.
+
 ## The two-arm rig
 
-`tools/mounted_rig.py --arms 2R,3R --area 0.8 2.0 --centre 0.305 0.605 --out config/two_arms`
-writes `config/two_arms/rig.json`: `config/rig.json` with only 2R and 3R mounted (the arms live
-on the hardware on 2026-10-02), a provisional drawing area of 0.5 x 2.0 m around (0.355, 0.605), to be fixed from the system
-planner's maps with the fences in place, and two fences: `fence_row_-1p210` at y = −0.605
-toward row 1 and `fence_col_minus_x` at x = 0 toward 2L and 3L (all four other robots hang
-there switched off). A 2R configuration with any part past x = −0.04 is refused (1281 of 4000
-random configurations in the test). Every hanger stays (2L's included). No row is
-complete, so there are no row partners and no walls; 2R leads phase 1 and 3R phase 2. The tool
-prints the area and its centre and reminds you that the area must lie inside the area the
-drawable maps give about that same centre (the system planner
-computes it; the server refuses to start otherwise). `--check config/two_arms` says whether the
-derived file is still in step with `config/rig.json`.
+`tools/mounted_rig.py --arms 2L,2R --area 1.72 0.9 --centre 0 0 --out config/two_arms` writes
+`config/two_arms/rig.json`: `config/rig.json` with only 2L and 2R mounted, a drawing area of
+1.72 x 0.9 m about the table centre, fences toward rows 1 and 3 (their robots hang there
+switched off), the marks both of whose sharers are controlled (A and B) and the mark groups made
+of controlled slots only (`row2`). Every hanger stays. In a row with one controlled arm, the
+switched-off arm beside it would get a fence at x = 0 (`fence_col_minus_x` or
+`fence_col_plus_x`, written once for several rows). The tool prints the area and its centre and
+reminds you that the area must lie inside the area the drawable maps give about that same
+centre (the system planner computes it; the server refuses to start otherwise).
+`--check config/two_arms` says whether the derived file is still in step with `config/rig.json`.
 
 ## Assumed, not measured
 
@@ -325,7 +347,7 @@ derived file is still in step with `config/rig.json`.
 
 ## Tests
 
-`tests/test_rig.py`: 46 tests, about 5 s in all (4 s for the quick set). They cover the poses
+`tests/test_rig.py`: 48 tests, about 5 s in all. They cover the poses
 against the old code, the walls, the steel, the parks, link 1, the pens, the slot checks, the
-two calibration parts, hangers following the calibration, and the two-arm rig with its fence
-(for the planner and the checker).
+two calibration parts, hangers following the calibration, and the two-arm rig with its fences
+(for the planner and the checker), and the calibration marks.

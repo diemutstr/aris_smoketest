@@ -1,6 +1,6 @@
 """Write a rig file for the arms that are actually mounted, from config/rig.json.
 
-    .venv/bin/python tools/mounted_rig.py --arms 2R,3R --area 0.5 2.0 --centre 0.355 0.605 \\
+    .venv/bin/python tools/mounted_rig.py --arms 2L,2R --area 1.72 0.9 --centre 0 0 \\
         --out config/two_arms
     .venv/bin/python tools/mounted_rig.py --check config/two_arms      # is it still in step?
 
@@ -39,6 +39,10 @@ def derive(source: dict, slots: list[str], area: tuple[float, float] | None,
     if centre is not None:
         out["canvas"]["drawing_area_centre_m"] = [float(centre[0]), float(centre[1])]
     out["fences"] = fences(out["slots"]["list"], slots)
+    if "marks" in out:                  # the marks and groups the controlled arms can do alone
+        m = out["marks"]
+        m["list"] = [e for e in m["list"] if set(e["shared_by"]) <= set(slots)]
+        m["groups"] = {k: v for k, v in m.get("groups", {}).items() if set(v) <= set(slots)}
     out["canvas"]["drawing_area_note"] = (
         "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it "
         "must lie inside the area the drawable maps give, which the server checks when it "

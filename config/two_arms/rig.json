@@ -1,7 +1,7 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "d42becb2b5fbd0f5afbafdf8",
+  "source_digest": "d1f54deaecacc4ba1c992b3d",
   "mounted": [
    "2L",
    "2R"
@@ -32,6 +32,41 @@
   ],
   "drawing_area_centre_note": "the centre of the drawing area in the table frame (x, y); [0, 0] when absent. The system planner and the drawing server place the area here (2026-10-02).",
   "drawing_area_note": "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
+ },
+ "marks": {
+  "source": "the calibration spots of DESIGN section 6, 'Steps 2 and 3 as built' (decided 2026-10-05; docs/figures/marks_six_slots.png): ten spots, each shared by exactly two neighbouring slots; the row pairs share two spots on the centre line, the column pairs one seam spot each at (+-0.20, +-0.605). Nominal positions, table frame; config/calibration/marks.json holds the solved ones.",
+  "frame": "A is at its nominal position and A->B is +y (the frame's gauge); everything else is solved",
+  "list": [
+   {
+    "name": "A",
+    "xy_m": [
+     0.0,
+     -0.4
+    ],
+    "shared_by": [
+     "2L",
+     "2R"
+    ]
+   },
+   {
+    "name": "B",
+    "xy_m": [
+     0.0,
+     0.4
+    ],
+    "shared_by": [
+     "2L",
+     "2R"
+    ]
+   }
+  ],
+  "groups": {
+   "row2": [
+    "2L",
+    "2R"
+   ]
+  },
+  "groups_note": "the subsets `aris mark --group` takes (DESIGN section 6, 'Subsets')"
  },
  "slots": {
   "about": "An arm is named by its SLOT on the frame, not by the robot that hangs there (decided 2026-10-02): rows 1, 2, 3 along table y (-1.21, 0, +1.21 m), L at table x = -0.305, R at +0.305. Which robot hangs in which slot is in site/ (site/aris_2026-10.json) and nowhere in the planning code. Old robot ids: 13 = 1L, 17 = 1R, 31 = 2L, 71 = 2R, 2 = 3L, 97 = 3R.",

@@ -25,6 +25,26 @@
     "drawing_area_note": "The admissible drawing area, x by y, centred on drawing_area_centre_m: the largest rectangle with sides along the table that lies entirely inside the union of every arm's drawable map in every phase (aris/system/maps.py: 2 cm grid over the canvas, pen upright, 8 hand turns, every elbow value and arm shape, the local planner's node test with the phase's obstacles), after shrinking that union by 2 cm (aris/system/area.py). Computed 2026-09-30 at the gates of this file: limit margin 0.15 rad, sigma_min 0.04, self margin 0.020 + 0.003. The system planner refuses a drawing with a point outside it; the drawing server scales drawings to fit. Recompute when the gates, the arms' poses or the obstacles change. Rechecked 2026-09-30 after the hanging struts were taken from the technical drawing: unchanged."
   },
 
+  "marks": {
+    "source": "the calibration spots of DESIGN section 6, 'Steps 2 and 3 as built' (decided 2026-10-05; docs/figures/marks_six_slots.png): ten spots, each shared by exactly two neighbouring slots; the row pairs share two spots on the centre line, the column pairs one seam spot each at (+-0.20, +-0.605). Nominal positions, table frame; config/calibration/marks.json holds the solved ones.",
+    "frame": "A is at its nominal position and A->B is +y (the frame's gauge); everything else is solved",
+    "list": [
+      {"name": "A",    "xy_m": [0.0, -0.40],   "shared_by": ["2L", "2R"]},
+      {"name": "B",    "xy_m": [0.0, 0.40],    "shared_by": ["2L", "2R"]},
+      {"name": "R1a",  "xy_m": [0.0, -1.61],   "shared_by": ["1L", "1R"]},
+      {"name": "R1b",  "xy_m": [0.0, -0.81],   "shared_by": ["1L", "1R"]},
+      {"name": "S12L", "xy_m": [-0.20, -0.605], "shared_by": ["1L", "2L"]},
+      {"name": "S12R", "xy_m": [0.20, -0.605],  "shared_by": ["1R", "2R"]},
+      {"name": "S23L", "xy_m": [-0.20, 0.605],  "shared_by": ["2L", "3L"]},
+      {"name": "S23R", "xy_m": [0.20, 0.605],   "shared_by": ["2R", "3R"]},
+      {"name": "R3a",  "xy_m": [0.0, 0.81],    "shared_by": ["3L", "3R"]},
+      {"name": "R3b",  "xy_m": [0.0, 1.61],    "shared_by": ["3L", "3R"]}
+    ],
+    "groups": {"all": ["1L", "1R", "2L", "2R", "3L", "3R"], "row2": ["2L", "2R"],
+               "rows12": ["1L", "1R", "2L", "2R"], "rows23": ["2L", "2R", "3L", "3R"]},
+    "groups_note": "the subsets `aris mark --group` takes (DESIGN section 6, 'Subsets')"
+  },
+
   "slots": {
     "about": "An arm is named by its SLOT on the frame, not by the robot that hangs there (decided 2026-10-02): rows 1, 2, 3 along table y (-1.21, 0, +1.21 m), L at table x = -0.305, R at +0.305. Which robot hangs in which slot is in site/ (site/aris_2026-10.json) and nowhere in the planning code. Old robot ids: 13 = 1L, 17 = 1R, 31 = 2L, 71 = 2R, 2 = 3L, 97 = 3R.",
     "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for slot 2L (then arm 31), 2026-09-14 against the seam bars, at the lateral holder tool).",
