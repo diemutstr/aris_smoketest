@@ -19,7 +19,8 @@ robot/
 
 **One process runs here, `aris-robot serve` (section 5), started at boot by systemd. Nobody
 touches this PC after that: every command (draw, park, calibrate, touch-off, recover, report)
-is given on the planning PC with `aris ...`, and the only thing on this side is the e-stop.**
+is given on the planning PC with `aris ...`, and the only thing on this side is the e-stop
+(and, for the mark calibration, the arm's light and its pilot buttons: section 6).**
 The first run is: build (sections 1 to 3), fill in the site (section 4), install and start
 serve (section 5), then everything from the planning PC.
 
@@ -191,6 +192,51 @@ robot mode, the address the stack was launched with, and which park the arm stan
 It needs the stacks running, and it moves nothing. `systemctl status aris-robot` and
 `out/operator/serve.log` say why serve stopped. To look at one arm with the ROS tools, set
 its domain: `ROS_DOMAIN_ID=71 ros2 control list_controllers -c /arm_2R/controller_manager`.
+
+## 6. Calibration on the operator PC
+
+The mark calibration (`aris mark` on the planning PC, DESIGN 6) has a person seat the pen on
+taped spots. Its arms are flown by a second driver (`aris_robot/calib.py`) on libfranka
+directly, through panda-py, with Franka Desk for the modes and the pilot buttons. For each
+arm's turn serve stops that arm's ROS stack, so a mode switch never reaches a running ROS
+controller. When the arm's turn is over, the stack is started again; the other arms keep
+theirs, parked.
+
+**Install** (once, in the same venv): `pip install -e "robot[calib]"`. The panda-py wheel is
+built against one libfranka version, and it must match the robots. In Desk, Settings →
+System shows the robot's system version, and Franka's compatibility table names the libfranka
+for it. If that is not the libfranka of PyPI's `panda-python` (the version pinned in
+`robot/pyproject.toml`), install the wheel for it from
+https://github.com/JeanElsner/panda-py/releases (its file name carries the libfranka version,
+e.g. `panda_python-<version>+libfranka.<x.y.z>-cp312-...whl`) with `pip install <file>`.
+Then restart serve. Without panda-py, serve refuses mark jobs with a row saying so.
+
+**The secrets file**: `robot/secrets.json` (gitignored, never committed), Desk's login per
+robot, or one entry for all:
+
+```
+{"default": {"username": "...", "password": "..."},
+ "fr3-71":  {"username": "...", "password": "..."}}
+```
+
+**What the person does**: nothing at a computer. When an arm reaches a spot it holds, and
+its light turns white. Pinch the enabling buttons, seat the pen tip on the spot, let go (the
+arm holds), and press a pilot button: ✓ registered, ○ skip this spot. ✗ means "I want to redo this": the
+arm stays with you (light white), so seat it again and press ✓ or ○. The arm takes itself
+back (light blue). Once it stands still, it reads its joints, lifts the pen straight up a few
+centimetres, and returns to its hover. No button within 10 minutes: that arm stops there, and
+the job says why on the planning PC.
+
+**Not checked without a robot**:
+- Desk's operating-mode request on this firmware. Its method, path and bodies are in
+  `robot/site.json` (`desk.mode_endpoint`, today a guess): on day one switch the mode by hand
+  in Desk with the browser's developer tools open, and copy the request there. Every Desk call
+  is a row with its HTTP status ("desk: mode programming", 404 = wrong path);
+- the pilot buttons' event names;
+- whether panda-py's FCI connection must be made again after a mode change (the driver does
+  so anyway);
+- that the joints read the same standing still after the hand-back;
+- the wheel's libfranka version against the robots'.
 
 ## Defaults worth knowing
 

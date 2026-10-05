@@ -188,3 +188,22 @@ def test_the_stack_keeper_restarts_with_a_growing_pause_and_stops_cleanly(tmp_pa
     assert pauses == pytest.approx([0.05, 0.1, 0.2])
     assert st.state["2R"]["starts"] == 1 and not st.state["2R"]["running"]
     assert not any(r["event"] == "stack died" and r["arm"] == "2R" for r in said)
+
+
+def test_a_paused_stack_stays_down_until_resumed(tmp_path):
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    lasting = [sys.executable, "-c", "import time; time.sleep(100)"]
+    st = Stacks({"2R": lasting, "3R": lasting}, rows, tmp_path, first_pause=0.05).start()
+    assert _wait_for(lambda: st.state["2R"]["running"] and st.state["3R"]["running"], 10.0)
+    t0 = time.monotonic()
+    assert st.pause("2R") == ""                                # returns once it has exited
+    assert time.monotonic() - t0 < 3.0 and not st.state["2R"]["running"]
+    time.sleep(0.5)
+    assert st.state["2R"]["starts"] == 1 and st.state["3R"]["running"]   # not restarted
+    assert not any(r["event"] == "stack died" for r in said)
+    st.resume("2R")
+    assert _wait_for(lambda: st.state["2R"]["running"], 5.0)
+    assert st.state["2R"]["starts"] == 2
+    st.stop(grace=5.0)

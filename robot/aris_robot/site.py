@@ -52,6 +52,7 @@ class Site:
     touch: dict              # the touch (touch.TouchSettings.from_site)
     arms: tuple[SiteArm, ...]
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
+    desk: dict = field(default_factory=dict)        # Desk's web API: "mode_endpoint"
 
     def arm(self, slot: str) -> SiteArm:
         for a in self.arms:
@@ -94,7 +95,7 @@ def load(path) -> Site:
     return Site(path, table_path, str(d["server_url"]).rstrip("/"),
                 str(ros.get("joint_prefix", "fr3")), str(ros.get("rmw", "rmw_fastrtps_cpp")),
                 dict(d["force"]), dict(d.get("touch", {})), tuple(arms),
-                dict(d.get("collision", {})))
+                dict(d.get("collision", {})), dict(d.get("desk", {})))
 
 
 def identity(arm: SiteArm, found_serial: str | None) -> str:

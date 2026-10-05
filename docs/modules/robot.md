@@ -89,6 +89,45 @@ at boot (`robot/aris-robot.service`, restart always) and:
   `out/operator/rows.jsonl` and `serve.log`. A command that fails is a row; the process goes
   on.
 
+## The mark calibration: its own driver (`calib.py`, `desk.py`, `handover.py`)
+
+Pete, 2026-10-05: the most mature software for this, its own driver so that a mode switch
+never reaches a running ROS controller, and nobody looks at a computer during it.
+
+- **`CalibArm`** implements the same verbs on libfranka through panda-py (optional extra
+  `calib`). `move` streams our cubic q(t), qd(t) at 1 kHz into panda-py's joint position
+  controller. It does not use `move_to_joint_position`, which times the motion itself; the
+  checker's verdict holds at our timing only. `draw` and `touch` are refused ("not this
+  driver"). `recover` is libfranka's error recovery, refused in user stop or guiding.
+- **`guide`**: FCI off, Desk to programming (the light goes white), then wait for a pilot
+  button: ✓ check or ○ circle end it; ✗ cross means "I am redoing this seat", so the arm
+  stays with the person and the wait goes on (row "guide: button cross, waiting"). Then Desk
+  to execution and FCI on, and the connection is
+  made again. The joints are read until two reads 0.5 s apart agree within 1e-4 rad: that is
+  the sample. Then the pen goes straight up 3 cm (2 or 1 cm where it cannot reach), and a
+  straight joint move goes back to the hover (refused beyond 0.5 rad), so the queue's next
+  motion starts where it was planned. Done with q = the sample and why = the button; the
+  executor writes the "registered" row (q, button, mark). No button in 10 minutes: failed,
+  the arm in execution mode, holding.
+- **`Desk`** is a four-call interface: `mode`, `buttons`, `unlock`/`lock`, `fci`. `PandaDesk`
+  uses panda-py's Desk; `SimDesk` is scripted for the tests. The operating-mode request
+  (panda-py has none) goes through panda-py's own request helper to `robot/site.json`
+  `desk.mode_endpoint` (method, path, bodies; today a guess), and every Desk call is a row
+  "desk: <call>" with its HTTP status, so a wrong endpoint shows at once and is fixed in the
+  config. Credentials come from
+  `robot/secrets.json` (gitignored).
+- **The hand-over in serve**: a job whose header has `"kind": "mark"` runs with a `Switch`
+  per arm. Before an arm's phase, serve pauses that arm's stack: SIGINT to its process group,
+  waits until it has exited, and does not restart it. Only then does it connect the
+  calibration driver. After the phase it disconnects, resumes the stack, and waits until the
+  stack reports the joints. One FCI connection per robot at a time holds because serve is the
+  only process that starts either, does the two steps in that order, one job at a time, and
+  gives up the phase rather than connect when a stack does not exit. libfranka refuses a
+  second connection anyway.
+- **Rows**: "calibration driver: stack stopped / connected / disconnected / stack back",
+  "guide: handed over", "guide: button x", "guide: taken back" (or "guide: no button"), and
+  the executor's "registered".
+
 ## How the arm follows a motion in mode B (`tracking: impedance`)
 
 Two controllers, one at a time, switched by the driver:
@@ -215,7 +254,7 @@ touch settings.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 60 tests, 56 in the quick set; the 4 slow ones compile the controller
+`robot/tests`: 71 tests, 67 in the quick set; the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to
@@ -256,6 +295,16 @@ core (6 to 15 s under load).
   mismatch, thresholds the robot refuses (restored even then). On the fake ROS node, mode A
   sends lower, draw and lift to the trajectory controller as planned, nothing to the
   impedance controller, and the thresholds calls carry the site's values.
+- **Calibration driver** (a fake panda-py FCI and `SimDesk`): a guide round trip with each
+  button. The sample is the person's pose, the Desk calls in order (FCI off, programming,
+  buttons, execution, FCI on), the connection made again, a 3 cm lift then the hover, and the
+  three guide rows. The standstill check waits out a settling arm and fails on a restless
+  one, which then holds. No button: failed, in execution mode, no move. Draw and touch
+  refused; move, recover, and the user-stop refusal. Through the executor: the "registered"
+  row with button, mark and q. Serve with a mark job on two arms: pause 2R → calibration →
+  resume 2R → pause 3R → … in that order and in time, every arm registered, back at its
+  park. A mark job without the calibration driver is refused. The stack keeper pauses a
+  running stack, keeps it down, and resumes it.
 - **Pen rules from the job.** The runner hands the header's `pen` to each driver (a gel-pen
   band and cap in the test), or the rig file's when the header has none, and the first row
   says which.

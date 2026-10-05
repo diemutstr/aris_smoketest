@@ -52,5 +52,21 @@
     "2R": {"mounted": true, "force_sign": 1.0},
     "3L": {"mounted": false, "force_sign": 1.0},
     "3R": {"mounted": true, "force_sign": 1.0}
+  },
+  "desk": {
+    "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper.",
+    "mode_endpoint": {
+      "method": "post",
+      "path": "/desk/api/operating-mode",
+      "body": {
+        "programming": {
+          "mode": "Programming"
+        },
+        "execution": {
+          "mode": "Execution"
+        }
+      },
+      "note": "a guess (2026-10-05), not checked on this firmware. On day one: open Desk in a browser with its developer tools, switch the mode by hand, and copy the request's method, path and body here. Every Desk call is a row with its HTTP status, so a wrong guess shows as 404 or 405 at once."
+    }
   }
 }

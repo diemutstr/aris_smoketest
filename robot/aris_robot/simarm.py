@@ -70,3 +70,27 @@ class SimTouchArm(SimArm):
             if r.held:
                 self._stopped = True
         return Result.ok(r.q_contact) if r.done else Result.failed(r.why, pos.q.copy())
+
+
+class SimFci:
+    """The calibration driver's FCI side on a simulated arm (calib.Fci): its state, its moves.
+    `serve --sim-speed` uses it with a SimDesk that presses check at once."""
+
+    def __init__(self, arm: SimArm):
+        self.arm = arm
+
+    def state(self) -> tuple:
+        s = self.arm.state()
+        mode = 2 if s.ok else 4
+        return s.q, s.qd, mode, [f for f in s.flags if f.startswith("fault")]
+
+    def follow(self, traj, halt) -> str:
+        r = self.arm.move(traj)
+        return "" if r.done else r.why
+
+    def recover(self) -> str:
+        r = self.arm.recover()
+        return "" if r.done else r.why
+
+    def close(self) -> None:
+        return None

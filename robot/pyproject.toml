@@ -12,6 +12,11 @@ dependencies = ["aris", "numpy", "pyyaml"]
 
 [project.optional-dependencies]
 dev = ["pytest", "fastapi", "uvicorn"]
+# The calibration driver (calib.py, desk.py): libfranka and Desk through panda-py.  The wheel
+# is built against ONE libfranka version, which must suit the robots' system version (Desk:
+# Settings -> System).  PyPI's wheel is the default build; another libfranka needs the wheel
+# from https://github.com/JeanElsner/panda-py/releases instead (robot/README.md).
+calib = ["panda-python==1.1.1"]   # the newest on PyPI, 2026-10-05
 
 [project.scripts]
 aris-robot = "aris_robot.cli:main"

@@ -41,6 +41,33 @@ def cmd_identify(a, site, rig) -> int:
     return _say(not bad, "every mounted arm answers" if not bad else f"no answer from {bad}")
 
 
+def calibration_driver(a, site, drivers):
+    """make_calib(slot, rig, say) for serve: panda-py and Desk for real arms (needs
+    aris_robot[calib] and robot/secrets.json), the simulated arm with a Desk that presses check
+    at once for --sim-speed; None when neither is available (mark jobs are then refused)."""
+    from aris_robot.calib import CalibArm, PandaFci
+    from aris_robot.desk import PandaDesk, SimDesk, credentials
+    if a.sim_speed is not None:
+        from aris_robot.simarm import SimFci
+        return lambda slot, rig, say: CalibArm(slot, rig, lambda: SimFci(drivers[slot]),
+                                               SimDesk(["check"] * 1000), say=say)
+    if a.fake:
+        return None                     # fake hardware has no Desk
+    try:
+        import panda_py  # noqa: F401
+    except ImportError:
+        return None
+    secrets = Path(a.site).parent / "secrets.json"
+
+    def make(slot, rig, say):
+        sa = site.arm(slot)
+        user, pw = credentials(secrets, sa.robot)
+        desk = PandaDesk(sa.ip, user, pw, site.desk["mode_endpoint"],
+                         say=lambda event, **f: say(event, arm=slot, **f))
+        return CalibArm(slot, rig, lambda: PandaFci(sa.ip), desk, say=say)
+    return make
+
+
 def cmd_serve(a, site, rig) -> int:
     import logging
     import signal
@@ -65,7 +92,7 @@ def cmd_serve(a, site, rig) -> int:
         drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
                    for i in mounted}
     op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows,
-                  robots=robots(site))
+                  robots=robots(site), make_calib=calibration_driver(a, site, drivers))
 
     def leave(signum, frame):
         op.quit.set()

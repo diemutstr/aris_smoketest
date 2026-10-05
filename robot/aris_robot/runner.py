@@ -147,10 +147,12 @@ def _collision(drivers: dict, which: str) -> str:
 
 
 def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dict,
-            poll: float = 0.01, robots: dict | None = None):
+            poll: float = 0.01, robots: dict | None = None, around_phase=None):
     """Runs the job to its end on `drivers` (slot -> Driver, the mounted arms).  Returns the
     coordinator's JobRun, or a Refusal when it cannot start.  In position tracking (mode A)
-    the collision thresholds are the site's "job" ones while it runs, "normal" after."""
+    the collision thresholds are the site's "job" ones while it runs, "normal" after.
+    `around_phase(phase)`: a context manager entered before the phase runs and left after it
+    (serve's calibration hand-over); its `__enter__` returns why the phase cannot run, or ""."""
     header = remote.header(job_id)
     if isinstance(header, Refusal):
         return header
@@ -169,13 +171,14 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
             _collision(drivers, "normal")
             return Refusal("collision_thresholds", why)
     try:
-        return _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings)
+        return _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings,
+                    around_phase)
     finally:
         if settings["tracking"] == "position":
             _collision(drivers, "normal")
 
 
-def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings):
+def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, around_phase):
     d.mkdir(parents=True, exist_ok=True)
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
     job = Job(d)
@@ -200,17 +203,28 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings):
                 coord.log.write("refused", phase=phase.name, why=refused[-1])
                 stop()
                 return
-            yield phase
+            if around_phase is None:
+                yield phase
+                continue
+            with around_phase(phase) as why:
+                if why:
+                    refused.append(f"{phase.name}: {why}")
+                    coord.log.write("refused", phase=phase.name, why=refused[-1])
+                    stop()
+                    return
+                yield phase                 # the coordinator runs it; we resume after it
 
     mirror = Mirror(remote, job_id, job, drivers).start()
     events = EventForwarder(remote, job_id, job.log_path, stop).start()
+    source = phases()
     try:
-        result = coord.run(phases())
+        result = coord.run(source)
         if refused:
             result.status, result.why = "failed", refused[0]
         log.write("runner finished", job=job_id, status=result.status, why=result.why,
                   where=log.where())
     finally:
+        source.close()                      # leaves a phase's hand-over if the job broke off
         mirror.close()
         events.close()
     return result

@@ -32,6 +32,7 @@ from pathlib import Path
 from aris.rig import Rig
 from aris.types import Refusal
 
+from aris_robot.handover import HandOver, Switch
 from aris_robot.runner import run_job
 
 log = logging.getLogger("aris_robot.serve")
@@ -74,14 +75,18 @@ class Rows:
 
 
 class Stacks:
-    """One child process per arm, kept running."""
+    """One child process per arm, kept running; one can be paused (stopped and not restarted)
+    while the calibration driver owns that arm's FCI connection."""
 
     def __init__(self, commands: dict, rows: Rows, log_dir: Path, first_pause: float = 1.0,
                  max_pause: float = 60.0, env: dict | None = None):
         self.commands, self.rows, self.dir = commands, rows, Path(log_dir)
         self.first_pause, self.max_pause, self.env = first_pause, max_pause, env
-        self.state = {a: dict(running=False, starts=0, last_exit=None) for a in commands}
+        self.state = {a: dict(running=False, starts=0, last_exit=None, paused=False)
+                      for a in commands}
         self._procs: dict = {}
+        self._locks = {a: threading.Lock() for a in commands}
+        self._resumed = {a: threading.Event() for a in commands}
         self._quit = threading.Event()
         self._threads = [threading.Thread(target=self._keep, args=(a,), daemon=True)
                          for a in commands]
@@ -92,20 +97,29 @@ class Stacks:
         return self
 
     def _keep(self, arm) -> None:
-        pause = self.first_pause
+        pause, st = self.first_pause, self.state[arm]
         while not self._quit.is_set():
-            with open(self.dir / f"stack_arm{arm}.log", "ab") as out:
-                p = subprocess.Popen(self.commands[arm], stdout=out, stderr=subprocess.STDOUT,
-                                     start_new_session=True, env=self.env)
-            self._procs[arm] = p
-            st = self.state[arm]
-            st.update(running=True, starts=st["starts"] + 1)
+            with self._locks[arm]:
+                p = None
+                if not st["paused"]:
+                    with open(self.dir / f"stack_arm{arm}.log", "ab") as out:
+                        p = subprocess.Popen(self.commands[arm], stdout=out,
+                                             stderr=subprocess.STDOUT, start_new_session=True,
+                                             env=self.env)
+                    self._procs[arm] = p
+                    st.update(running=True, starts=st["starts"] + 1)
+            if p is None:                                   # paused: wait to be resumed
+                self._resumed[arm].wait(0.1)
+                continue
             self.rows.say("stack started", arm=arm, pid=p.pid, starts=st["starts"])
             t0 = time.monotonic()
             code = p.wait()
             st.update(running=False, last_exit=code)
             if self._quit.is_set():
                 return
+            if st["paused"]:
+                pause = self.first_pause
+                continue
             if time.monotonic() - t0 > self.max_pause:
                 pause = self.first_pause
             self.rows.say("stack died", arm=arm, exit_code=code, restart_in_s=pause)
@@ -113,8 +127,39 @@ class Stacks:
                 return
             pause = min(2.0 * pause, self.max_pause)
 
+    def pause(self, arm, grace: float = 15.0) -> str:
+        """Stop `arm`'s stack and keep it stopped; returns once the process group has exited
+        (its FCI connection closed), or why it could not."""
+        with self._locks[arm]:
+            self.state[arm]["paused"] = True
+            self._resumed[arm].clear()
+            p = self._procs.get(arm)
+        if p is None or p.poll() is not None:
+            return ""
+        try:
+            os.killpg(p.pid, signal.SIGINT)
+        except ProcessLookupError:
+            return ""
+        try:
+            p.wait(grace)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            try:
+                p.wait(5.0)
+            except subprocess.TimeoutExpired:
+                return f"the stack of {arm} (pid {p.pid}) does not exit"
+        return ""
+
+    def resume(self, arm) -> None:
+        """Start `arm`'s stack again (at once)."""
+        with self._locks[arm]:
+            self.state[arm]["paused"] = False
+            self._resumed[arm].set()
+
     def stop(self, grace: float = 10.0) -> None:
         self._quit.set()
+        for a in self._resumed:
+            self._resumed[a].set()
         for p in self._procs.values():
             if p.poll() is None:
                 os.killpg(p.pid, signal.SIGINT)
@@ -159,14 +204,17 @@ class Operator:
 
     def __init__(self, remote, config_dir, work_dir, drivers: dict, log_dir, stacks=None,
                  idle_s: float = 10.0, wait_s: float = 30.0, rows: Rows | None = None,
-                 robots: dict | None = None):
+                 robots: dict | None = None, make_calib=None):
         """`robots`: slot -> {"robot", "ip", "serial_found", "identity"}: who the site table
-        says hangs in each slot and whether that was verified (site.identity)."""
+        says hangs in each slot and whether that was verified (site.identity).
+        `make_calib(slot, rig, say)`: a connected calibration driver (calib.CalibArm), for the
+        mark jobs; None: mark jobs are refused."""
         self.remote, self.config, self.work = remote, Path(config_dir), Path(work_dir)
         self.drivers, self.stacks = drivers, stacks
         self.idle_s, self.wait_s = idle_s, wait_s
         self.rows = rows or Rows(remote, Path(log_dir))
         self.robots = robots or {}
+        self.make_calib = make_calib
         self.busy = threading.Event()
         self.quit = threading.Event()
 
@@ -227,8 +275,19 @@ class Operator:
             if hasattr(d, "retarget"):
                 d.retarget(rig)
         drivers = {a: d for a, d in self.drivers.items() if a in rig.arm_ids}
+        around = None
+        header = self.remote.header(job)
+        if isinstance(header, dict) and header.get("kind") == "mark":
+            if self.make_calib is None:
+                self.rows.say("run refused", job=job, reason="no_calibration_driver",
+                              why="this operator PC has no calibration driver (aris_robot[calib])",
+                              where=self.where())
+                return
+            drivers = {a: Switch(a, d) for a, d in drivers.items()}
+            around = HandOver(drivers, lambda a, say: self.make_calib(a, rig, say),
+                              self.stacks, self.rows.say).around
         res = run_job(self.remote, job, rig, self.config, self.work, drivers,
-                      robots=self.robots)
+                      robots=self.robots, around_phase=around)
         if isinstance(res, Refusal):
             self.rows.say("run refused", job=job, reason=res.reason, why=res.detail,
                           where=self.where())
