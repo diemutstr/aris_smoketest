@@ -26,6 +26,22 @@ Pete fills these in before handing over:
 
 ---
 
+## 0. The names of the arms
+
+Every arm is named by its **slot** on the frame, not by the robot's old number. Rows are
+counted along the table (row 1 at one end, row 3 at the other); L and R are the two sides.
+The old numbers (13, 17, 31, 71, 2, 97) are not used anywhere any more; this table translates:
+
+| slot | where | old number (to be confirmed by Pete on day one) |
+|---|---|---|
+| 2L | middle row, L side — **in use** | 97 (drew the left half of the word) |
+| 2R | middle row, R side — **in use** | 71 (drew the right half) |
+| 1L, 1R | the row at the row-1 end — switched off | 13, 17 |
+| 3L, 3R | the row at the other end — switched off | 2, 97 or 31 |
+
+If you (or your assistant) catch yourself saying "arm 71", say "2R" instead; every command,
+message and file uses the slot.
+
 ## 1. What this is
 
 Two computers and two arms.
@@ -263,7 +279,35 @@ was not (and why). Other commands, any time:
 | calibration says "wrong slot or wrong robot?" | the robots' addresses in `site/aris_2026-10.json` are swapped; send Pete the output |
 | anything else | send Pete: the exact output, the job id, and the folder `out/jobs/<job id>/` from the laptop |
 
-## 9. For Pete, before handing over
+## 9. The order of experiments
+
+Do not skip ahead; every stage proves what the next one relies on.
+
+**Stage 0 — Pete present: the first run.** The robot PC's setup and the first motions
+(`aris park`, `aris touchoff`, a drawing in the air) are done once with Pete, by his runbook.
+You start at Stage 1 only after he says the system moves correctly.
+
+**Stage 1 — two arms (2L and 2R).**
+1. `aris park` — both arms to their parks.
+2. `aris mark` — the calibration of section 6. Then `aris touchoff 2L`, `aris touchoff 2R`.
+3. `aris draw lines.json --air 30` — a few straight lines, flown in the air. Watch: smooth,
+   nothing touches.
+4. `aris draw lines.json` — the same on paper. Look at: are the lines dark and even along their
+   length; do they start and end cleanly; is every line drawn (the report says what was left).
+5. `aris draw word.json` — the word across the two arms. Look at the **seam** where the two
+   halves meet: the halves should line up to within about a millimetre. Send Pete a photo of the
+   seam with a ruler, and the job id.
+6. Repeat 2 → 5 once, a day later or after the pencils were changed: the seam should be as good.
+
+**Stage 2 — four arms (two more switched on: rows 1 and 2, or rows 2 and 3).** Pete makes the
+four-arm rig file and tells you which rows. On the wood, two more marks per added row (he gives
+their rough places, like A and B). Then: `aris park`, `aris mark --group rows12` (or
+`rows23`), touch-offs for all four, a drawing in the air, lines on paper, then a drawing that
+crosses the seams between the rows. Same looks, same photos.
+
+**Stage 3 — six arms.** As Stage 2 with `aris mark` (everything), ten marks on the wood.
+
+## 10. For Pete, before handing over
 
 - The first run under real ROS has not happened yet: build, fake hardware, identify, touch-off,
   air drawing, paper — in that order, with Pete present.
