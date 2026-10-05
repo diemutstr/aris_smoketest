@@ -152,13 +152,15 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  settings: Settings | None = None, drivers: dict | None = None,
                  with_arms: bool = True, with_area: bool = True,
                  sim_paper=None, tracking: str = "position", sim_truth=None,
-                 sim_base_error=None, sim_buttons=None) -> Station | Refusal:
+                 sim_base_error=None, sim_buttons=None,
+                 sim_mark_error=None) -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
     False: no drivers at all (plan and check only).  `sim_paper`: (dz m, roll deg, pitch deg),
     the simulated arms' paper against the nominal one (default: the nominal paper).
     `with_area` False: the drawing area is not worked out (it needs the drawable maps;
     checking does not).  The mark job's simulated person (simtruth.py) works in a "true" world:
-    `sim_truth` another config directory, or `sim_base_error` (mm, mrad) every base moved;
+    `sim_truth` another config directory, or `sim_base_error` (mm, mrad) every base moved and
+    `sim_mark_error` (cm) every mark;
     `sim_buttons` {slot: [button, ...]} scripts the pilot buttons."""
     config_dir = Path(config_dir)
     try:
@@ -179,7 +181,8 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
     if drivers is None and with_arms and driver == "sim":
         from aris.execute.drivers.sim import SimArm
         from aris.server.simtruth import Person, Truth
-        truth = Truth(rig, None if sim_truth is None else Rig.load(sim_truth), sim_base_error)
+        truth = Truth(rig, None if sim_truth is None else Rig.load(sim_truth), sim_base_error,
+                      sim_mark_error)
         drivers = {a: SimArm(a, rig.park_q(a), speed=speed,
                              paper=fake_paper(rig, a, sim_paper), tip_of=rig.arm(a).tip,
                              person=Person(truth, a, (sim_buttons or {}).get(a, ())))

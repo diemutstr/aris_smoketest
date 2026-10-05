@@ -95,7 +95,8 @@ def report_lines(rep: dict) -> list[str]:
                        f"tip {e.get('tip_change_mm')} mm; rms {e.get('residual_rms_mm')} mm, "
                        f"pivot {e.get('pivot_residuals_mm')} mm")
         for n, e in rep.get("marks", {}).items():
-            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')}, rms "
+            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')} m, "
+                       f"{e.get('from_nominal_mm')} mm from nominal, rms "
                        f"{e.get('residual_mm')} mm, by {e.get('by')}"
                        + (f" ({e['note']})" if e.get("note") else ""))
         for p in rep.get("pairs", []):
@@ -367,7 +368,8 @@ def _station(a, with_arms: bool):
                         tracking=getattr(a, "tracking", "position"),
                         sim_truth=getattr(a, "sim_truth", None),
                         sim_base_error=None if not getattr(a, "sim_base_error", None) else
-                        tuple(float(x) for x in a.sim_base_error.split(",")))
+                        tuple(float(x) for x in a.sim_base_error.split(",")),
+                        sim_mark_error=getattr(a, "sim_mark_error", None))
 
 
 def _sim_paper(text):
@@ -461,6 +463,8 @@ def parser() -> argparse.ArgumentParser:
                    help="the simulated arms' true rig for the mark job (another config folder)")
     s.add_argument("--sim-base-error", default=None, metavar="MM,MRAD",
                    help="the simulated arms' true bases: every base moved by this much")
+    s.add_argument("--sim-mark-error", type=float, default=None, metavar="CM",
+                   help="the simulated marks: every one taped this far from its nominal place")
     s.add_argument("--sim-paper", default=None,
                    help="simulated arms' paper: dz_mm,roll_deg,pitch_deg against the nominal")
     s.add_argument("--jobs", default="out/jobs", help="where the job directories go")

@@ -407,9 +407,11 @@ the row pairs share two spots on the centre line (A/B at (0, ∓0.40) for the mi
 ∓0.81) and (0, ∓1.61) for the end rows), the column pairs share one seam spot each at (±0.20,
 ±0.605). Every arm therefore has at least two shared spots (its yaw), and every seam is tied by
 two points (the yaw between rows). The frame is anchored on the arms' mountings, not on the
-marks: a rigid fit (shift and turn) of the solved slot positions onto their nominal ones from
-the technical drawing (1–2 cm) fixes the three free numbers; the marks, drawn by hand 2–5 cm
-from their nominal spots, are solved wherever they are. Anchoring on a mark would shift the
+marks: the solved layout is moved so that the mean of the solved slot positions equals the mean
+of the nominal ones (the technical drawing, 1–2 cm) and the mean yaw error is zero — three
+numbers, the frame's gauge. (Not a point fit of the positions: two slots 0.61 m apart, each
+1–2 cm off, would turn such a fit by degrees.) The marks, drawn by hand 2–5 cm from their
+nominal spots, are solved wherever they are. Anchoring on a mark would shift the
 steel, the fences and the drawing area by the mark's error against the real table (decided
 2026-10-05 after Pete's "expect 2–5 cm"). Per arm: one pivot (3–4 hand orientations at its first
 spot, which gives the pen tip) and a single touch at every other spot; two arms ≈ 10 touches,

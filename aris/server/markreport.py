@@ -49,11 +49,11 @@ def finish(st, rec, job, slots, book, run, why, before) -> None:
                first_motion_s=None if first is None else first - rec.t_received,
                assumptions=st.assumptions())
     if sol is not None:
-        rep.update(solution(sol, before))
+        rep.update(solution(rig, sol, before))
     runner.finish_job(rec, job.dir, rep, state, why)
 
 
-def solution(sol, before) -> dict:
+def solution(rig, sol, before) -> dict:
     """Per slot the pose and tip change against the job's start and its residuals; per mark
     its position, state and residual; the pairs of arms' disagreement; the solver's notes."""
     mm = lambda x: round(float(x) * 1e3, 4)
@@ -70,6 +70,7 @@ def solution(sol, before) -> dict:
                            residual_rms_mm=mm(f.rms), touches=int(f.n_touches),
                            pivot_mark=f.pivot_mark)
     marks = {n: dict(xy_m=[round(float(v), 6) for v in m.xy], state=m.state,
+                     from_nominal_mm=[mm(v) for v in np.asarray(m.xy) - rig.marks[n][0]],
                      residual_mm=mm(m.residual), by=list(m.by), note=m.note)
              for n, m in (sol.marks or {}).items()}
     pairs = [dict(marks=[a, b], slots=[s, t], disagreement_mm=mm(d))

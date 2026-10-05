@@ -6,6 +6,8 @@ truth), or the believed rig with every base moved by a fixed amount (`--sim-base
 mm,mrad`: each slot's base shifted that much horizontally and turned that much about the
 vertical, in a direction of its own that follows from its name, so the same run gives the
 same truth; x, y and yaw are what the marks find, height and tilt are the plane job's).
+`--sim-mark-error cm` moves every true mark that far from its nominal position, in a
+direction of its own: marks are taped by hand, 2 to 5 cm off is normal.
 
 The person of a `guide`: from the hover, they seat the TRUE pen tip on the TRUE mark keeping
 the hover's hand orientation as the true arm holds it, a little off (0.3 mm of guiding
@@ -42,7 +44,7 @@ def _rot(v) -> np.ndarray:
 class Truth:
     """The true base poses, pen tips and mark positions of the simulated world."""
 
-    def __init__(self, rig, truth_rig=None, base_error=None):
+    def __init__(self, rig, truth_rig=None, base_error=None, mark_error=None):
         self.rig = rig
         self.T, self.tip, self.marks = {}, {}, {}
         for a in rig.arm_ids:
@@ -65,6 +67,10 @@ class Truth:
                 self.tip[a] = rig.arm(a).tool.tip_hand
         src = truth_rig if truth_rig is not None else rig
         self.marks = {n: np.asarray(src.marks[n][0], float) for n in src.marks}
+        if mark_error:                     # the marks taped where they are, not where planned
+            for n in self.marks:
+                d = np.random.default_rng(_seed("mark error", n)).normal(size=2)
+                self.marks[n] = self.marks[n] + 1e-2 * float(mark_error) * d / np.linalg.norm(d)
         self.paper_z = src.paper_z
 
 
