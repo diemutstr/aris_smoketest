@@ -20,7 +20,7 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 
 | blank | value |
 |---|---|
-| the sides: **row 1 is the end at your desk; L is your left when you stand at your desk facing the table** — Pete confirms this is not mirrored | ______ |
+| the sides (confirmed by Pete from the drawing, 2026-10-05): **row 3 is the end at your desk, row 1 the far end; the slots named L are on your RIGHT when you stand at your desk facing the table** | done |
 | the planning laptop's name and its address on the robot network | ______ |
 | the robot PC's login (the user that owns the ROS install) | ______ |
 | Desk login (username / password) for the two robots | ______ |
@@ -30,16 +30,18 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 ## 0. The names of the arms
 
 Every arm is named by its **slot** on the frame, not by the robot's old number. Rows are
-counted along the table: **row 1 is the end at your desk**, row 3 the far end. **L is your left
-and R your right when you stand at your desk facing the table.** The old numbers (13, 17, 31,
-71, 2, 97) are not used anywhere any more; this table translates:
+counted along the table: **row 3 is the end at your desk**, row 1 the far end. Careful with the
+letters: **the slots named L are on your RIGHT, the slots named R on your LEFT**, when you stand
+at your desk facing the table (the names come from the technical drawing, which looks at the
+table from the other end; see `docs/figures/table_orientation.png`). The old numbers (13, 17,
+31, 71, 2, 97) are not used anywhere any more; this table translates:
 
-| slot | where | old number (to be confirmed by Pete on day one) |
+| slot | where, standing at your desk | old number (confirmed on day one by which address answers) |
 |---|---|---|
-| 2L | middle row, L side — **in use** | 97 (drew the left half of the word) |
-| 2R | middle row, R side — **in use** | 71 (drew the right half) |
-| 1L, 1R | the row at the row-1 end — switched off | 13, 17 |
-| 3L, 3R | the row at the other end — switched off | 2, 97 or 31 |
+| 2L | middle row, on your RIGHT — **in use** | probably 71 (it drew the half on your right) |
+| 2R | middle row, on your LEFT — **in use** | probably 97 (it drew the half on your left) |
+| 3L, 3R | the row nearest your desk — switched off | 2, 97 or 31 |
+| 1L, 1R | the far row — switched off | 13, 17 |
 
 If you (or your assistant) catch yourself saying "arm 71", say "2R" instead; every command,
 message and file uses the slot.
@@ -180,8 +182,8 @@ Where (the table is 2.19 m across and 4.17 m long; the paper 1.80 × 3.63 m, cen
 
 - Find the **centre of the table**: the point halfway along its length and halfway across.
 - Both marks lie on the **centre line** along the length of the table, i.e. halfway across.
-- **Mark A**: 0.40 m from the centre toward your desk (the row-1 end).
-- **Mark B**: 0.40 m from the centre toward the other end.
+- **Mark A**: 0.40 m from the centre toward the FAR end (away from your desk).
+- **Mark B**: 0.40 m from the centre toward your desk.
 
 So A and B are about 0.80 m apart, straddling the centre, each roughly midway between the two
 live arms. Label them A and B. (The drawing area is a strip 1.72 m across and 0.90 m along,

@@ -1,5 +1,9 @@
 # Aris: the six-arm drawing rig
 
+> **Diemut — start here:** open `docs/FOR_THE_ARTIST.md`. It is the one document for running
+> the rig, written for you and the Claude helping you. Everything below is the technical
+> overview for Pete and developers.
+
 Six Franka FR3 arms hang upside down from a frame over a paper-covered table and draw with
 pens. This repository is the clean rebuild of the planning and execution software (branch
 `aris3`). The old code and its documents live on branch `aris2` only; what this branch keeps of

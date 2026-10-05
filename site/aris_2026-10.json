@@ -5,7 +5,8 @@
     "mapping_source": "the orchestrator's brief, 2026-10-02: 13 -> 1L, 17 -> 1R, 31 -> 2L, 71 -> 2R, 2 -> 3L, 97 -> 3R. The ids were permuted on the hardware once already; verify every row with `aris-robot identify` before a run.",
     "ip_source": "robot/site.json `arms` (control-stack briefing 2026-09-09, section 5, arm_registry.py), carried over by robot id. The DDS domain there was the robot id; it is copied as `domain`.",
     "live_note": "on 2026-10-02 Pete confirmed the two arms under control are the MIDDLE ROW, 2L and 2R (config/two_arms); the other four hang in their slots switched off and are fenced off. The old stack drew the word with robots 97 (left half) and 71 (right half), so those two are 2L and 2R \u2014 which is which is checked on day one with `aris arms` (the address that answers).",
-    "sure_note": "`sure: false` marks a row nobody has checked against the hardware since the permutation; the reason is in `why`."
+    "sure_note": "`sure: false` marks a row nobody has checked against the hardware since the permutation; the reason is in `why`.",
+    "orientation": "Confirmed 2026-10-05 from the bases' forward side (the J1 axis is offset toward -x of the plate): Diemut's desk is at the +y end (row 3); standing there facing the table, the L slots (-x) are on her RIGHT. docs/figures/table_orientation.png"
   },
   "slots": {
     "1L": {
@@ -23,18 +24,18 @@
       "why": "not checked since the permutation; arm not under control"
     },
     "2L": {
-      "robot": "fr3-97",
-      "ip": "192.168.50.15",
-      "domain": 97,
-      "sure": false,
-      "why": "live; 97 drew the left half on 2026-10-01, so it is probably 2L (L = -x); confirm which address answers in this slot"
-    },
-    "2R": {
       "robot": "fr3-71",
       "ip": "192.168.50.14",
       "domain": 71,
       "sure": false,
-      "why": "live; 71 drew the right half on 2026-10-01, so it is probably 2R; robot 71 had no IP on 2026-09-15, .14 is the briefing's guess"
+      "why": "live; L slots are on Diemut's RIGHT (drawing frame -x; confirmed 2026-10-05) and robot 71 drew the half on her right, so probably 2L; confirm which address answers here. Robot 71 had no IP on 2026-09-15; .14 is the briefing's guess"
+    },
+    "2R": {
+      "robot": "fr3-97",
+      "ip": "192.168.50.15",
+      "domain": 97,
+      "sure": false,
+      "why": "live; R slots are on Diemut's LEFT and robot 97 drew the half on her left, so probably 2R; confirm which address answers here"
     },
     "3L": {
       "robot": "fr3-2",

@@ -105,7 +105,7 @@ def _site_files(tmp_path, change_site=None, change_table=None):
 def test_site_reads_robots_from_the_site_table(tmp_path):
     s = site_mod.load(_site_files(tmp_path))
     a = s.arm("2R")
-    assert (a.robot, a.ip, a.domain, a.namespace) == ("fr3-71", "192.168.50.14", 71, "arm_2R")
+    assert (a.robot, a.ip, a.domain, a.namespace) == ("fr3-97", "192.168.50.15", 97, "arm_2R")
     assert s.mounted == ("2L", "2R")
     assert site_mod.identity(a, None) == "unverified"
     known = site_mod.SiteArm("2R", "fr3-71", a.ip, 71, True, serial="295341-1234")
