@@ -46,10 +46,13 @@ def _config(tmp_path, src) -> Path:
     return d
 
 
+MARK_ERROR = 3.5                      # cm: every simulated mark taped this far off nominal
+
+
 def _station(tmp_path, src, buttons=None):
     st = open_station(_config(tmp_path, src), speed=math.inf, uncalibrated=True, cache_dir=None,
                       jobs_dir=tmp_path / "jobs", workers=4, settings=COARSE,
-                      sim_base_error=ERROR, sim_buttons=buttons)
+                      sim_base_error=ERROR, sim_buttons=buttons, sim_mark_error=MARK_ERROR)
     assert not isinstance(st, Refusal), st
     return st
 
@@ -64,8 +67,8 @@ def _job(c):
 def test_the_touches_of_each_arm_and_the_groups():
     rig = Rig.load(TWO)
     t = tasks_for(rig, "2L", rig.arm_ids)
-    assert t == [Task("A", 0), Task("A", 1), Task("A", 2), Task("A", 3), Task("B", 0)]
-    assert all(abs(np.hypot(*Task("A", k).lean) - math.radians(25)) < 1e-12 for k in (1, 2, 3))
+    assert t == [Task("A", k) for k in range(6)] + [Task("B", 0)]
+    assert all(abs(np.hypot(*Task("A", k).lean) - math.radians(30)) < 1e-12 for k in range(1, 6))
     assert Task("A", 0).lean == (0.0, 0.0)
     six = Rig.load(SIX)
     assert group_slots(six, (), "rows12") == ("1L", "1R", "2L", "2R")
@@ -84,17 +87,29 @@ def test_marks_on_two_arms_a_cross_then_files_and_rig(tmp_path, capsys):
     assert cli.main(["mark", "--poll", "0.05"], http=ClientHttp(c)) == 0
     print(capsys.readouterr().out, f"mark, two arms: {time.perf_counter() - t0:.1f} s wall")
     rep = _job(c)["report"]
-    assert rep["state"] == "done" and rep["touches"] == 10, rep["why"]
-    assert rep["buttons"] == {"check": 10}           # a cross stays inside the driver
+    assert rep["state"] == "done" and rep["touches"] == 14, rep["why"]
+    assert rep["buttons"] == {"check": 14}           # a cross stays inside the driver
     assert st.drivers["2L"].person.crossed == 1
     rig = Rig.load(st.config_dir)
+    # the frame is a fit onto the nominal mountings: what the marks find is the seam, the pose
+    # of 2R seen from 2L, and the marks' places seen from the arms
+    seam = np.linalg.inv(rig.T_table_base("2L")) @ rig.T_table_base("2R")
+    true = np.linalg.inv(truth.T["2L"]) @ truth.T["2R"]
+    off = np.linalg.norm(seam[:3, 3] - true[:3, 3])
+    turn = abs(math.atan2(seam[1, 0], seam[0, 0]) - math.atan2(true[1, 0], true[0, 0]))
+    with capsys.disabled():
+        print(f"\nseam 2L-2R: {off * 1e3:.3f} mm, {turn * 1e3:.3f} mrad from the truth "
+              f"(bases {ERROR[0]} mm / {ERROR[1]} mrad off, marks {MARK_ERROR} cm off); marks "
+              + ", ".join(f"{n} {e['from_nominal_mm']} mm" for n, e in rep["marks"].items()))
+    assert off < 1e-3 and turn < 1.5e-3
     for s in ("2L", "2R"):
-        T, Tt = rig.T_table_base(s), truth.T[s]
-        assert np.linalg.norm(T[:2, 3] - Tt[:2, 3]) < 1e-3, s          # x, y within 1 mm
-        yaw = math.atan2(T[1, 0], T[0, 0]) - math.atan2(Tt[1, 0], Tt[0, 0])
-        assert abs(yaw) < 1.5e-3, (s, yaw)                              # yaw within 1.5 mrad
         assert rig.calibration_status(s)["base"].startswith("applied")
-        assert rep["per_slot"][s]["touches"] == 5
+        assert rep["per_slot"][s]["touches"] == 7
+    for n, e in rep["marks"].items():               # each mark found where it was taped
+        found = np.linalg.inv(rig.T_table_base("2L")) @ np.r_[e["xy_m"], rig.paper_z, 1.0]
+        taped = np.linalg.inv(truth.T["2L"]) @ np.r_[truth.marks[n], rig.paper_z, 1.0]
+        assert np.linalg.norm((found - taped)[:2]) < 1.5e-3, n
+        assert np.linalg.norm(e["from_nominal_mm"]) > 20.0     # it was 3.5 cm off nominal
     assert (st.config_dir / "calibration" / "marks.json").exists()
     assert set(rep["marks"]) == {"A", "B"} and rep["rms_mm"] < 1.0
     assert all(p["disagreement_mm"] < 2.0 for p in rep["pairs"])
@@ -106,12 +121,13 @@ def test_marks_on_two_arms_a_cross_then_files_and_rig(tmp_path, capsys):
 
 @pytest.mark.slow
 def test_a_skipped_mark_leaves_an_arm_unsolved_and_nothing_written(tmp_path):
-    st = _station(tmp_path, TWO, {"2R": ["check"] * 4 + ["circle"]})
+    st = _station(tmp_path, TWO, {"2R": ["check"] * 6 + ["circle"]})   # its second mark
     c = TestClient(create_app(st))
     assert cli.main(["mark", "--poll", "0.05"], http=ClientHttp(c)) == 1
     rep = _job(c)["report"]
     assert rep["state"] == "failed" and "the solve did not pass" in rep["why"], rep["why"]
-    assert rep["notes"] == ["2R: B orientation 0 skipped"] and rep["buttons"]["circle"] == 1
+    assert len(rep["notes"]) == 1 and rep["notes"][0].startswith("2R: ")
+    assert rep["notes"][0].endswith("orientation 0 skipped") and rep["buttons"]["circle"] == 1
     assert not list((st.config_dir / "calibration").glob("*.json"))
     for a, d in st.drivers.items():                   # every arm went home all the same
         assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-9
@@ -161,5 +177,5 @@ def test_a_touch_the_solver_names_as_bad_is_done_once_more(tmp_path, monkeypatch
     c = TestClient(create_app(st))
     assert cli.main(["mark", "--poll", "0.05"], http=ClientHttp(c)) == 0
     rep = _job(c)["report"]
-    assert rep["redone"] == ["2L: A orientation 2"] and rep["touches"] == 10
+    assert rep["redone"] == ["2L: A orientation 2"] and rep["touches"] == 14
     assert "mark 2L again" in [p["name"] for p in rep["phases"]]

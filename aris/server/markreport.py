@@ -32,7 +32,10 @@ def finish(st, rec, job, slots, book, run, why, before) -> None:
     state, why = _end(rec, why, run)
     sol, written = None, []
     if state == "done":
-        known = {n: rig.mark_xy(n) for n in rig.marks if rig.mark_state(n) == "solved"}
+        # a full calibration (every controlled slot) solves the marks afresh; a subset keeps
+        # the marks solved before
+        known = {} if set(slots) == set(rig.arm_ids) else \
+            {n: rig.mark_xy(n) for n in rig.marks if rig.mark_state(n) == "solved"}
         sol = solve_marks(rig, solver_input(book.touches), known,
                           files.base_tips(st.config_dir, slots))
         if not sol.passed:
@@ -70,7 +73,10 @@ def solution(rig, sol, before) -> dict:
                            residual_rms_mm=mm(f.rms), touches=int(f.n_touches),
                            pivot_mark=f.pivot_mark)
     marks = {n: dict(xy_m=[round(float(v), 6) for v in m.xy], state=m.state,
-                     from_nominal_mm=[mm(v) for v in np.asarray(m.xy) - rig.marks[n][0]],
+                     from_nominal_mm=[mm(v) for v in (np.asarray(m.from_nominal)
+                                                       if getattr(m, "from_nominal", None)
+                                                       is not None else
+                                                       np.asarray(m.xy) - rig.marks[n][0])],
                      residual_mm=mm(m.residual), by=list(m.by), note=m.note)
              for n, m in (sol.marks or {}).items()}
     pairs = [dict(marks=[a, b], slots=[s, t], disagreement_mm=mm(d))

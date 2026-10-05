@@ -10,7 +10,7 @@ Files: `aris/server/`: `drawing.py` (reading and fitting a drawing), `jobs.py` (
 store), `pipeline.py` (planner -> checker -> queues), `park.py` (park all arms), `runner.py`
 (a job in the background, stop), `report.py` (what was drawn and what was not), `recheck.py`
 (`aris check`), `station.py` (the rig, calibration, drivers, knobs), `server.py` (the web
-app). `aris/cli.py` is the command.
+app). `aris/cli/` is the command (one module per kind of command).
 
 ## Before it starts
 
@@ -220,10 +220,11 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
   group "all", or every controlled slot when the rig has no such group), in rig order, one arm
   at a time, the others standing (parked, or given to the checker as their joints).
 - **What each arm touches.** Its marks among the group's (`rig.marks_for(slots)`, the ones it
-  shares): at its first mark four hand orientations — the pivot: the pen upright and three
-  tilts of 25 degrees, 120 degrees apart (turned by up to 60 degrees where a tilt is out of
+  shares): at its first mark six hand orientations — the pivot: the pen upright and five
+  tilts of 30 degrees, 72 degrees apart (turned by up to 60 degrees where a tilt is out of
   reach; tilting, not only turning, is what pins the pen length) — and one upright touch at
-  every other mark.
+  every other mark. The first mark is the first in rig.json order where at least three of the
+  tilts can be reached, else the next. Planning is `mark_plan.py`; `mark.py` runs the job.
 - **Planned up front.** For each touch a free move to the hover (the pen 30 mm above the mark,
   `rig.mark_xy`: the solved position when there is one), by way of 80 mm up when turning the
   pen near the paper is cramped, then a `guide` there; then home. Every motion is checked
@@ -238,9 +239,11 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
 - **After each arm.** The pivot's own fit (`aris.calib.marks.pivot`): a touch it names as off
   the common point gets one small extra phase ("mark 2L again": to that hover, the guide,
   home); then the next arm.
-- **At the end.** The joint solve over every arm of the group (`aris.calib.solve_marks`), the
-  marks solved before as known (`rig.mark_state`; a later subset needs them: a single arm needs
-  two solved marks, else "needs a partner"), the base parts' tips for the height. When it
+- **At the end.** The joint solve over every arm of the group (`aris.calib.solve_marks`). A full
+  calibration (every controlled slot) solves the marks afresh; a smaller group or single slots
+  keep the marks solved before as known (`rig.mark_state`; a single arm needs two solved marks,
+  else "needs a partner"). The frame is the fit of the solved arms onto their nominal
+  mountings; the marks are found wherever they were taped (2 to 5 cm off nominal is normal), the base parts' tips for the height. When it
   passes, `aris.calib.files.write_mark_solution` writes every slot's `base` (method "marks")
   and `pen` (the pivot's tip) and `calibration/marks.json`, and the rig reloads. When it fails,
   the report's why names the slot, mark or touch and **nothing is written**. The report gives
@@ -252,7 +255,10 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
 **In simulation** the person is simulated (`aris/server/simtruth.py`): in a "true" world
 (`aris serve --sim-truth <config dir>`, or `--sim-base-error 3,2`: every base 3 mm and 2 mrad
 off in x, y, yaw, the quantities the marks find), they seat the true pen tip on the true mark in
-the hover's hand orientation, 0.3 mm off, and press ✓ (tests script ✗, ○ and a failed hand-over).
+the hover's hand orientation (turned a little and with another elbow where it must be), 0.3 mm
+off, and press ✓ (tests script ✗, ○ and a failed hand-over); `--sim-mark-error 3.5` tapes every
+true mark 3.5 cm off its nominal place. The report prints each mark's solved position and its
+offset from nominal.
 
 ## The touch-off job
 
@@ -377,12 +383,13 @@ park` parks every arm from a random near-park configuration and `aris check` con
 queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
 
 The mark job (`tests/test_server_mark.py`, simulated person, real executor, queues and solver):
-on the two-arm rig with every base 3 mm and 2 mrad off, 10 touches (a ✗ handled inside the
-driver), the files written, x, y within 1 mm and yaw within 1.5 mrad of the truth, the rig
-reloaded with base and pen applied; a ○ that leaves 2R one mark only: the solve refuses ("needs
-a partner"), nothing written, both arms home; a failed hand-over: the job fails, the arm holds
-at its hover; a touch named bad: one extra phase; `--group rows12` on the six-slot rig: 24
-touches, four slots applied, 3L untouched. 6 tests, 29 s.
+on the two-arm rig with every base 3 mm and 2 mrad off and both marks 3.5 cm off nominal, 14
+touches (a ✗ handled inside the driver), the files written, the seam (2R seen from 2L) within
+0.15 mm and 0.06 mrad of the truth, each mark found within 1.5 mm of where it was taped (34
+and 36 mm from nominal), the rig reloaded with base and pen applied; a ○ on 2R's second mark:
+the solve refuses ("needs a partner"), nothing written, both arms home; a failed hand-over: the
+job fails, the arm holds at its hover; a touch named bad: one extra phase; `--group rows12` on
+the six-slot rig: 32 touches, four slots applied, 3L untouched. 6 tests, 32 s.
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen, tracking and note; `--rest-of` (a job stopped midway, its leftovers

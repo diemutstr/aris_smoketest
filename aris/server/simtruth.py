@@ -112,11 +112,19 @@ class Person:
         T = np.eye(4)
         T[:3, :3] = T_tb[:3, :3] @ R_table
         T[:3, 3] = T_tb[:3, :3] @ (tip_t - R_table @ tr.tip[a]) + T_tb[:3, 3]
-        # the person keeps the arm's shape: the answer nearest the hover, joint 7 free nearby
-        q7s = q_now[6] + np.linspace(-0.3, 0.3, 13)
-        Q, ok = arm.ik(np.repeat(T[None], len(q7s), axis=0), q7s)
-        if not ok.any():
-            return "the person cannot seat the pen on the mark from this hover"
-        flat, good = Q.reshape(-1, 7), ok.reshape(-1)
-        d = np.where(good, np.linalg.norm(np.nan_to_num(flat - q_now, nan=1e9), axis=1), np.inf)
-        return flat[int(np.argmin(d))], button
+        # the person keeps the hand's tilt and the arm's shape as far as they can: the answer
+        # nearest the hover, joint 7 free nearby, the hand turned about the vertical if needed
+        q7s = q_now[6] + np.linspace(-0.6, 0.6, 25)
+        for turn in np.deg2rad([0.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0]):
+            Rt = _rot([0.0, 0.0, turn]) @ R_table
+            Tt = T.copy()
+            Tt[:3, :3] = T_tb[:3, :3] @ Rt
+            Tt[:3, 3] = T_tb[:3, :3] @ (tip_t - Rt @ tr.tip[a]) + T_tb[:3, 3]
+            Q, ok = arm.ik(np.repeat(Tt[None], len(q7s), axis=0), q7s)
+            if not ok.any():
+                continue
+            flat, good = Q.reshape(-1, 7), ok.reshape(-1)
+            d = np.where(good, np.linalg.norm(np.nan_to_num(flat - q_now, nan=1e9), axis=1),
+                         np.inf)
+            return flat[int(np.argmin(d))], button
+        return "the person cannot seat the pen on the mark from this hover"

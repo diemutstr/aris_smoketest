@@ -1,4 +1,4 @@
-"""Tests of the drawing server (aris/server) and the command line (aris/cli.py).
+"""Tests of the drawing server (aris/server) and the command line (aris/cli/).
 
 Quick set: the FastAPI test client over simulated arms, drawable maps on a 5 cm grid (as the
 system planner's quick tests), no cache.  Slow: the word through `aris draw` against a live

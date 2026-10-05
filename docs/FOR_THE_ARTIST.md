@@ -170,7 +170,7 @@ So A and B are about 0.80 m apart, straddling the centre, each roughly midway be
 live arms. Label them A and B. (The drawing area is a strip 1.72 m across and 0.90 m along,
 centred on the table; the marks do not set it, the arms' mountings do.)
 
-## 6. Calibration (about 10 minutes, no computer after the first line)
+## 6. Calibration (about 15 minutes, no computer after the first line)
 
 What it does: each arm in turn comes to a mark; you guide its pen tip into the mark; the
 software works out exactly where each arm hangs and how long its pen is. Do it once at the
@@ -199,17 +199,20 @@ the pilot (the control pad on the arm):
    An arm standing still above a mark with its light blue for more than a minute means that
    arm failed: go to the laptop, where the reason is written.
 
-Per arm: four touches at its first mark (the four tilts), one touch at the second mark. Ten
-touches in all.
+Per arm: six touches at its first mark (upright and five tilts), one touch at the second
+mark. Fourteen touches in all. When it is done the laptop prints, for each arm, how far it
+really hangs from where the drawings say (a few millimetres is normal) and where the marks
+really are (a few centimetres from where you aimed is normal).
 
-After every pen change, or whenever you have handled a pencil, one touch per arm (seconds):
+**Right after the calibration, and again after every pen change** or whenever you have handled
+a pencil, one touch per arm (seconds, nothing for you to do):
 
 ```
 aris touchoff 2L
 aris touchoff 2R
 ```
 
-That measures the pen's length; without it the pen presses too hard or not at all.
+That measures the pen's length exactly; without it the pen presses too hard or not at all.
 
 ## 7. Drawing
 

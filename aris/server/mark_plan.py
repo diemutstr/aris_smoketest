@@ -45,14 +45,34 @@ class Task:
         return (LEAN * np.cos(a), LEAN * np.sin(a))
 
 
-def tasks_for(rig, slot, slots) -> list[Task]:
-    """This slot's touches: six orientations at its first mark (the pivot), one at each
-    other mark."""
+def tasks_for(rig, slot, slots, first: str | None = None) -> list[Task]:
+    """This slot's touches: six orientations at its first mark (the pivot; `first`, else the
+    first in rig.json order), one at each other mark."""
     marks = [m for m in rig.marks_for(slots) if slot in rig.marks[m][1]]
+    if first in marks:
+        marks.remove(first)
+        marks.insert(0, first)
     out = []
     for k, m in enumerate(marks):
         out += [Task(m, o) for o in (range(1 + len(AZIMUTHS)) if k == 0 else (0,))]
     return out
+
+
+PIVOT_TILTS_MIN = 3      # tilted orientations a pivot needs (turns alone leave the tip free)
+
+
+def choose_pivot(st, slot, now, slots) -> list[Task]:
+    """The slot's touches with a first mark whose tilted hovers the arm can reach (at least
+    PIVOT_TILTS_MIN of them): the marks in rig.json order, the first that works."""
+    rig = st.rig
+    marks = [m for m in rig.marks_for(slots) if slot in rig.marks[m][1]]
+    obs, standing, phase = Scene(rig).of(slot, now, (slot,), (), "pivot")
+    ap, q = ArmPlan(st, slot, obs, standing, phase), np.asarray(now[slot], float)
+    for m in marks:
+        tilts = [Task(m, o) for o in range(1, 1 + len(AZIMUTHS))]
+        if sum(ap.hover(t, q) is not None for t in tilts) >= PIVOT_TILTS_MIN:
+            return tasks_for(rig, slot, slots, first=m)
+    return tasks_for(rig, slot, slots)
 
 
 @dataclass

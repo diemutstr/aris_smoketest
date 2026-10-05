@@ -156,10 +156,11 @@ Everything a job produces is in one directory, `out/jobs/<job id>/` on the plann
 | `refused/<phase>__<slot>__<n>.npz` | every motion the checker refused while planning, with where the arm stood and what the checker said (the piece is then left over or drawn by a later phase) |
 
 `out/jobs/operator.jsonl` is what the operator PC said outside any job (positions, its arm
-stacks, commands taken). `config/calibration/<slot>.json` has two parts: `base` (height, roll,
-pitch — later x, y, yaw too) written by `aris calibrate`, and `pen` (the pen's length) written by
-`aris touchoff`; every later job reads it, and the operator PC fetches these files, it never has
-its own.
+stacks, commands taken). `config/calibration/<slot>.json` has two parts: `base` (x, y, yaw and
+the height/tilt, written by `aris mark`, or height/tilt alone by `aris calibrate`) and `pen`
+(the tip, from the mark pivot or `aris touchoff`); `config/calibration/marks.json` holds where
+the marks were found. Every later job reads these files, and the operator PC fetches them, it
+never has its own.
 
 The operator PC keeps a copy of each job it ran under `out/robot_jobs/<id>/`. `out/cache/`
 holds the drawable maps and the kinematic table (built on first use, minutes; reused as long

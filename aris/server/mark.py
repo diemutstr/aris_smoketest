@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from aris.execute import Coordinator
-from aris.server.mark_plan import Task, plan_arm, tasks_for
+from aris.server.mark_plan import Task, choose_pivot, plan_arm, tasks_for
 from aris.types import Refusal
 
 __all__ = ["submit_mark", "group_slots", "solver_input", "Task", "tasks_for"]
@@ -87,7 +87,7 @@ def run_phase(st, rec, job, slot, plan) -> list | str:
 def run_arm(st, rec, job, slot, now, slots, book) -> str:
     """One arm: its phase, its own solve, at most one extra phase for a touch the solver names
     as bad.  -> "" or why the job ends."""
-    plan = plan_arm(st, slot, now, tasks_for(st.rig, slot, slots), f"mark {slot}")
+    plan = plan_arm(st, slot, now, choose_pivot(st, slot, now, slots), f"mark {slot}")
     if isinstance(plan, str):
         return plan
     book.notes += plan[4]

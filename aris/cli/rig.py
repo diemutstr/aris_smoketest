@@ -1,0 +1,62 @@
+"""The rig and the server: rig, serve."""
+from __future__ import annotations
+
+from aris.cli.common import _assume, assumptions_line, say, verdict
+
+
+def cmd_rig(a, http) -> int:
+    r = _assume(http)
+    if r is None:
+        return verdict(False, "the server does not answer")
+    c = r.get("drawing_area_centre_m") or [0.0, 0.0]
+    say(f"drawing area {r['drawing_area_m'][0]:.3f} x {r['drawing_area_m'][1]:.3f} m around "
+        f"({c[0]:+.3f}, {c[1]:+.3f}), canvas {r['canvas_m'][0]:.3f} x {r['canvas_m'][1]:.3f} m")
+    say(f"pen {(r.get('pen_in') or {}).get('name')}, tracking {r.get('tracking')}")
+    files = r.get("calibration_files", {})
+    for aid, arm in r["arms"].items():
+        T = arm["T_table_base"]
+        f = files.get(aid, {})
+        parts = "; ".join(f"{k} {'passed' if f[k]['passed'] else 'FAILED'} {f[k]['date']}"
+                          for k in ("base", "pen") if k in f) or "no file"
+        say(f"slot {aid:<3} axis ({T[0][3]:+.4f}, {T[1][3]:+.4f}) m  calibration "
+            f"{arm['calibration']}  [{parts}]")
+    return verdict(True, "rig read")
+
+
+# --------------------------------------------------------------------------- local commands
+
+
+def _station(a, with_arms: bool):
+    from aris.server import open_station
+    from aris.system.settings import Settings
+    return open_station(a.config, driver=getattr(a, "driver", "sim"),
+                        speed=getattr(a, "speed", 1.0), uncalibrated=a.uncalibrated,
+                        cache_dir=None if a.cache in ("", "none") else a.cache,
+                        jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
+                        settings=Settings(grid_step=a.map_grid), with_arms=with_arms,
+                        sim_paper=_sim_paper(getattr(a, "sim_paper", None)),
+                        tracking=getattr(a, "tracking", "position"),
+                        sim_truth=getattr(a, "sim_truth", None),
+                        sim_base_error=None if not getattr(a, "sim_base_error", None) else
+                        tuple(float(x) for x in a.sim_base_error.split(",")),
+                        sim_mark_error=getattr(a, "sim_mark_error", None))
+
+
+def _sim_paper(text):
+    """"dz_mm,roll_deg,pitch_deg" -> (dz m, roll deg, pitch deg), or None."""
+    if not text:
+        return None
+    dz, roll, pitch = (float(x) for x in text.split(","))
+    return dz * 1e-3, roll, pitch
+
+
+def cmd_serve(a, _http=None) -> int:
+    from aris.server.server import serve
+    st = _station(a, with_arms=True)
+    if not hasattr(st, "rig"):
+        return verdict(False, f"the server will not start: {st.reason}: {st.detail}")
+    say(assumptions_line(st.assumptions()))
+    say(f"drawing area {st.drawing_area[0]:.3f} x {st.drawing_area[1]:.3f} m; "
+        f"listening on http://{a.host}:{a.port}")
+    serve(st, a.host, a.port)
+    return verdict(True, "server stopped")
