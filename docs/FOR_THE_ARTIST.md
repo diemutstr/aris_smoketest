@@ -34,7 +34,8 @@ counted along the table: **row 3 is the end at your desk**, row 1 the far end. C
 letters: **the slots named L are on your RIGHT, the slots named R on your LEFT**, when you stand
 at your desk facing the table (the names come from the technical drawing, which looks at the
 table from the other end; see `docs/figures/table_orientation.png`). The old numbers (13, 17,
-31, 71, 2, 97) are not used anywhere any more; this table translates:
+31, 71, 2, 97) are not used anywhere any more; this table translates (picture:
+`docs/figures/table_orientation.png`):
 
 | slot | where, standing at your desk | old number (confirmed on day one by which address answers) |
 |---|---|---|
@@ -178,12 +179,15 @@ dot. During calibration you put the pen tip exactly on the crossing, and a thin 
 be hit far more precisely than a dot. Use a sharp, hard pencil (4H) in the holder for the
 calibration.
 
-Where (the table is 2.19 m across and 4.17 m long; the paper 1.80 × 3.63 m, centred):
+**The picture to work from: `docs/figures/marks_for_diemut.png`** (your desk at the bottom,
+measurements from the table's edges). In words:
 
-- Find the **centre of the table**: the point halfway along its length and halfway across.
-- Both marks lie on the **centre line** along the length of the table, i.e. halfway across.
-- **Mark A**: 0.40 m from the centre toward the FAR end (away from your desk).
-- **Mark B**: 0.40 m from the centre toward your desk.
+- Both marks lie on the **centre line** along the length of the table: 1.09 m from either long
+  edge (the table is 2.19 m across and 4.17 m long).
+- **Mark A**: on the centre line, 1.68 m from the FAR short edge (the end away from your desk).
+- **Mark B**: on the centre line, 1.68 m from the short edge at your desk.
+- A and B come out 0.80 m apart, straddling the middle of the table, each between the two arms
+  in use.
 
 So A and B are about 0.80 m apart, straddling the centre, each roughly midway between the two
 live arms. Label them A and B. (The drawing area is a strip 1.72 m across and 0.90 m along,
