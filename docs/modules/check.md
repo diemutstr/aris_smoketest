@@ -58,7 +58,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 4 | `clearance parked arms`: every arm parked in the phase, at its park configuration, and every arm in `standing` ({slot: 7 joints}: arms standing still somewhere other than their park, in park and calibrate jobs), at those joints; bases included. The closest is named `parked2R:…` or `standing2R:…`; a slot in both stands where `standing` says | 0.050 m |
 | 5 | `clearance self`: the capsule pairs at least four joints apart | 0.020 m |
 | 6 | all of 4 and 5 hold between the samples too (below) | |
-| 7 | drawing: `tip on paper`: the tip against the **drawing surface**, which lies the current pen's press (`pens.table.<pen>.press_m`, 3.5 mm for the 4H graphite) below the paper; the planned points lie there, and the press is the same number the planners get from `rig.rules().press` | 0.5 mm |
+| 7 | drawing: `tip on paper`: the tip against the **drawing surface**, which lies the current pen's press (`pens.table.<pen>.press_m`; 2.1 mm for the 4H graphite today) below the paper; the planned points lie there, and the press is the same number the planners get from `rig.rules().press` | 0.5 mm |
 | 7 | drawing: `tip on line`: distance from the planned tips (`motion.tip_base`) and the line through them, at 1 kHz | 0.2 mm |
 | 7 | drawing: `never backwards`: progress along the line (below) never falls back (a numerical allowance) | 0.01 mm |
 | 7 | drawing: `never stops`: slowest speed along the line between the moment the pen first reaches a quarter of its top speed and the moment it last drops below it | 0.25 mm/s, whatever the drawing speed (a sharp corner slows the pen to about 1 mm/s at any drawing speed; a real stop reads 1e-7 m/s) |
@@ -137,8 +137,8 @@ consecutive samples, then a ball per capsule, then the exact distance.
   numbers. The struts, plate and clamp of each slot are placed from the words in rig.json, not
   from `rig.py`.
 - Slots: `rig.json slots.list`, one entry per slot (`"slot": "2R"`, axis, height, turn, park
-  configuration, `mounted`). A slot whose arm is not mounted keeps its hanger steel and nothing
-  else. Parked arms appear in the verdict as `parked2R:link3.0`, hanger boxes as `strut2R_plus_x`,
+  configuration, `mounted`, `hanger`). A slot whose arm is not mounted keeps its hanger steel and
+  nothing else, unless it has none (`"hanger": false`: a floor arm or an empty slot). Parked arms appear in the verdict as `parked2R:link3.0`, hanger boxes as `strut2R_plus_x`,
   `plate2R`, `clamp2R`.
 - The calibration file `config/calibration/<slot>.json` has two parts, each applied on its own:
   `base` (the slot's pose) when it passed; `pen` (the measured tip in the hand frame) when it
@@ -186,7 +186,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | a drawn V turning 150 degrees | passes; slowest along the line 1.6 mm/s at the corner |
 | the sequencer's word at 80 mm/s, corner turning 130 + 18 degrees (`tests/data/arm_stop_31_word_0.npz`) | the pen really slows there: 1.03 mm/s along the line at 1 kHz, 0.83 mm/s tip speed at 10 kHz; not a stop. It failed the old limit (5 % of 80 mm/s = 4 mm/s) and passes the absolute 0.25 mm/s; a real stop halfway reads 7e-8 m/s |
 | drawing 1.5 % over its timing / 4 % over | tip speed 20.33 mm/s passes / 20.83 fails (limit 20.6) |
-| lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
+| measured with a press of 3.5 mm (the tests read the press from rig.json): lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
 | a touch down to the paper and back, press 3.5 mm / the same touch planned to the drawing surface | passes / fails `tip on paper` (3.5 mm) and pen depth |
 | air run: a line drawn 30 mm above the paper and the lower onto it, with `surface_z` = paper + 30 mm / without | pass (tip 0.03 mm and 0.00 mm off) / fail their tip rows (33.5 mm) |
 | a drawn line on the drawing surface (3.5 mm below the paper), checked with the press of 3.5 mm and with a press of 0 | passes (tip 0.01 mm from the surface) / fails `tip on paper` (3.51 mm); the tool and link clearances are the same in both |

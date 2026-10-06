@@ -796,7 +796,7 @@ def test_air_run_surface_z():
         assert up.passed, up.failed
         plain = check(CONFIG, "2L", m, ph, m.q_start)
         _fails(plain, row)
-        assert abs(plain.get(row).value - 0.0335) < 5e-4
+        assert abs(plain.get(row).value - (0.030 + PRESS)) < 5e-4
     _fails(check(CONFIG, "2L", draw, ph, draw.q_start, surface_z=float("nan")), "well formed")
 
 
