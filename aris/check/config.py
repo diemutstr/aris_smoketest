@@ -99,6 +99,10 @@ def read_rig(config_dir) -> RigData:
         # its plate, so the hanger follows the calibrated axis across the table (shifted, not
         # turned: the boxes stay axis aligned, and a few mrad of turn moves a plate corner well
         # under a millimetre).  Its heights are the frame's, as rig.json gives them.
+        # A slot without a hanger ("hanger": false, e.g. a floor arm or an empty slot) has no
+        # steel; an arm hanging there always has one.
+        if not a.get("mounted", True) and not a.get("hanger", True):
+            continue
         shift = np.r_[T[:2, 3] - T_nom[:2, 3], 0.0]
         for n, l, h in _hanger(slot, a, cfg["hanger"]):
             names.append(n), lo.append(np.add(l, shift)), hi.append(np.add(h, shift))

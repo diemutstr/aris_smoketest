@@ -57,6 +57,7 @@ def _arm(monkeypatch, rig, site, q0, model=None, **kw):
     node = fake_ros.FakeArmNode(q0, rig.paper("2L").normal, model, **kw)
     monkeypatch.setattr(D, "ArmNode", lambda site_arm, names: node)
     arm = D.RosArm(site, rig, "2L")
+    arm._sign = 1.0                                 # the fake paper reads positive
     arm.set_job(rig.pen(), "impedance")             # these tests are about mode B
     return arm, node
 
@@ -133,6 +134,8 @@ def test_stop_then_recover(monkeypatch, rig, site):
     assert not arm.draw(draw).done                                 # refused until recovered
     rec = arm.recover()
     assert rec.done, rec.why
+    # the reflex is cleared first, then the hardware component comes back
+    assert node.recovery_steps == ["error recovery", "hardware FrankaHardwareInterface"]
     assert arm.state().ok and node.active == {"fr3_arm_controller"}
 
 

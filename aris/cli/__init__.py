@@ -3,7 +3,7 @@
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
     aris draw   <drawing.json> [--note ..] [--server URL]   submit, follow, report; exit
                                                      0 on PASS; --rest-of <job> draws its leftovers
-    aris status | stop | park | rig   [--server URL]
+    aris status | stop | park | rig | arms   [--server URL]
     aris calibrate <slot>                            touch the paper on a grid: the base part
     aris touchoff <slot>                             one touch: the pen part
     aris recover <slot>                              release an arm after a fault
@@ -27,7 +27,7 @@ from aris.cli.calibration import cmd_calibrate, cmd_mark, cmd_recover, cmd_touch
 from aris.cli.common import (CONFIG, DEFAULT_SERVER, Http, _summary, assumptions_line, follow,
                              job_passed, report_lines, say, verdict)
 from aris.cli.jobs import cmd_check, cmd_draw, cmd_park, cmd_plan, cmd_status, cmd_stop
-from aris.cli.rig import cmd_rig, cmd_serve
+from aris.cli.rig import cmd_arms, cmd_rig, cmd_serve
 
 __all__ = ["main", "parser", "Http", "job_passed", "report_lines", "follow", "say", "verdict",
            "assumptions_line", "_summary"]
@@ -82,12 +82,14 @@ def parser() -> argparse.ArgumentParser:
         s = sub.add_parser(name, help=what)
         s.add_argument("arm", help="the slot, e.g. 2R")
     for name, what in (("status", "the current or last job"), ("stop", "stop the job"),
-                       ("park", "park all arms"), ("rig", "the rig the server runs")):
+                       ("park", "park all arms"), ("rig", "the rig the server runs"),
+                       ("arms", "each slot: robot, joints or no reading, at park, when")):
         sub.add_parser(name, help=what)
     s = sub.add_parser("mark", help="calibrate x, y and yaw by guiding the pens onto the marks")
     s.add_argument("slots", nargs="*", help="the slots (default: the group)")
     s.add_argument("--group", default=None, help="all, row2, rows12, rows23 (default: all)")
-    for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "calibrate",
+    for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "arms",
+                                       "calibrate",
                                        "touchoff", "recover", "mark")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
@@ -104,7 +106,7 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-COMMANDS = dict(serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
+COMMANDS = dict(arms=cmd_arms, serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
                 park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check,
                 calibrate=cmd_calibrate, recover=cmd_recover, touchoff=cmd_touchoff,
                 mark=cmd_mark)

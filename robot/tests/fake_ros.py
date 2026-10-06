@@ -16,7 +16,8 @@ STUBS = ["rclpy", "rclpy.action", "rclpy.executors", "rclpy.qos", "action_msgs",
          "builtin_interfaces.msg", "control_msgs", "control_msgs.action",
          "controller_manager_msgs", "controller_manager_msgs.srv", "franka_msgs",
          "franka_msgs.action", "franka_msgs.msg", "franka_msgs.srv", "sensor_msgs", "sensor_msgs.msg", "std_srvs",
-         "std_srvs.srv", "trajectory_msgs", "trajectory_msgs.msg"]
+         "std_srvs.srv", "trajectory_msgs", "trajectory_msgs.msg", "lifecycle_msgs",
+         "lifecycle_msgs.msg"]
 
 
 class _Any:
@@ -51,7 +52,7 @@ class FakeArmNode:
         self._lock = threading.Lock()
         self.statuses, self.status = [], None
         self.published = []
-        self.goals, self.collision_calls = [], []
+        self.goals, self.collision_calls, self.recovery_steps = [], [], []
         self._reset()
         self._quit = False
         threading.Thread(target=self._run, daemon=True).start()
@@ -126,6 +127,11 @@ class FakeArmNode:
         return ""
 
     def error_recovery(self, timeout=15.0):
+        self.recovery_steps.append("error recovery")
+        return ""
+
+    def reactivate_hardware(self, component, timeout=10.0):
+        self.recovery_steps.append(f"hardware {component}")
         return ""
 
     def close(self):

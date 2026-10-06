@@ -209,7 +209,9 @@ own pen and joints. `aris calibrate 2R`.
    roll, pitch and height change, and pass or fail.
 6. A touch that meets no paper within the extra depth is not a fault: the executor logs "no
    contact" and goes on, the point is named in the report, and the job fails only if fewer
-   than 9 contacts remain.
+   than the plane fit's minimum (`aris.calib.plane.MIN_POINTS`, 8) remain. A contact whose
+   force tripped within the first 5 mm of the descent (the start transient) is dropped as
+   "tripped at the start", not used, and the report names its point.
 
 ## The mark job
 

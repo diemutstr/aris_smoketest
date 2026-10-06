@@ -1,7 +1,31 @@
-"""The rig and the server: rig, serve."""
+"""The rig and the server: rig, arms, serve."""
 from __future__ import annotations
 
 from aris.cli.common import _assume, assumptions_line, say, verdict
+
+
+def cmd_arms(a, http) -> int:
+    """Each slot: its robot, its joints (or why there is no reading), at its park, when."""
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    code, arms = http.get("/arms")
+    if code != 200:
+        return verdict(False, f"{arms}")
+    say(f"{'slot':<5} {'robot':<12} {'joints (rad)':<58} {'park':<5} reported")
+    unknown = []
+    for slot, r in arms.items():
+        q = r.get("q")
+        joints = " ".join(f"{x:+.3f}" for x in q) if q else (r.get("reading") or "no reading")
+        if not q:
+            unknown.append(slot)
+        park = "-" if r.get("at_park") is None else ("yes" if r["at_park"] else "no")
+        age = r.get("age_s")
+        when = "" if age is None else f"{age:.0f} s ago"
+        flags = ", ".join(r.get("flags", [])) if "flags" in r else ""
+        say(f"{slot:<5} {str(r.get('robot') or '-'):<12} {joints:<58} {park:<5} "
+            f"{when or flags}")
+    return verdict(not unknown, "every slot has a reading" if not unknown else
+                   f"no reading for {', '.join(unknown)}")
 
 
 def cmd_rig(a, http) -> int:

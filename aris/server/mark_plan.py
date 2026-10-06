@@ -45,10 +45,21 @@ class Task:
         return (LEAN * np.cos(a), LEAN * np.sin(a))
 
 
+def slot_marks(rig, slot, slots) -> list[str]:
+    """The marks a slot touches in a job of `slots`: those it shares within the job; when it
+    shares fewer than two there (a single slot, or a group cut through a pair), every mark it
+    shares with any controlled slot, whose places an earlier run must have solved."""
+    inside = [m for m in rig.marks_for(slots) if slot in rig.marks[m][1]]
+    if len(inside) >= 2:
+        return inside
+    return [m for m in rig.marks if slot in rig.marks[m][1]
+            and set(rig.marks[m][1]) <= set(rig.arm_ids)]
+
+
 def tasks_for(rig, slot, slots, first: str | None = None) -> list[Task]:
     """This slot's touches: six orientations at its first mark (the pivot; `first`, else the
     first in rig.json order), one at each other mark."""
-    marks = [m for m in rig.marks_for(slots) if slot in rig.marks[m][1]]
+    marks = slot_marks(rig, slot, slots)
     if first in marks:
         marks.remove(first)
         marks.insert(0, first)
@@ -65,7 +76,7 @@ def choose_pivot(st, slot, now, slots) -> list[Task]:
     """The slot's touches with a first mark whose tilted hovers the arm can reach (at least
     PIVOT_TILTS_MIN of them): the marks in rig.json order, the first that works."""
     rig = st.rig
-    marks = [m for m in rig.marks_for(slots) if slot in rig.marks[m][1]]
+    marks = slot_marks(rig, slot, slots)
     obs, standing, phase = Scene(rig).of(slot, now, (slot,), (), "pivot")
     ap, q = ArmPlan(st, slot, obs, standing, phase), np.asarray(now[slot], float)
     for m in marks:

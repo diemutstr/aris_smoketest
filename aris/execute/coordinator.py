@@ -16,6 +16,7 @@ a new drawing.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -79,6 +80,21 @@ class Coordinator:
                        where={str(a): q for a, q in out.where.items()})
         return out
 
+    def _fresh_joints(self, wait: float = 10.0):
+        """Every arm's joints for the phase-end check, never all zeros (no reading: a stack
+        without joint states): such an arm is asked again for up to `wait` seconds.
+        -> {arm: q} or why there is no reading."""
+        t_end = time.monotonic() + wait
+        while True:
+            q = {a: np.asarray(d.state().q, float) for a, d in self.drivers.items()}
+            blind = [a for a, x in q.items() if x.shape != (7,) or not np.any(x)
+                     or not np.all(np.isfinite(x))]
+            if not blind:
+                return q
+            if time.monotonic() >= t_end or self._stop.is_set():
+                return f"no joint states for {', '.join(map(str, blind))} (FCI off?)"
+            self._stop.wait(self.poll)
+
     def _run_phase(self, phase: Phase, out: JobRun) -> str:
         """Runs one phase; returns why the job cannot go on, or ""."""
         missing = [a for a in phase.active if a not in self.drivers]
@@ -112,7 +128,10 @@ class Coordinator:
                             for r in bad)
             self.log.write("phase failed", phase=phase.name, why=why)
             return f"{phase.name}: {why}"
-        q = {a: np.asarray(d.state().q, float) for a, d in self.drivers.items()}
+        q = self._fresh_joints()
+        if isinstance(q, str):
+            self.log.write("phase failed", phase=phase.name, why=q)
+            return f"{phase.name}: {q}"
         v = check_phase_end(self.config_dir, phase, q)
         out.phase_ends.append((phase.name, v.passed, v.tightest, v.min_clearance))
         self.log.write("phase end check", phase=phase.name, passed=v.passed,

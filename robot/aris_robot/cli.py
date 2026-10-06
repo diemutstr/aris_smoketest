@@ -88,11 +88,12 @@ def cmd_serve(a, site, rig) -> int:
         from aris_robot.driver import RosArm
         files = [f for f in bringup.write(rig, site, a.out, fake=a.fake)
                  if json.loads(f.read_text())["arm"] in mounted]
-        stacks = Stacks(launch_commands(files), rows, log_dir).start()
+        stacks = Stacks(launch_commands(files, site), rows, log_dir).start()
         drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
                    for i in mounted}
     op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows,
                   robots=robots(site), make_calib=calibration_driver(a, site, drivers))
+    op.auto_recover = dict(site.execution.get("auto_recover", {}))
 
     def leave(signum, frame):
         op.quit.set()

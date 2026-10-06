@@ -36,7 +36,7 @@ from aris.server.steps import Scene, Step, lift_pens, pen_down
 from aris.types import JointPath, Motion, Phase, Refusal, Trajectory
 
 SPINS = np.arange(24) * np.deg2rad(15.0)
-MIN_CONTACTS = 9         # the solver needs at least this many touches
+from aris.calib.plane import MIN_POINTS as MIN_CONTACTS   # the plane fit's own minimum
 Q7_TRIES = np.deg2rad([0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0])
 
 
@@ -242,6 +242,34 @@ def touch_points(plan: Plan) -> dict:
     return out
 
 
+START_TRIP = 0.005        # m: a contact closer than this to the hover is the start transient
+
+
+def tripped(rig, plan: Plan, rows, arm: str) -> tuple[list, list]:
+    """The contact rows split into real contacts and those whose force tripped within the
+    first START_TRIP of the descent (the start transient, seen on 1R): -> (kept rows, the grid
+    points of the dropped ones).  Every other row is kept as it is."""
+    hover, i = {}, 0
+    for s in plan.steps:
+        for m in s.motions:
+            if m.kind == "touch":
+                hover[i] = m.q_start
+            i += 1
+    points = touch_points(plan)
+    paper = rig.paper(arm)
+    n = np.asarray(paper.normal, float) / np.linalg.norm(paper.normal)
+    arm_m = rig.arm(arm)
+    kept, dropped = [], []
+    for r in rows:
+        if r.get("event") == "contact" and r.get("arm") == arm and r.get("index") in hover:
+            h, c = arm_m.tip(np.asarray([hover[r["index"]], r["q"]], float))
+            if float(n @ (h - c)) < START_TRIP:
+                dropped.append(points.get(r["index"]))
+                continue
+        kept.append(r)
+    return kept, dropped
+
+
 def misses(plan: Plan, rows, arm: str) -> list:
     """The grid points whose touch found no paper (a "contact" row is missing for them)."""
     got = {r.get("index") for r in rows
@@ -262,8 +290,8 @@ def _solve(st, rec, plan, run):
     arm = plan.arm
     if rec.stop.is_set():
         return "stopped", "stop requested", None, None
-    rows = rec.log.read()
-    missed = misses(plan, rows, arm)
+    rows, start_trips = tripped(st.rig, plan, rec.log.read(), arm)
+    missed = misses(plan, rows, arm) + start_trips
     n = sum(1 for r in rows if r.get("event") == "contact" and r.get("arm") == arm)
     if run.status != "done" and not (missed and "no contact" in run.why):
         return "failed", run.why, None, None
@@ -281,9 +309,10 @@ def _solve(st, rec, plan, run):
 def _report(st, rec, plan, run, result, written, planning_s, state, why) -> dict:
     from aris.server.jobs import arm_progress
     rows, first = arm_progress(rec.log.read())
-    contacts = sum(1 for r in rec.log.read() if r.get("event") == "contact"
-                   and r.get("arm") == plan.arm)
+    kept, start_trips = tripped(st.rig, plan, rec.log.read(), plan.arm)
+    contacts = sum(1 for r in kept if r.get("event") == "contact" and r.get("arm") == plan.arm)
     out = dict(state=state, why=why, kind="calibrate", arm=plan.arm,
+               tripped_at_start=start_trips,
                points=len(plan.points_table), points_table=plan.points_table.tolist(),
                dropped=plan.dropped, spin_deg=round(float(np.rad2deg(plan.spin)), 3),
                contacts=contacts, missed=misses(plan, rec.log.read(), plan.arm),

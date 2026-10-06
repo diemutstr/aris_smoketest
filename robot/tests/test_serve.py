@@ -207,3 +207,56 @@ def test_a_paused_stack_stays_down_until_resumed(tmp_path):
     assert _wait_for(lambda: st.state["2R"]["running"], 5.0)
     assert st.state["2R"]["starts"] == 2
     st.stop(grace=5.0)
+
+
+def test_each_stack_is_pinned_to_its_core(tmp_path):
+    from aris_robot.serve import launch_commands
+    from aris_robot import site as site_mod
+    site = site_mod.load(Path(__file__).resolve().parents[1] / "site.json")
+    f = tmp_path / "arm_2R.json"
+    f.write_text(json.dumps(dict(arm="2R")))
+    cmd = launch_commands([f], site)["2R"]
+    assert cmd[:3] == ["taskset", "-c", str(site.arm("2R").rt_core)]
+    assert cmd[3:6] == ["ros2", "launch", "aris_bringup"]
+    assert launch_commands([f])["2R"][0] == "ros2"
+
+
+class _Faulty:
+    """An arm with a link-drop fault until recovered; counts the recoveries."""
+
+    def __init__(self, q, fault="fault: communication_constraints_violation"):
+        self.q, self.fault, self.recovers = np.array(q, float), fault, 0
+
+    def state(self):
+        from aris.execute.drivers import ArmState
+        return ArmState(self.q, np.zeros(7), not self.fault,
+                        (self.fault,) if self.fault else ("holding",))
+
+    def recover(self):
+        from aris.execute.drivers import Result
+        self.recovers += 1
+        return Result.ok(self.q)
+
+
+class _Down:
+    def state(self):
+        from aris.execute.drivers import ArmState
+        return ArmState(np.full(7, np.nan), np.zeros(7), False, ("no joint states",))
+
+
+def test_link_drops_recover_by_themselves_once_per_window_and_where_is_never_zeros(tmp_path):
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    drop, other = _Faulty(np.zeros(7) + 0.1), _Faulty(np.zeros(7) + 0.2, "fault: joint_reflex")
+    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": drop, "2R": other, "1L": _Down()},
+                  tmp_path / "log", rows=rows)
+    op.auto_recover = dict(on=True, every_s=120, patterns=["communication_constraints_violation"])
+    op._auto_recover()
+    op._auto_recover()                                  # inside the window: not again
+    assert drop.recovers == 1 and other.recovers == 0  # other faults wait for a person
+    assert [r["event"] for r in said] == ["auto recovered"] and said[0]["arm"] == "2L"
+    w = op.where_fields()
+    assert w["where"]["1L"] is None and w["where_missing"]["1L"] == "no joint states"
+    assert w["where"]["2L"] == pytest.approx([0.1] * 7)
+    assert json.dumps(w, allow_nan=False)

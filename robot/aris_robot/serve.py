@@ -29,17 +29,24 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+
 from aris.rig import Rig
 from aris.types import Refusal
 
 from aris_robot.handover import HandOver, Switch
-from aris_robot.runner import run_job
+from aris_robot.runner import reading, run_job, where_of
 
 log = logging.getLogger("aris_robot.serve")
 
 
 def _plain(q):
     return [float(x) for x in q]
+
+
+def _q_fields(driver) -> dict:
+    q, why = reading(driver)
+    return dict(q=q) if why is None else dict(q=None, reason=why)
 
 
 class Rows:
@@ -215,15 +222,22 @@ class Operator:
         self.rows = rows or Rows(remote, Path(log_dir))
         self.robots = robots or {}
         self.make_calib = make_calib
+        self.auto_recover: dict = {}         # site.json execution.auto_recover
+        self._recovered: dict = {}
         self.busy = threading.Event()
         self.quit = threading.Event()
 
     def where(self) -> dict:
-        return {str(a): _plain(d.state().q) for a, d in self.drivers.items()}
+        """slot -> 7 joints, or None when the arm has no reading (stack down, FCI off)."""
+        return where_of(self.drivers)["where"]
+
+    def where_fields(self) -> dict:
+        """`where`, plus `where_missing` (slot -> why) when an arm has no reading."""
+        return where_of(self.drivers)
 
     def serve(self) -> None:
         """Until `quit` is set."""
-        self.rows.say("operator started", where=self.where(), arms=sorted(self.drivers),
+        self.rows.say("operator started", **self.where_fields(), arms=sorted(self.drivers),
                       robots=self.robots,
                       stacks=None if self.stacks is None else self.stacks.state)
         idle = threading.Thread(target=self._idle, daemon=True)
@@ -243,7 +257,7 @@ class Operator:
             if cmd is not None:
                 self.remote.ack(cmd.get("id"))
                 self.handle(cmd)
-        self.rows.say("operator stopping", where=self.where())
+        self.rows.say("operator stopping", **self.where_fields())
 
     def handle(self, cmd: dict) -> None:
         what = cmd.get("command")
@@ -260,7 +274,7 @@ class Operator:
         except Exception as e:                       # the process must outlive any one command
             log.exception("command %s", cmd)
             self.rows.say("command failed", command=what, why=f"{type(e).__name__}: {e}",
-                          where=self.where())
+                          **self.where_fields())
         finally:
             self.busy.clear()
 
@@ -281,7 +295,7 @@ class Operator:
             if self.make_calib is None:
                 self.rows.say("run refused", job=job, reason="no_calibration_driver",
                               why="this operator PC has no calibration driver (aris_robot[calib])",
-                              where=self.where())
+                              **self.where_fields())
                 return
             drivers = {a: Switch(a, d) for a, d in drivers.items()}
             around = HandOver(drivers, lambda a, say: self.make_calib(a, rig, say),
@@ -290,10 +304,10 @@ class Operator:
                       robots=self.robots, around_phase=around)
         if isinstance(res, Refusal):
             self.rows.say("run refused", job=job, reason=res.reason, why=res.detail,
-                          where=self.where())
+                          **self.where_fields())
         else:
             self.rows.say("run ended", job=job, status=res.status, why=res.why,
-                          where=self.where())
+                          **self.where_fields())
 
     def recover(self, arm: str) -> None:
         d = self.drivers.get(arm)
@@ -302,28 +316,53 @@ class Operator:
             return
         r = d.recover()
         self.rows.say("recovered" if r.done else "recover failed", arm=arm, why=r.why,
-                      q=_plain(d.state().q))
+                      **_q_fields(d))
 
     def report(self) -> None:
         arms = {}
         for a, d in self.drivers.items():
             s = d.state()
-            arms[str(a)] = dict(q=_plain(s.q), qd=_plain(s.qd), ok=bool(s.ok), flags=list(s.flags))
-        self.rows.say("report", arms=arms, where=self.where(),
+            arms[str(a)] = dict(**_q_fields(d), ok=bool(s.ok), flags=list(s.flags),
+                                qd=_plain(np.nan_to_num(s.qd)))
+        self.rows.say("report", arms=arms, **self.where_fields(),
                       stacks=None if self.stacks is None else self.stacks.state)
 
     def _idle(self) -> None:
         while not self.quit.wait(self.idle_s):
             if not self.busy.is_set():
-                self.rows.say("where", where=self.where())
+                self.rows.say("where", **self.where_fields())
+                self._auto_recover()
             else:
                 self.rows.flush()
 
+    def _auto_recover(self) -> None:
+        """A link drop (a fault matching `auto_recover.patterns`) is recovered by itself, at
+        most once per `every_s` per arm; any other fault waits for a person."""
+        ar = self.auto_recover
+        if not ar.get("on", False):
+            return
+        now = time.monotonic()
+        for a, d in self.drivers.items():
+            s = d.state()
+            faults = " ".join(f for f in s.flags if f.startswith("fault"))
+            if not faults or not any(p in faults for p in ar.get("patterns", [])):
+                continue
+            if now - self._recovered.get(a, -1e9) < float(ar.get("every_s", 120.0)):
+                continue
+            self._recovered[a] = now
+            r = d.recover()
+            self.rows.say("auto recovered" if r.done else "auto recover failed", arm=a,
+                          fault=faults, why=r.why, **_q_fields(d))
 
-def launch_commands(args_files) -> dict:
-    """arm id -> the `ros2 launch` command of its stack, from bringup's argument files."""
+
+def launch_commands(args_files, site=None) -> dict:
+    """slot -> the `ros2 launch` command of its stack, from bringup's argument files; pinned
+    to the slot's isolated core (site.json `rt_core`, `taskset -c`) when it has one, so no
+    other process's real-time loop preempts its control loop (link drops, 2026-10-06)."""
     out = {}
     for f in args_files:
         a = json.loads(Path(f).read_text())
-        out[a["arm"]] = ["ros2", "launch", "aris_bringup", "arm.launch.py", f"args:={f}"]
+        cmd = ["ros2", "launch", "aris_bringup", "arm.launch.py", f"args:={f}"]
+        core = None if site is None else site.arm(a["arm"]).rt_core
+        out[a["arm"]] = cmd if core is None else ["taskset", "-c", str(core)] + cmd
     return out

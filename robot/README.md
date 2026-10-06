@@ -60,7 +60,8 @@ grep -c mount_to_world $(ros2 pkg prefix franka_description)/share/franka_descri
 #   0 means the operator patch is missing: copy Aris_Kindt/operator_franka_patches/fr3.urdf.xacro
 #   into franka_description (src and install), as its README says
 cd ~/aris3/robot/ros2_ws
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    -DFranka_DIR=<libfranka build dir>     # on the Dell: where libfranka 0.21 was built
 colcon test --packages-select aris_controllers && colcon test-result --verbose
 source install/setup.bash
 ```
@@ -202,14 +203,26 @@ arm's turn serve stops that arm's ROS stack, so a mode switch never reaches a ru
 controller. When the arm's turn is over, the stack is started again; the other arms keep
 theirs, parked.
 
-**Install** (once, in the same venv): `pip install -e "robot[calib]"`. The panda-py wheel is
-built against one libfranka version, and it must match the robots. In Desk, Settings →
-System shows the robot's system version, and Franka's compatibility table names the libfranka
-for it. If that is not the libfranka of PyPI's `panda-python` (the version pinned in
-`robot/pyproject.toml`), install the wheel for it from
-https://github.com/JeanElsner/panda-py/releases (its file name carries the libfranka version,
-e.g. `panda_python-<version>+libfranka.<x.y.z>-cp312-...whl`) with `pip install <file>`.
+**Install** (once, in the same venv). The panda-py wheel is built against one libfranka
+version, and it must match the robots. In Desk, Settings → System shows the robot's system
+version; Franka's compatibility table names the libfranka for it. On site (2026-10-06): FR3
+system 5.9 → libfranka 0.21.x → the release wheel `panda_python-1.1.1+libfranka.0.21.3`
+(for Python 3.12) from https://github.com/JeanElsner/panda-py/releases, not PyPI's default
+build:
+
+```
+pip install panda_python-1.1.1+libfranka.0.21.3-cp312-cp312-manylinux_2_17_x86_64.whl
+pip install -e "robot[calib]"           # the pin panda-python==1.1.1 accepts that wheel
+```
+
 Then restart serve. Without panda-py, serve refuses mark jobs with a row saying so.
+
+**Desk control.** Only one holder can control Desk at a time. A browser with Desk open, or a
+token left by an earlier attempt, holds it. At the start of an arm's turn the calibration
+driver takes control. If someone else holds it, a row says "press circle on the pilot", and
+the driver waits 60 s for that press. It keeps control for the whole turn and always releases
+it at the end of the turn, including after a failure. Then FCI is switched on, and only then
+does libfranka connect. Close Desk in the browser once FCI is on.
 
 **The secrets file**: `robot/secrets.json` (gitignored, never committed), Desk's login per
 robot, or one entry for all:
@@ -227,16 +240,26 @@ back (light blue). Once it stands still, it reads its joints, lifts the pen stra
 centimetres, and returns to its hover. No button within 10 minutes: that arm stops there, and
 the job says why on the planning PC.
 
-**Not checked without a robot**:
-- Desk's operating-mode request on this firmware. Its method, path and bodies are in
-  `robot/site.json` (`desk.mode_endpoint`, today a guess): on day one switch the mode by hand
-  in Desk with the browser's developer tools open, and copy the request there. Every Desk call
-  is a row with its HTTP status ("desk: mode programming", 404 = wrong path);
-- the pilot buttons' event names;
-- whether panda-py's FCI connection must be made again after a mode change (the driver does
-  so anyway);
-- that the joints read the same standing still after the hand-back;
-- the wheel's libfranka version against the robots'.
+Found on the arms (2026-10-06):
+- The mode switch is `POST /desk/api/operating-mode/programming` (or `/execution`), with an
+  empty body, the header `X-Control-Token`, and a 200 answer. This is `robot/site.json`
+  `desk.mode_endpoint`. Every Desk call is a row with its HTTP status, so a change shows at
+  once.
+- The pilot buttons are check, cross, circle, left, right, up and down.
+- Leaving execution mode or releasing control switches FCI off.
+
+While an arm is handed over, or its stack is down, it has no reading. Rows say `"q": null`
+with the reason, and never zeros. A mark job sets no collision thresholds, because its arm's
+stack is down.
+
+**Not checked without a robot** (only on the fakes here): the whole turn on this firmware
+with panda-py 1.1.1: take control, FCI on, connect, guide, release; `listen` and
+`stop_listen`; that the joints read the same standing still after the hand-back.
+
+**Real-time cores.** Each arm's stack runs pinned to its own isolated core (site.json
+`rt_core`, launched under `taskset -c`). Another lane's controller preempted our loops and
+dropped the link every 3 to 7 minutes until each arm had its own core. The Dell's isolated
+cores are 8-19 and 28-39; keep `rt_core` inside them, one per slot.
 
 ## Defaults worth knowing
 
@@ -247,3 +270,13 @@ the job says why on the planning PC.
   force servo trims it from the force estimate with a 1 s time constant (on by default).
 - The controller holds and reports when the stream runs dry for 20 ms, when a joint is 0.05 rad
   off its reference, or on `~/hold`.
+- On the arms (2026-10-06):
+  - Start tolerance 0.03 rad, from the job header or rig.json.
+  - Trajectory goal tolerance 0.03 rad, `goal_time` 3 s.
+  - After a move, the arm is standing when every |qd| ≤ 0.005 rad/s; the joints are read
+    after waiting at most 1.5 s for that.
+  - Recovery clears the reflex first, then brings the hardware component back.
+  - A link drop (`communication_constraints_violation`) is recovered by itself, at most once
+    per 2 minutes per arm (site.json `execution.auto_recover`).
+  - Touch: onset at 3 N over 15 readings, cap 6 N, tare spread 1.5 N.
+  - `force_sign` is −1 on the hung arms.

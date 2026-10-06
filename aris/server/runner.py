@@ -169,7 +169,8 @@ def where_now(st, need_all: bool) -> dict | Refusal:
 
 
 def rest_lines(store: JobStore, jid: str) -> tuple[list, dict] | Refusal:
-    """The leftovers of a finished drawing job as lines of a new drawing (`<line>#rest`, then
+    """The leftovers of a finished drawing job (done, stopped, or failed: a link drop mid-job)
+    as lines of a new drawing (`<line>#rest`, then
     `#rest2`, ... when a line has several), from its directory: the drawing as it was planned
     (drawing.json) and the report's leftover stretches.  -> (lines, the old report)."""
     rec = store.get(jid)
@@ -179,13 +180,17 @@ def rest_lines(store: JobStore, jid: str) -> tuple[list, dict] | Refusal:
     if "/" in jid or ".." in jid or not (d / "report.json").exists():
         return Refusal("no_job", f"no finished job {jid}")
     rep = json.loads((d / "report.json").read_text())
-    if rep.get("kind") != "draw" or rep.get("state") not in ("done", "stopped") \
+    if rep.get("kind") != "draw" or rep.get("state") not in ("done", "stopped", "failed") \
             or not (d / "drawing.json").exists():
-        return Refusal("not_a_drawing", f"job {jid} is not a drawing that ran to its end or "
-                       f"was stopped ({rep.get('kind')}, {rep.get('state')})")
+        return Refusal("not_a_drawing", f"job {jid} is not a finished drawing "
+                       f"({rep.get('kind')}, {rep.get('state')})")
+    by_id = {x.id: x for x in drawing.parse((d / "drawing.json").read_bytes())}
+    if "leftovers" not in rep:                   # failed before anything was accounted
+        from aris.system import line_length
+        rep = dict(rep, leftovers=[dict(line=x.id, s0=0.0, s1=line_length(x))
+                                   for x in by_id.values()])
     if not rep.get("leftovers"):
         return Refusal("nothing_left", f"job {jid} left nothing over")
-    by_id = {x.id: x for x in drawing.parse((d / "drawing.json").read_bytes())}
     out, count = [], {}
     for x in rep["leftovers"]:
         n = count[x["line"]] = count.get(x["line"], 0) + 1
@@ -206,15 +211,24 @@ def submit_rest(st, store: JobStore, jid: str, note: str = "",
 
 
 def reported_where(st, need_all: bool) -> dict | Refusal:
-    """--driver robot: where the operator PC last said each arm stands.  `need_all`: an arm
-    that never reported refuses (park); otherwise it is taken to stand at its park (the
-    runner refuses to move an arm that is not at a motion's start)."""
-    pos = st.positions.all()
-    missing = [a for a in st.rig.arm_ids if a not in pos]
+    """--driver robot: where the operator PC last said each arm stands.  An arm whose last
+    reading is no reading (null, all zeros, or stale) refuses the job: nothing is planned from
+    zeros.  `need_all`: an arm that never reported refuses too (park, calibrate, mark);
+    otherwise it is taken to stand at its park (the runner refuses to move an arm that is not
+    at a motion's start)."""
+    out, missing = {}, []
+    for a in st.rig.arm_ids:
+        q, why = st.positions.known(a)
+        if why:
+            return Refusal("no_joint_states", why)
+        if q is None:
+            missing.append(a)
+            q = st.rig.park_q(a)
+        out[a] = q
     if need_all and missing:
         return Refusal("no_position", "no position reported for arm "
                        + ", ".join(str(a) for a in missing))
-    return {a: (pos[a]["q"] if a in pos else st.rig.park_q(a)) for a in st.rig.arm_ids}
+    return out
 
 
 def _arm_configs(st, where) -> dict | Refusal:

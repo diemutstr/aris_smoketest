@@ -3,15 +3,18 @@
     "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted and its force sign, the tare and contact thresholds, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
     "read_by": "robot/aris_robot/site.py and nothing else",
     "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
-    "force_sign_note": "per arm: +1 when the paper pushing the pen up reads positive. The old stack needed -1 on arm 13; the first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
-    "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table"
+    "force_sign_note": "per slot: +1 when the paper pushing the pen up reads positive; -1 on the hung (inverted) arms, as found 2026-10-06. The first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
+    "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table",
+    "rt_core_note": "each stack runs pinned to its own isolated core (`taskset -c rt_core`): another lane's controller preempted ours and dropped the link every 3-7 min (2026-10-06). The Dell's isolated cores are 8-19 and 28-39."
   },
   "server_url": "http://192.168.50.1:8420",
   "site_table": "site/aris_2026-10.json",
   "ros": {
     "joint_prefix": "fr3",
     "joint_prefix_note": "joint names are <joint_prefix>_joint1..7; the briefing notes one stack that used fr3v2",
-    "rmw": "rmw_fastrtps_cpp"
+    "rmw": "rmw_fastrtps_cpp",
+    "hardware_component": "FrankaHardwareInterface",
+    "hardware_component_note": "the ros2_control hardware component of franka_description's fr3 ros2_control xacro; recovery brings it back (inactive, then active) after the reflex is cleared"
   },
   "force": {
     "source": "facts of this site about the force estimate (control-stack briefing 2026-09-09). How hard the pen presses (band, levels, cap, ramps, servo) is a fact of pen and paper: config/rig.json `pen`, carried in every job header.",
@@ -25,13 +28,15 @@
   },
   "touch": {
     "source": "the calibration touch under position control (DESIGN section 6 step 1; orchestrator 2026-10-01)",
-    "contact_n": 1.0,
-    "contact_ticks": 3,
-    "cap_n": 3.0,
+    "contact_n": 3.0,
+    "contact_ticks": 15,
+    "cap_n": 6.0,
     "cap_note": "above the air zero at any reading: the arm stops where it is and holds; no way back is flown until a person has looked",
     "extra_speed": 0.002,
     "extra_max": 0.03,
-    "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed"
+    "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed",
+    "tare_spread_n": 1.5,
+    "field_note": "on the arms 2026-10-06: onset 3 N over 15 readings, cap 6 N, tare spread 1.5 N (1 N / 3 readings tripped on noise)"
   },
   "collision": {
     "source": "set for a job in position tracking (mode A) and restored after it, as the old stack raised them before every pass (control-stack briefing 2026-09-09 section 9: 20 N -> 40 N; HARDWARE_DAY1 1.5: the installation operator's 40/40/36/36/32/28/24 Nm, fr3drivers' 'sensitive' 20 Nm / 20 N). Lower and upper thresholds, acceleration and nominal, all set to these.",
@@ -46,27 +51,32 @@
     "force_n_note": "the Cartesian thresholds: x, y, z in N, then the three torques in Nm"
   },
   "slots": {
-    "1L": {"mounted": false, "force_sign": 1.0},
-    "1R": {"mounted": false, "force_sign": 1.0},
-    "2L": {"mounted": true, "force_sign": 1.0},
-    "2R": {"mounted": true, "force_sign": 1.0},
-    "3L": {"mounted": false, "force_sign": 1.0},
-    "3R": {"mounted": false, "force_sign": 1.0}
+    "1L": {"mounted": false, "force_sign": -1.0, "rt_core": 10},
+    "1R": {"mounted": false, "force_sign": -1.0, "rt_core": 11},
+    "2L": {"mounted": true, "force_sign": -1.0, "rt_core": 8},
+    "2R": {"mounted": true, "force_sign": -1.0, "rt_core": 9},
+    "3L": {"mounted": false, "force_sign": 1.0, "rt_core": 12},
+    "3R": {"mounted": false, "force_sign": 1.0, "rt_core": 13}
   },
   "desk": {
-    "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper.",
+    "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper with Desk's control token.",
     "mode_endpoint": {
       "method": "post",
-      "path": "/desk/api/operating-mode",
-      "body": {
-        "programming": {
-          "mode": "Programming"
-        },
-        "execution": {
-          "mode": "Execution"
-        }
-      },
-      "note": "a guess (2026-10-05), not checked on this firmware. On day one: open Desk in a browser with its developer tools, switch the mode by hand, and copy the request's method, path and body here. Every Desk call is a row with its HTTP status, so a wrong guess shows as 404 or 405 at once."
+      "path": "/desk/api/operating-mode/{mode}",
+      "token_header": "X-Control-Token",
+      "note": "found on the hardware 2026-10-06 (FR3 system 5.9): POST /desk/api/operating-mode/programming or /execution, empty body, header X-Control-Token: <the control token>, 200 OK. Every Desk call is a row with its HTTP status; if Desk changes, copy the request from the browser's developer tools here."
+    }
+  },
+  "execution": {
+    "source": "what worked on the arms, 2026-10-06 (field report). The start tolerance is the job header's or rig.json execution.start_tolerance_rad (0.03), not here.",
+    "rest_qd_rad_per_s": 0.005,
+    "settle_s": 1.5,
+    "settle_note": "after a move the arm counts as standing still when every |qd| <= rest_qd; joints are read after at most settle_s of waiting for that",
+    "auto_recover": {
+      "on": true,
+      "every_s": 120,
+      "patterns": ["communication_constraints_violation"],
+      "note": "a link drop is recovered by itself, once per every_s per arm; any other fault waits for a person (aris recover on the planning PC)"
     }
   }
 }

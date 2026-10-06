@@ -55,15 +55,16 @@
       fr3_joint7: {p: 50.0, d: 5.0, i: 0.0, i_clamp: 1.0}
     constraints:
       stopped_velocity_tolerance: 0.01
-      goal_time: 0.5
+      goal_time: 3.0     # on the arms (2026-10-06): 0.5 s was too tight
       # abort a move that strays this far from the trajectory (rad), and the goal tolerance
-      fr3_joint1: {trajectory: 0.05, goal: 0.005}
-      fr3_joint2: {trajectory: 0.05, goal: 0.005}
-      fr3_joint3: {trajectory: 0.05, goal: 0.005}
-      fr3_joint4: {trajectory: 0.05, goal: 0.005}
-      fr3_joint5: {trajectory: 0.05, goal: 0.005}
-      fr3_joint6: {trajectory: 0.05, goal: 0.005}
-      fr3_joint7: {trajectory: 0.05, goal: 0.005}
+      # (0.03 rad: what worked on the arms, 2026-10-06; 0.005 was too tight for a holding arm)
+      fr3_joint1: {trajectory: 0.05, goal: 0.03}
+      fr3_joint2: {trajectory: 0.05, goal: 0.03}
+      fr3_joint3: {trajectory: 0.05, goal: 0.03}
+      fr3_joint4: {trajectory: 0.05, goal: 0.03}
+      fr3_joint5: {trajectory: 0.05, goal: 0.03}
+      fr3_joint6: {trajectory: 0.05, goal: 0.03}
+      fr3_joint7: {trajectory: 0.05, goal: 0.03}
 
 /**/aris_joint_impedance_controller:
   ros__parameters:

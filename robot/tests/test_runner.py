@@ -138,12 +138,12 @@ def test_a_job_runs_as_it_is_written_and_every_event_reaches_the_server(rig, tmp
 
 
 def test_an_arm_not_where_the_plan_starts_is_refused_and_holds(rig, tmp_path):
-    """The server planned from a position that is no longer true: joint 5 moved 20 mrad."""
+    """The server planned from a position that is no longer true: joint 5 moved 50 mrad."""
     server_dir = tmp_path / "server"
     server_dir.mkdir()
     job = Job.create(server_dir / "j7", _header(rig))
     app = create_app(server_dir)
-    off = rig.park_q("2L") + np.array([0, 0, 0, 0, 0.02, 0, 0])
+    off = rig.park_q("2L") + np.array([0, 0, 0, 0, 0.05, 0, 0])   # beyond 0.03
     arm = SimArm("2L", off, speed=50.0)
     with Served(app) as srv:
         _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
@@ -152,7 +152,7 @@ def test_an_arm_not_where_the_plan_starts_is_refused_and_holds(rig, tmp_path):
     rows = app.state.received["j7"]
     bad = next(r for r in rows if r["event"] == "failed")
     assert bad["arm"] == "2L" and bad["index"] == 0 and "joint 5" in bad["why"]
-    assert "tolerance 0.005" in bad["why"]
+    assert f"tolerance {rig.execution().start_tolerance:g}" in bad["why"]
     assert np.array_equal(bad["q"], off)                       # where it really stands
     assert "motion started" not in [r["event"] for r in rows]  # nothing moved
     assert np.array_equal(arm.state().q, off) and "holding" in arm.state().flags
@@ -318,6 +318,21 @@ def test_the_tracking_mode_of_the_header_is_applied(rig, tmp_path, tracking):
     first = app.state.received["m"][0]
     assert first["tracking"] == mode and first["robots"] == robots
     assert first["pen"]["press_m"] == rig.pen()["press_m"]
+
+
+def test_a_mark_job_sets_no_thresholds_and_the_header_sets_the_start_tolerance(rig, tmp_path):
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    header = dict(_header(rig), kind="mark", execution=dict(start_tolerance_rad=0.04))
+    job = Job.create(server_dir / "mk", header)
+    app = create_app(server_dir)
+    arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
+    with Served(app) as srv:
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "mk", rig, CONFIG, tmp_path / "robot", {"2L": arm})
+    assert res.status == "done", res.why
+    assert arm.collision == []                       # the stack is down for a mark job
+    assert app.state.received["mk"][0]["start_tolerance"] == 0.04
 
 
 def test_refusals_before_anything_moves(rig, tmp_path):

@@ -128,6 +128,29 @@ never reaches a running ROS controller, and nobody looks at a computer during it
   "guide: handed over", "guide: button x", "guide: taken back" (or "guide: no button"), and
   the executor's "registered".
 
+**Field report applied (2026-10-06).** No mark touch was registered in 15 jobs because of
+the Desk/FCI hand-over. The rules now:
+- **Desk control**, once per arm turn. If the browser or an old token holds it, the driver
+  waits up to 60 s for a circle press, with a row saying so. Control is always released at
+  the end of the turn and on every failure.
+- **FCI order**: control → FCI on → libfranka connects. Per guide: programming (FCI goes
+  off) → button → execution → FCI on → reconnect → 1.5 s settle → standstill.
+- **Mode switch**: `POST /desk/api/operating-mode/<mode>`, no body, `X-Control-Token`
+  header (site.json `desk.mode_endpoint`). The buttons are check, cross, circle, left,
+  right, up, down; `listen` is ended with `stop_listen`.
+- **No zeros**: an arm without a reading (FCI off, stack down) is `"q": null` with a reason
+  in every row and in `where` (`where_missing`). The calibration driver is the source of
+  joints for its slot during its turn.
+- **Mark jobs** set no collision thresholds.
+- **Tolerances**: the start tolerance comes from the header or rig (0.03 rad); goal 0.03 rad
+  and 3 s.
+- **Standstill and recovery**: after a move, |qd| ≤ 0.005 rad/s within 1.5 s. Recovery is
+  reflex first, then the hardware component inactive → active. A link drop is
+  auto-recovered once per 2 minutes per arm.
+- **Touch**: 3 N over 15 readings, cap 6 N, tare spread 1.5 N; force sign −1 on the hung
+  arms.
+- **Cores**: each stack is pinned to its own isolated core (`taskset -c rt_core`).
+
 ## How the arm follows a motion in mode B (`tracking: impedance`)
 
 Two controllers, one at a time, switched by the driver:
@@ -254,7 +277,7 @@ touch settings.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 71 tests, 67 in the quick set; the 4 slow ones compile the controller
+`robot/tests`: 76 tests, 72 in the quick set; the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to

@@ -7,17 +7,23 @@ first), so a mode switch never reaches a running ROS controller (DESIGN 6, 2026-
                streamed at 1 kHz into panda-py's joint position controller (a joint impedance
                around the reference).  Not `move_to_joint_position`: that plans its own timing,
                and the checker's verdict holds at ours only
-  guide(m)     the mark: FCI off, Desk to programming (light white), wait for ✓ (check) or ○
-               (circle); ✗ (cross) means "I am redoing this seat": the arm stays with the
-               person and the wait goes on (one row says so);
-               Desk to execution (light blue), FCI on and the connection made again, the joints
-               read standing still (two reads `standstill_dt` apart within `standstill_tol`):
-               that is the sample.  Then the pen goes straight up `lift_m` (or 2/3, 1/3 of it where the
-               arm cannot reach that far), slowly, and the
-               arm flies back to the hover, so the queue's next motion starts where it was
+  guide(m)     the mark: libfranka disconnected, Desk to programming (light white; FCI
+               goes off with it); wait for ✓ (check) or ○ (circle), while ✗ (cross) means
+               "I am redoing this seat" and the wait goes on (a row says so); Desk to
+               execution (light blue), FCI on (confirmed), libfranka connected again, a 1.5 s
+               settle, then the joints read standing still (two reads `standstill_dt` apart
+               within `standstill_tol`): that is the sample.  Then the pen goes straight up
+               `lift_m` (or 2/3, 1/3 of it where the arm cannot reach that far), slowly, and
+               the arm flies back to the hover, so the queue's next motion starts where it was
                planned.  done with q = the sample and why = the button
   draw, touch  refused: not this driver
   hold, stop, recover
+
+The arm's turn (one CalibArm, made by serve's hand-over and closed by it): Desk control taken
+once at the start (the person presses circle if the browser or an old token holds it), FCI on,
+libfranka connected; at the end, and on every failure, libfranka closed and Desk control
+released.  While libfranka is off the arm has no reading: `state()` says so (q is NaN,
+"no joint states (FCI off)"), never zeros.
 
 The FCI side is behind `Fci` (`PandaFci` for the robot, a fake in the tests); the Desk side is
 `desk.Desk`.  `say(event, **fields)` is how serve hears the hand-over ("guide: handed over",
@@ -51,6 +57,8 @@ class CalibSettings:
     standstill_tol: float = 1e-4        # rad, the two reads agree on every joint
     standstill_timeout_s: float = 10.0
     reconnect_s: float = 20.0           # FCI back after the mode change
+    control_wait_s: float = 60.0        # for the person's circle press when Desk is held
+    settle_s: float = 1.5               # after the hand-back, before the first read
     lift_m: float = 0.03
     lift_speed: float = 0.01            # m/s
     back_max_rad: float = 0.5           # the way back to the hover is a straight joint move
@@ -71,12 +79,22 @@ class Fci(Protocol):
 class CalibArm:
     def __init__(self, slot: str, rig, connect, desk, settings: CalibSettings = CalibSettings(),
                  say=None):
-        """`connect()` -> a connected Fci (called again after every mode change)."""
+        """`connect()` -> a connected Fci (called again after every mode change).  The arm's
+        turn starts here: Desk control is taken once (the person presses circle if someone
+        else holds it), FCI is switched on, then libfranka connects.  `close()` ends the
+        turn and always releases Desk control."""
         self.arm_id, self.rig, self.connect, self.desk = slot, rig, connect, desk
         self.s, self.say = settings, say or (lambda event, **f: None)
         self.kin = Kinematics.of(rig, slot)
         self.start_tol = float(rig.execution().start_tolerance)
-        self.fci = connect()
+        self.fci = None
+        self.desk.take_control(self.s.control_wait_s)
+        try:
+            self.desk.fci(True)                 # confirmed on before libfranka connects
+            self.fci = connect()
+        except BaseException:
+            self.desk.release_control()
+            raise
         self._halt = threading.Event()
         self._stopped = False
         self._busy = threading.Lock()
@@ -84,6 +102,9 @@ class CalibArm:
     # ------------------------------------------------------------------ verbs
 
     def state(self) -> ArmState:
+        if self.fci is None:                    # handed over: no reading, never zeros
+            return ArmState(np.full(7, np.nan), np.zeros(7), False,
+                            ("no joint states (FCI off)",))
         q, qd, mode, errors = self.fci.state()
         flags = ["moving" if self._busy.locked() else "holding", f"mode: {MODES.get(mode, mode)}"]
         flags += [f"fault: {e}" for e in errors]
@@ -139,6 +160,8 @@ class CalibArm:
     def recover(self) -> Result:
         if self._busy.locked():
             return Result.failed("still moving", self._q())
+        if self.fci is None:
+            return Result.failed("no FCI connection", self._q())
         _, _, mode, _ = self.fci.state()
         if mode in (3, 5):
             return Result.failed(f"the arm is in {MODES[mode]}: release it at the arm first",
@@ -152,12 +175,18 @@ class CalibArm:
         return Result.ok(s.q) if s.ok else Result.failed(", ".join(s.flags), s.q)
 
     def close(self) -> None:
-        self.fci.close()
+        """The end of the arm's turn: libfranka disconnects, Desk control is released."""
+        try:
+            if self.fci is not None:
+                self.fci.close()
+                self.fci = None
+        finally:
+            self.desk.release_control()
 
     # ------------------------------------------------------------------ the parts
 
     def _q(self) -> np.ndarray:
-        return np.asarray(self.fci.state()[0], float)
+        return self.state().q
 
     def _refuse(self, q_start) -> Result | None:
         s = self.state()
@@ -175,8 +204,8 @@ class CalibArm:
     def _hand_over(self, mark: str) -> str | None:
         """The arm to the person; the pilot button they pressed, or None (timeout)."""
         self.fci.close()
-        self.desk.fci(False)
-        self.desk.mode("programming")
+        self.fci = None
+        self.desk.mode("programming")                    # FCI goes off with it
         self.say("guide: handed over", arm=self.arm_id, mark=mark)
         for b in self.desk.buttons(self.s.button_timeout_s):
             if b == "cross":                     # "I want to redo this": keep the arm, wait on
@@ -209,6 +238,7 @@ class CalibArm:
         return ""
 
     def _standstill(self) -> np.ndarray | None:
+        time.sleep(self.s.settle_s)
         t_end = time.monotonic() + self.s.standstill_timeout_s
         q0 = self._q()
         while time.monotonic() < t_end:

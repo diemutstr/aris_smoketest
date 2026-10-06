@@ -51,6 +51,10 @@ class RosArm:
         self.arm_id, self.fake, self.lead = arm_id, fake, lead
         self._site_force, self._sign = site.force, site.arm(arm_id).force_sign
         self.collision = site.collision
+        ex = site.execution
+        self.rest_qd = float(ex.get("rest_qd_rad_per_s", 5e-3))
+        self.settle_s = float(ex.get("settle_s", 1.5))
+        self.hw_component = site.hardware_component
         self.tracking = "position"
         self.set_pen(rig.pen())
         self.ts = T.TouchSettings.from_site(site.touch, self.fs.sign)
@@ -72,7 +76,8 @@ class RosArm:
     def state(self) -> ArmState:
         q, qd = self.ros.joints()
         if q is None:
-            return ArmState(np.zeros(7), np.zeros(7), False, ("no joint states",))
+            # no reading (stack down, FCI off): NaN, never zeros a planner could start from
+            return ArmState(np.full(7, np.nan), np.zeros(7), False, ("no joint states",))
         mode, errors = self.ros.mode_and_errors()
         st = self.ros.status
         holding = bool(st is not None and st.holding)
@@ -184,7 +189,9 @@ class RosArm:
             return Result.failed(f"the arm is in {MODES[mode]}: release it at the arm first",
                                  self.state().q)
         if not self.fake:                                 # fake hardware has no such action
-            why = self.ros.error_recovery()
+            # the reflex is cleared first, then the hardware component is brought back
+            # (the controller manager takes it down on a libfranka error)
+            why = self.ros.error_recovery() or self.ros.reactivate_hardware(self.hw_component)
             if why:
                 return Result.failed(why, self.state().q)
         active = self.ros.active_controllers() or set()
@@ -239,10 +246,20 @@ class RosArm:
                 return Result.failed("the trajectory did not finish in time", self.state().q)
             time.sleep(TICK)
         res = result.result().result
-        s = self.state()
         if res.error_code != 0:
-            return Result.failed(f"{res.error_string} (error code {res.error_code})", s.q)
+            return Result.failed(f"{res.error_string} (error code {res.error_code})",
+                                 self.state().q)
+        s = self._settled()
         return Result.ok(s.q) if s.ok else Result.failed(", ".join(s.flags), s.q)
+
+    def _settled(self):
+        """The state once the arm stands still (all |qd| <= rest_qd), at most settle_s."""
+        t_end = time.monotonic() + self.settle_s
+        s = self.state()
+        while time.monotonic() < t_end and not np.all(np.abs(s.qd) <= self.rest_qd):
+            time.sleep(0.02)
+            s = self.state()
+        return s
 
     def _tare(self) -> float | Refusal:
         """The air zero, standing still before the landing."""

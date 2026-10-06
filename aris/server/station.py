@@ -93,38 +93,66 @@ class Station:
                           if self.uncalibrated else "calibrated"))
 
 
+STALE_S = 60.0           # s: a joint reading older than this is no reading
+
+
 class Positions:
-    """The newest joints the operator PC reported per arm, with when (its clock) and when the
-    server heard it.  Only `--driver robot` fills it."""
+    """The newest joints the operator PC reported per arm, with when (its clock), when the
+    server heard it, and the robot it named.  Only `--driver robot` fills it.
+
+    A reading that is no reading — `"q": null` (the arm's stack is down), all-zero joints (what
+    a stack without joint states once sent), or one older than STALE_S — is kept as "unknown";
+    nothing is ever planned or judged from it (`known`)."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._q: dict = {}
 
-    def note(self, arm: str, q, at: float, job: str) -> None:
-        q = np.asarray(q, float).reshape(-1)
-        if q.shape != (7,) or not np.all(np.isfinite(q)):
-            return
+    def note(self, arm: str, q, at: float, job: str, robot=None) -> None:
+        if q is not None:
+            q = np.asarray(q, float).reshape(-1)
+            if q.shape != (7,) or not np.all(np.isfinite(q)) or not np.any(q):
+                q = None                                 # malformed or all zeros: no reading
         with self._lock:
             old = self._q.get(arm)
             if old is None or at >= old["reported_at"]:
                 self._q[arm] = dict(q=q, reported_at=float(at), received_at=time.time(),
-                                    job=job, source="operator PC")
+                                    job=job, source="operator PC",
+                                    robot=robot if robot is not None else
+                                    (old or {}).get("robot"))
 
     def from_row(self, row: dict, job: str) -> None:
-        """Every joint position an event row carries: `q` of its arm, `where` of every arm."""
+        """Every joint position an event row carries: `q` of its arm (null: no reading),
+        `where` of every arm."""
         at = float(row.get("time", time.time()))
-        if "arm" in row and isinstance(row.get("q"), list) and len(row["q"]) == 7:
-            self.note(str(row["arm"]), row["q"], at, job)
+        robot = row.get("robot")
+        if "arm" in row and "q" in row and (row["q"] is None or (
+                isinstance(row["q"], list) and len(row["q"]) == 7)):
+            self.note(str(row["arm"]), row["q"], at, job, robot)
         where = row.get("where")
         if isinstance(where, dict):
             for a, q in where.items():
-                if isinstance(q, list) and len(q) == 7:
+                if q is None or (isinstance(q, list) and len(q) == 7):
                     self.note(str(a), q, at, job)
 
     def all(self) -> dict:
         with self._lock:
             return {a: dict(v) for a, v in self._q.items()}
+
+    def known(self, arm: str, now: float | None = None):
+        """-> (joints, "") when there is a fresh real reading; (None, why) when there is not
+        (never reported: why is "")."""
+        with self._lock:
+            p = self._q.get(arm)
+        if p is None:
+            return None, ""
+        now = time.time() if now is None else now
+        if p["q"] is None:
+            return None, f"no joint states for {arm} (FCI off?)"
+        if now - p["received_at"] > STALE_S:
+            return None, (f"no joint states for {arm} (FCI off?): the last reading is "
+                          f"{now - p['received_at']:.0f} s old")
+        return p["q"].copy(), ""
 
 
 def fake_paper(rig, a: str, spec=None) -> tuple:

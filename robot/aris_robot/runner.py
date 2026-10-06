@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import json
 import threading
+
+import numpy as np
 from pathlib import Path
 
 from aris.execute import Coordinator, EventLog, Job
@@ -44,8 +46,30 @@ from aris.types import Refusal
 
 from aris_robot.remote import EventForwarder, Remote
 
+def reading(driver) -> tuple:
+    """(q as 7 floats, None) when the arm has a reading; (None, why) when it has none (its
+    stack down, FCI off): a position is never reported as zeros."""
+    s = driver.state()
+    q = np.asarray(s.q, float)
+    if q.shape == (7,) and np.all(np.isfinite(q)):
+        return [float(x) for x in q], None
+    why = next((f for f in s.flags if f.startswith("no joint states")), "no joint states")
+    return None, why
+
+
+def where_of(drivers: dict) -> dict:
+    """`where` for a row: slot -> 7 joints or None, and `where_missing`: slot -> why."""
+    where, missing = {}, {}
+    for a, d in drivers.items():
+        where[str(a)], why = reading(d)
+        if why:
+            missing[str(a)] = why
+    return dict(where=where, where_missing=missing) if missing else dict(where=where)
+
+
 class ArmLog(EventLog):
-    """The job's event log, with where the arm stands on every row about an arm."""
+    """The job's event log, with where the arm stands on every row about an arm (`q`, or
+    `"q": null` with the `reason`), and every `where` read fresh (never zeros)."""
 
     def __init__(self, path, drivers: dict):
         super().__init__(path)
@@ -53,12 +77,17 @@ class ArmLog(EventLog):
 
     def write(self, event: str, **fields) -> dict:
         a = fields.get("arm")
-        if a in self.drivers and fields.get("q") is None:
-            fields["q"] = self.drivers[a].state().q
+        q = fields.get("q")
+        if a in self.drivers and (q is None or not np.all(np.isfinite(np.asarray(q, float)))):
+            fields["q"], why = reading(self.drivers[a])
+            if why:
+                fields["reason"] = why
+        if "where" in fields:
+            fields.update(where_of(self.drivers))
         return super().write(event, **fields)
 
     def where(self) -> dict:
-        return {str(a): d.state().q for a, d in self.drivers.items()}
+        return where_of(self.drivers)["where"]
 
 
 def check_header(header: dict, rig) -> str:
@@ -132,7 +161,13 @@ def _job_settings(header: dict, rig, drivers: dict, robots: dict | None):
             drv.set_job(pen, tracking)
         elif hasattr(drv, "set_pen"):
             drv.set_pen(pen)
-    return dict(pen=pen, pen_from=pen_from, tracking=tracking, robots=robots or {})
+    tol = (header.get("execution") or {}).get("start_tolerance_rad")
+    tol = float(tol) if tol is not None else float(rig.execution().start_tolerance)
+    for drv in drivers.values():
+        if hasattr(drv, "start_tol"):
+            drv.start_tol = tol
+    return dict(pen=pen, pen_from=pen_from, tracking=tracking, robots=robots or {},
+                start_tolerance=tol)
 
 
 def _collision(drivers: dict, which: str) -> str:
@@ -165,7 +200,10 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     settings = _job_settings(header, rig, drivers, robots)
     if isinstance(settings, Refusal):
         return settings
-    if settings["tracking"] == "position":
+    # mode A raises the collision thresholds through the stacks; a mark job has its arm's stack
+    # down (the calibration driver flies it), so it does not
+    thresholds = settings["tracking"] == "position" and header.get("kind") != "mark"
+    if thresholds:
         why = _collision(drivers, "job")
         if why:
             _collision(drivers, "normal")
@@ -174,7 +212,7 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
         return _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings,
                     around_phase)
     finally:
-        if settings["tracking"] == "position":
+        if thresholds:
             _collision(drivers, "normal")
 
 
@@ -182,9 +220,9 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, ar
     d.mkdir(parents=True, exist_ok=True)
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
     job = Job(d)
-    coord = Coordinator(job, drivers, config_dir, rig, poll=poll)
+    coord = Coordinator(job, drivers, config_dir, settings["start_tolerance"], poll=poll)
     coord.log = log = ArmLog(job.log_path, drivers)   # the executors write through it too
-    log.write("runner started", job=job_id, where=log.where(), **settings)
+    log.write("runner started", job=job_id, where=None, **settings)
     refused: list[str] = []
     halt = threading.Event()
 
@@ -222,7 +260,7 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, ar
         if refused:
             result.status, result.why = "failed", refused[0]
         log.write("runner finished", job=job_id, status=result.status, why=result.why,
-                  where=log.where())
+                  where=None)
     finally:
         source.close()                      # leaves a phase's hand-over if the job broke off
         mirror.close()

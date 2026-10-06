@@ -213,7 +213,8 @@ def test_injected_failure_stops_at_the_right_motion_and_holds(tmp_path, rig, che
 
 def test_start_configuration_mismatch_is_refused(tmp_path, rig, checked):
     q = _queue_of(tmp_path, checked, "3L")
-    off = rig.park_q("3L") + np.array([0, 0, 0, 0, 0.02, 0, 0])
+    tol = rig.execution().start_tolerance                     # 0.03 rad since the site day
+    off = rig.park_q("3L") + np.array([0, 0, 0, 0, 2 * tol, 0, 0])
     arm = SimArm("3L", off, speed=50.0)
     run = Executor("3L", arm, EventLog(tmp_path / "e.jsonl"), rig).run(q)
     assert run.status == "failed" and run.failed_index == 0 and run.done == 0

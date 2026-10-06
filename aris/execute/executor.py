@@ -20,7 +20,7 @@ from aris.execute.log import EventLog
 from aris.execute.queue import End, Queue
 from aris.types import Slot
 
-REST_QD = 1e-3          # rad/s, "standing still" for the parked test
+REST_QD = 5e-3          # rad/s, "standing still" for the parked test  # rad/s; 1e-3 never settled on the real arms (site, 2026-10-06)
 
 
 @dataclass(frozen=True)

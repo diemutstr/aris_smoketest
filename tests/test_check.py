@@ -438,6 +438,21 @@ def test_hanger_follows_the_calibrated_axis(tmp_path):
               f"({own.closest('steel', 0)})")
 
 
+def test_slot_without_a_hanger(tmp_path):
+    """rig.json `"hanger": false` on an unmounted slot: no struts, plate or clamp there, the
+    same steel as the planners' rig; every other box stays."""
+    def change(cfg, pen):
+        for a in cfg["slots"]["list"]:
+            if a["slot"] in ("3L", "3R"):
+                a.update(mounted=False, hanger=a["slot"] == "3L")
+    cfg = _config_copy(tmp_path, change)
+    mine, theirs = read_rig(cfg), Rig.load(cfg)
+    assert "3R" not in mine.box_owner and sum(o == "3L" for o in mine.box_owner) == 4
+    assert set(mine.box_names) == {b.name for b in theirs.steel}
+    assert set(MINE.box_names) - set(mine.box_names) == {
+        n for n, o in zip(MINE.box_names, MINE.box_owner) if o == "3R"}
+
+
 # =========================================================================== faults
 
 
@@ -786,16 +801,16 @@ def test_air_run_surface_z():
 
 
 def test_press_is_where_the_tip_draws(good_draw, tmp_path):
-    """The drawing's points lie the press below the paper: a drawing motion whose tip runs
-    3.5 mm below the paper passes 'tip on paper' with the pen's press of 3.5 mm and fails it
-    when rig.json says the press is 0."""
-    assert read_rig(CONFIG).press == PRESS == 0.0035                  # same number as planners
+    """The drawing's points lie the press below the paper: a drawing motion whose tip runs the
+    pen's press below the paper (3.5 mm when written, 2.1 mm since) passes 'tip on paper' with
+    that press and fails it when rig.json says the press is 0."""
+    assert read_rig(CONFIG).press == PRESS > 0.001                    # same number as planners
     tips = good_draw.tip_base @ RIG.T_table_base("2L")[:3, :3].T + RIG.T_table_base("2L")[:3, 3]
     assert np.allclose(tips[:, 2], -PRESS)
     pressed = check(CONFIG, "2L", good_draw, phase_of("2L"), good_draw.q_start)
     flat = check(_config_copy(tmp_path, lambda cfg, pen: pen.update(press_m=0.0)), "2L",
                  good_draw, phase_of("2L"), good_draw.q_start)
-    print(f"\npress 3.5 mm: {pressed.get('tip on paper')}\npress 0: {flat.get('tip on paper')}")
+    print(f"\npress {PRESS * 1e3:.1f} mm: {pressed.get('tip on paper')}\npress 0: {flat.get('tip on paper')}")
     assert pressed.passed, pressed.failed
     _fails(flat, "tip on paper")
     assert abs(flat.get("tip on paper").value - PRESS) < 5e-4

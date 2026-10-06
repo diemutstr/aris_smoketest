@@ -97,6 +97,11 @@ def report_lines(rep: dict) -> list[str]:
         out.append(f"arm          {rep.get('arm')}: {rep.get('points', 0)} points touched "
                    f"({rep.get('contacts', 0)} contacts), {len(rep.get('dropped', []))} out of "
                    f"reach, spin {rep.get('spin_deg')} deg")
+        if rep.get("tripped_at_start"):
+            out.append(f"dropped      {len(rep['tripped_at_start'])} contacts tripped within the "
+                       f"first 5 mm (the start transient): {rep['tripped_at_start']}")
+        if rep.get("missed"):
+            out.append(f"no contact   {rep['missed']}")
         f = rep.get("fit")
         if f:
             out.append(f"plane        {'passed' if f['passed'] else 'FAILED: ' + f['why']}; "

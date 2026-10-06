@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from aris.server.calibrate import grid_points, misses
+from aris.server.calibrate import grid_points, misses, tripped
 
 
 TRIES = 8               # grid points tried, nearest the axis first
@@ -86,9 +86,12 @@ def solve(st, rec, plan, run, ref, source):
     if rec.stop.is_set():
         return "stopped", "stop requested", None, None
     rows = rec.log.read()
+    rows, start_trips = tripped(st.rig, plan, rows, slot)
     contacts = [r for r in rows if r.get("event") == "contact" and r.get("arm") == slot]
     if not contacts:
-        why = run.why if run.status != "done" else "the touch met no paper"
+        why = run.why if run.status != "done" else "the touch met no paper" + (
+            " (its force tripped within the first 5 mm: the start transient)"
+            if start_trips else "")
         return "failed", f"no contact at {ref}: {why}", None, None
     q = np.asarray(contacts[-1]["q"], float)
     result = solver(st.rig, slot, q, np.asarray(ref, float), st.rig.pen_name)

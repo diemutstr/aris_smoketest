@@ -158,6 +158,23 @@ def group_slots(rig, slots=(), group: str | None = None):
     return Refusal("no_group", f"no mark group {group!r}; groups are {tuple(rig.mark_groups)}")
 
 
+def needs_solved_marks(rig, slots) -> str:
+    """Why the job cannot start: a slot touching no mark at all, or one that touches marks
+    shared with slots outside the job (a single slot) while none of them has a solved place
+    yet ("" when it can).  Checked before anything moves; the solver never gets an empty set."""
+    from aris.server.mark_plan import slot_marks
+    for s in slots:
+        marks = slot_marks(rig, s, slots)
+        if not marks:
+            return f"{s} shares no calibration mark with a controlled slot"
+        outside = [m for m in marks if not set(rig.marks[m][1]) <= set(slots)]
+        if outside and not any(rig.mark_state(m) == "solved" for m in marks):
+            partners = sorted({p for m in outside for p in rig.marks[m][1]} | set(slots))
+            return (f"{s} alone needs marks solved by an earlier run; run `aris mark` "
+                    f"({', '.join(partners)}) first")
+    return ""
+
+
 def submit_mark(st, store, slots=(), group: str | None = None):
     """Admit and start the mark job (refused while another job runs, with the robot when an
     arm never reported where it stands, and for slots or a group the rig does not have)."""
@@ -165,6 +182,9 @@ def submit_mark(st, store, slots=(), group: str | None = None):
     chosen = group_slots(st.rig, tuple(slots), group)
     if isinstance(chosen, Refusal):
         return chosen
+    why = needs_solved_marks(st.rig, chosen)
+    if why:
+        return Refusal("needs_solved_marks", why)
     return runner.start(st, store, "mark", "mark " + " ".join(chosen), _work(chosen),
                         lambda rec: dict(slots=list(chosen), group=group),
                         need_positions=True)

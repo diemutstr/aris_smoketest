@@ -35,6 +35,7 @@ class SiteArm:
     force_sign: float = 1.0  # +1: the paper pushing the pen up reads positive on this arm
     serial: str | None = None  # the robot's serial, when the site table knows it
     sure: bool = False       # the table row was checked against the hardware
+    rt_core: int | None = None  # the isolated CPU core this arm's stack runs on (taskset)
 
     @property
     def namespace(self) -> str:
@@ -53,6 +54,8 @@ class Site:
     arms: tuple[SiteArm, ...]
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
     desk: dict = field(default_factory=dict)        # Desk's web API: "mode_endpoint"
+    execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
+    hardware_component: str = "FrankaHardwareInterface"
 
     def arm(self, slot: str) -> SiteArm:
         for a in self.arms:
@@ -84,9 +87,13 @@ def load(path) -> Site:
         dom = int(row["domain"])
         if not 0 <= dom <= 101:
             raise ValueError(f"slot {slot}: DDS domain {dom} outside 0..101")
+        core = mine.get("rt_core")
         arms.append(SiteArm(slot, str(row["robot"]), str(row["ip"]), dom, bool(mine["mounted"]),
                             float(mine.get("force_sign", 1.0)), row.get("serial"),
-                            bool(row.get("sure", False))))
+                            bool(row.get("sure", False)), None if core is None else int(core)))
+    cores = [a.rt_core for a in arms if a.rt_core is not None]
+    if len(set(cores)) != len(cores):
+        raise ValueError(f"{path}: two slots share an rt_core")
     for key in ("ip", "domain", "robot"):
         seen = [getattr(a, key) for a in arms]
         if len(set(seen)) != len(seen):
@@ -95,7 +102,9 @@ def load(path) -> Site:
     return Site(path, table_path, str(d["server_url"]).rstrip("/"),
                 str(ros.get("joint_prefix", "fr3")), str(ros.get("rmw", "rmw_fastrtps_cpp")),
                 dict(d["force"]), dict(d.get("touch", {})), tuple(arms),
-                dict(d.get("collision", {})), dict(d.get("desk", {})))
+                dict(d.get("collision", {})), dict(d.get("desk", {})),
+                dict(d.get("execution", {})),
+                str(ros.get("hardware_component", "FrankaHardwareInterface")))
 
 
 def identity(arm: SiteArm, found_serial: str | None) -> str:

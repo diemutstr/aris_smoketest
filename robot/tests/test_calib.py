@@ -1,5 +1,6 @@
 """The calibration driver on fakes (a fake panda-py FCI and SimDesk), and serve's hand-over
 between an arm's ROS stack and the calibration driver for a mark job."""
+import json
 import math
 import threading
 import time
@@ -25,7 +26,7 @@ from sim_touch import hover_q
 CONFIG = Path(__file__).resolve().parents[2] / "config"
 SLOT = "2R"
 FAST = CalibSettings(button_timeout_s=0.3, standstill_dt=0.01, standstill_timeout_s=0.5,
-                     reconnect_s=1.0)
+                     reconnect_s=1.0, settle_s=0.0, control_wait_s=0.2)
 
 
 class Passed:
@@ -47,6 +48,7 @@ class FakeRobot:
         self.q, self.mode, self.errors = np.array(q, float), 2, []
         self.settle = []              # joints the next reads return first (an arm settling)
         self.followed, self.connects, self.closes = [], 0, 0
+        self.connected_with_fci = []
 
 
 class FakeFci:
@@ -80,7 +82,7 @@ def _person_pose(rig, q_hover, down=0.04):
     return q
 
 
-def _arm(rig, script, person=None, settle=None, settings=FAST):
+def _arm(rig, script, person=None, settle=None, settings=FAST, **desk_kw):
     q0 = hover_q(rig, SLOT)
     robot = FakeRobot(q0)
     said = []
@@ -93,12 +95,12 @@ def _arm(rig, script, person=None, settle=None, settings=FAST):
             robot.mode = 2
             robot.settle = list(settle or [])
 
-    desk = SimDesk(script, on_mode=on_mode)
+    desk = SimDesk(script, on_mode=on_mode, **desk_kw)
 
     def connect():
-        if desk.current != "execution" or ("fci", False) == next(
-                (c for c in reversed(desk.calls) if c[0] == "fci"), ("fci", True)):
+        if not desk.fci_on:                              # libfranka refuses without FCI
             raise RuntimeError("FCI is not active")
+        robot.connected_with_fci.append(desk.fci_on)
         return FakeFci(robot)
 
     arm = CalibArm(SLOT, rig, connect, desk, settings,
@@ -118,13 +120,16 @@ def test_a_guide_round_trip(rig, button):
     r = arm.guide(_guide(q0))
     assert r.done and r.why == button
     assert np.array_equal(r.q, person)                         # the person's pose is the sample
-    assert desk.calls[:2] == [("fci", False), ("mode", "programming")]
-    assert desk.calls[2][0] == "buttons" and desk.calls[3:] == [("mode", "execution"),
+    assert desk.calls[:3] == [("take control", 0.2), ("fci", True), ("mode", "programming")]
+    assert desk.calls[3][0] == "buttons" and desk.calls[4:] == [("mode", "execution"),
                                                                 ("fci", True)]
+    assert robot.connected_with_fci == [True, True]           # FCI was on at every connect
     assert [s["event"] for s in said] == ["guide: handed over", f"guide: button {button}",
                                           "guide: taken back"]
     assert said[0]["mark"] == "B" and said[1]["button"] == button
     assert robot.connects == 2 and robot.closes == 1           # connection made again
+    arm.close()
+    assert desk.calls[-1] == ("release control",) and robot.closes == 2
     lift, back = robot.followed                                # straight up, then the hover
     kin = Kinematics.of(rig, SLOT)
     rise = (kin.tip(lift.q[-1]) - kin.tip(lift.q[0]))[0] @ kin.normal
@@ -146,6 +151,8 @@ def test_cross_keeps_the_arm_with_the_person_until_check_or_circle(rig):
 
 
 def test_every_desk_call_is_a_row_with_its_status(monkeypatch):
+    """The mode switch as found on the robot: POST .../operating-mode/<mode>, no body, the
+    control token in a header; every call a row with its status; a wrong endpoint visible."""
     import sys
     import types
     from aris_robot.desk import PandaDesk
@@ -156,33 +163,100 @@ def test_every_desk_call_is_a_row_with_its_status(monkeypatch):
 
     class FakeDesk:
         def __init__(self, ip, user, pw, platform):
-            self.requests = []
+            self.requests, self._token, self.listening = [], "tok-123", False
 
         def take_control(self, force):
+            return True
+
+        def release_control(self):
             return Answer(200)
 
-        def _request(self, method, path, json=None):
-            self.requests.append((method, path, json))
-            return Answer(404 if json == {"mode": "Programming"} else 200)
+        def _request(self, method, path, **kw):
+            self.requests.append((method, path, kw))
+            return Answer(404 if path.endswith("/programming") else 200)
 
         def activate_fci(self):
             return None
 
+        def listen(self, cb):
+            self.listening = True
+            cb({"circle": True})
+            cb({"circle": False})
+
+        def stop_listen(self):
+            self.listening = False
+
     monkeypatch.setitem(sys.modules, "panda_py", types.SimpleNamespace(Desk=FakeDesk))
     rows = []
-    endpoint = dict(method="post", path="/desk/api/operating-mode",
-                    body=dict(programming={"mode": "Programming"},
-                              execution={"mode": "Execution"}))
-    d = PandaDesk("192.168.50.14", "u", "p", endpoint,
+    site = json.loads((Path(__file__).resolve().parents[1] / "site.json").read_text())
+    d = PandaDesk("192.168.50.14", "u", "p", site["desk"]["mode_endpoint"],
                   say=lambda event, **f: rows.append(dict(event=event, **f)))
+    d.take_control(60.0)
     d.mode("execution")
     d.fci(True)
+    assert next(iter(d.buttons(1.0))) == "circle"
+    assert not d.desk.listening                               # stop_listen when done
     with pytest.raises(RuntimeError, match="404"):
         d.mode("programming")                                 # a wrong endpoint shows at once
+    d.release_control()
     assert [(r["event"], r["status"]) for r in rows] == [
-        ("desk: login", None), ("desk: take control", 200), ("desk: mode execution", 200),
-        ("desk: fci on", None), ("desk: mode programming", 404)]
-    assert d.desk.requests[0] == ("post", "/desk/api/operating-mode", {"mode": "Execution"})
+        ("desk: login", None), ("desk: take control", None), ("desk: mode execution", 200),
+        ("desk: fci on", None), ("desk: listen", None), ("desk: stop listen", None),
+        ("desk: mode programming", 404), ("desk: release control", 200)]
+    method, path, kw = d.desk.requests[0]
+    assert (method, path) == ("post", "/desk/api/operating-mode/execution")
+    assert kw == {"headers": {"X-Control-Token": "tok-123"}}  # no body at all
+
+
+def test_desk_control_is_taken_once_and_always_released(rig):
+    person = _person_pose(rig, hover_q(rig, SLOT))
+    # someone (the browser) holds control and the person presses circle: taken, one turn
+    arm, robot, desk, _, q0 = _arm(rig, ["check", "check"], person=person, held_by_other=True)
+    assert arm.guide(_guide(q0)).done and arm.guide(_guide(q0)).done
+    arm.close()
+    assert [c[0] for c in desk.calls].count("take control") == 1
+    assert desk.calls[-1] == ("release control",) and not desk.control
+    # a failed guide (no button), then the end of the turn: released all the same
+    arm, robot, desk, _, q0 = _arm(rig, [None])
+    assert not arm.guide(_guide(q0)).done
+    arm.close()
+    assert desk.calls[-1] == ("release control",)
+    # libfranka does not connect at the start of the turn: control released, nothing kept
+    desk = SimDesk([])
+
+    def refuse():
+        raise RuntimeError("libfranka: connection refused")
+    with pytest.raises(RuntimeError):
+        CalibArm(SLOT, rig, refuse, desk, FAST)
+    assert [c[0] for c in desk.calls] == ["take control", "fci", "release control"]
+    # nobody gives control: no FCI, no connection
+    desk = SimDesk([], held_by_other=True, grant=False)
+    with pytest.raises(TimeoutError):
+        CalibArm(SLOT, rig, refuse, desk, FAST)
+    assert [c[0] for c in desk.calls] == ["take control"]
+
+
+def test_no_reading_is_never_zeros(rig):
+    """While the arm is handed over (FCI off) or its stack is down, rows carry q = null with
+    the reason, and `where` never has zeros."""
+    from aris_robot.runner import where_of
+    person = _person_pose(rig, hover_q(rig, SLOT))
+    seen = []
+    arm, robot, desk, _, q0 = _arm(rig, ["check"], person=person)
+    desk.on_mode = lambda name: seen.append((name, arm.state()))
+    arm.guide(_guide(q0))
+    mid = seen[0][1]
+    assert seen[0][0] == "programming" and not mid.ok and np.all(np.isnan(mid.q))
+    assert "no joint states (FCI off)" in mid.flags
+
+    class Down:
+        def state(self):
+            from aris.execute.drivers import ArmState
+            return ArmState(np.full(7, np.nan), np.zeros(7), False, ("no joint states",))
+    w = where_of({"2R": Down(), "3R": arm})
+    assert w["where"]["2R"] is None and w["where_missing"] == {"2R": "no joint states"}
+    assert len(w["where"]["3R"]) == 7
+    assert json.dumps(w, allow_nan=False)                      # valid JSON, no NaN
 
 
 def test_the_sample_waits_for_the_arm_to_stand_still(rig):
@@ -213,7 +287,7 @@ def test_the_other_verbs(rig):
     m = Motion("draw", Trajectory(np.array([0.0, 1.0]), np.array([q0, q0]), np.zeros((2, 7))))
     assert arm.draw(m).why.startswith("not this driver")
     assert arm.touch(m).why.startswith("not this driver")
-    traj = retime(JointPath(np.array([q0, q0 + 0.02])), rig.arm(SLOT).limits, rig.rules())
+    traj = retime(JointPath(np.array([q0, q0 + 0.05])), rig.arm(SLOT).limits, rig.rules())
     assert arm.move(traj).done and robot.followed[-1] is traj
     assert not arm.move(traj).done                             # not at its start any more
     robot.mode, robot.errors = 4, ["joint_reflex"]

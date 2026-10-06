@@ -43,6 +43,7 @@ class TouchSettings:
     step: float = 0.001            # m between IK samples of that extension
     tare_s: float = 0.2
     tare_max_n: float = 8.0
+    tare_spread_n: float = 1.5          # the air reading may move this much (2026-10-06)
     sign: float = 1.0
 
     @staticmethod
@@ -164,7 +165,8 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
     if motion.extra_depth > s.extra_max:
         return TouchResult(False, f"extra depth {motion.extra_depth * 1000:.0f} mm is more "
                                   f"than the cap {s.extra_max * 1000:.0f} mm")
-    tare = Tare(ForceSettings(tare_max_n=s.tare_max_n, cap_n=max(s.cap_n, 1.0)))
+    tare = Tare(ForceSettings(tare_max_n=s.tare_max_n, tare_spread_n=s.tare_spread_n,
+                              cap_n=max(s.cap_n, 1.0)))
     for F in pos.forces(s.tare_s):
         tare.add(normal_force(F, kin.normal, s.sign))
     zero = tare.result()

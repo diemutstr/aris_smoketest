@@ -62,10 +62,21 @@ def rig_view(st) -> dict:
 
 
 def arms_view(st) -> dict:
-    if st.remote:                      # what the operator PC last said
-        return plain({str(a): dict(p, at_park=bool(np.max(np.abs(p["q"] - st.rig.park_q(a)))
-                                                     <= st.rig.execution().start_tolerance))
-                      for a, p in sorted(st.positions.all().items())})
+    if st.remote:                      # what the operator PC last said, per controlled slot
+        import time
+        seen, out, now = st.positions.all(), {}, time.time()
+        for a in st.rig.arm_ids:
+            p = seen.get(a)
+            q, why = st.positions.known(a, now)
+            out[str(a)] = dict(
+                robot=None if p is None else p.get("robot"), q=q,
+                reading="fresh" if q is not None else (why or "never reported"),
+                at_park=None if q is None else bool(
+                    np.max(np.abs(q - st.rig.park_q(a))) <= st.rig.execution().start_tolerance),
+                reported_at=None if p is None else p["reported_at"],
+                age_s=None if p is None else now - p["received_at"],
+                source="operator PC", job=None if p is None else p["job"])
+        return plain(out)
     out = {}
     for a, d in st.drivers.items():
         s = d.state()

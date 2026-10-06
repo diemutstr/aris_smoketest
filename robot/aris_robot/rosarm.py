@@ -22,10 +22,12 @@ from action_msgs.msg import GoalStatus
 from aris_msgs.msg import ImpedanceStatus, Reference
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
-from controller_manager_msgs.srv import ListControllers, SwitchController
+from controller_manager_msgs.srv import (ListControllers, SetHardwareComponentState,
+                                         SwitchController)
 from franka_msgs.action import ErrorRecovery
 from franka_msgs.msg import FrankaRobotState
 from franka_msgs.srv import SetFullCollisionBehavior
+from lifecycle_msgs.msg import State
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -80,6 +82,8 @@ class ArmNode:
         self.recovery = ActionClient(n, ErrorRecovery, f"{ns}/action_server/error_recovery")
         self.switch_srv = n.create_client(SwitchController, f"{ns}/controller_manager/switch_controller")
         self.list_srv = n.create_client(ListControllers, f"{ns}/controller_manager/list_controllers")
+        self.hardware_srv = n.create_client(
+            SetHardwareComponentState, f"{ns}/controller_manager/set_hardware_component_state")
         self.hold_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/hold")
         self.resume_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/resume")
         self.collision_srv = n.create_client(
@@ -214,6 +218,20 @@ class ArmNode:
         if res is None:
             return "setting the collision thresholds timed out"
         return "" if res.success else f"the robot refused the collision thresholds: {res.error}"
+
+    def reactivate_hardware(self, component: str, timeout: float = 10.0) -> str:
+        """The hardware component (franka_hardware) inactive, then active again: after a
+        libfranka error the controller manager has taken it down.  "" when active."""
+        if not self.hardware_srv.wait_for_service(timeout_sec=3.0):
+            return "the hardware component service is not available"
+        for sid, label in ((State.PRIMARY_STATE_INACTIVE, "inactive"),
+                           (State.PRIMARY_STATE_ACTIVE, "active")):
+            req = SetHardwareComponentState.Request(name=component,
+                                                    target_state=State(id=sid, label=label))
+            res = wait(self.hardware_srv.call_async(req), timeout)
+            if res is None or (label == "active" and not res.ok):
+                return f"the hardware component {component} did not become {label}"
+        return ""
 
     def error_recovery(self, timeout: float = 15.0) -> str:
         """franka_hardware's automatic error recovery; "" when it succeeded."""

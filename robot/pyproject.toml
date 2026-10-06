@@ -16,7 +16,9 @@ dev = ["pytest", "fastapi", "uvicorn"]
 # is built against ONE libfranka version, which must suit the robots' system version (Desk:
 # Settings -> System).  PyPI's wheel is the default build; another libfranka needs the wheel
 # from https://github.com/JeanElsner/panda-py/releases instead (robot/README.md).
-calib = ["panda-python==1.1.1"]   # the newest on PyPI, 2026-10-05
+# On site: FR3 system 5.9 -> libfranka 0.21.x -> install the release wheel
+# panda_python-1.1.1+libfranka.0.21.3 first; this pin accepts it (a local version of 1.1.1).
+calib = ["panda-python==1.1.1"]
 
 [project.scripts]
 aris-robot = "aris_robot.cli:main"
