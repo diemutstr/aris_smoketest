@@ -303,6 +303,10 @@ class DrawRules:
     # 2026-10-01).  The system planner gives the drawing's points this z; the planners below
     # it never know.  The real paper stays the plane the holder and links must clear.
     press: float = 0.0                 # m
+    # A pen that skids when pushed (a gel pen in the lateral holder, found on the rig
+    # 2026-10-06): pieces are drawn in the direction that pulls the tip (the tip trails the
+    # hand's lean).  The rig's pen table says so per pen.
+    drag_only: bool = False
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down
     speed_fraction: float = 0.30       # fraction of the joint speed limits that may be used
