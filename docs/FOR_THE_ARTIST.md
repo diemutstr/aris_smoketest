@@ -219,6 +219,9 @@ the pilot (the control pad on the arm):
 4. If the tip was not properly in the mark, press **✗ (cross)** instead: the arm stays with you
    (white) for another try. If a mark is unreachable or damaged, press **○ (circle)** to skip it.
 5. When an arm is done it parks itself and the other arm starts. **Both arms parked = done.**
+   Do not touch Desk in the browser during the calibration: the system holds the robot's
+   control for the whole arm, and the browser would take it back (that is what stopped the
+   first attempt).
    An arm standing still above a mark with its light blue for more than a minute means that
    arm failed: go to the laptop, where the reason is written.
 
@@ -265,10 +268,11 @@ was not (and why). Other commands, any time:
 
 | command | what it does |
 |---|---|
+| `aris arms` | every arm: where it stands, whether it answers (if it says "no reading", that arm is not talking — Desk: unlocked, FCI on) |
 | `aris status` | the current or last job |
 | `aris stop` | every arm stops at once and holds; the job is finished |
 | `aris park` | every arm back to its park |
-| `aris draw --rest-of <job id>` | draw what a stopped job left |
+| `aris draw --rest-of <job id>` | draw what a stopped or failed job left |
 | `aris recover 2L` | after a fault, once a person has looked at the arm |
 | `aris rig` | what the server runs, calibration state |
 

@@ -36,11 +36,15 @@ def finish(st, rec, job, slots, book, run, why, before) -> None:
         # the marks solved before
         known = {} if set(slots) == set(rig.arm_ids) else \
             {n: rig.mark_xy(n) for n in rig.marks if rig.mark_state(n) == "solved"}
-        sol = solve_marks(rig, solver_input(book.touches), known,
-                          files.base_tips(st.config_dir, slots))
-        if not sol.passed:
-            state, why = "failed", f"the solve did not pass: {sol.why}"
+        touches = solver_input(book.touches)
+        if not touches or not all(touches.values()):      # never an empty set to the solver
+            sol = None
+            state, why = "failed", "no usable touches to solve from (every one skipped)"
         else:
+            sol = solve_marks(rig, touches, known, files.base_tips(st.config_dir, slots))
+        if sol is not None and not sol.passed:
+            state, why = "failed", f"the solve did not pass: {sol.why}"
+        elif sol is not None:
             written = [str(p) for p in files.write_mark_solution(rig, sol, st.config_dir)]
             st.reload()
     rows, first = arm_progress(rec.log.read())

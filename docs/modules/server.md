@@ -40,6 +40,13 @@ the runner to confirm it (not at all if no runner ever reported). The server kee
 joints the runner reported per arm (`GET /arms`); park plans from them. Times in the report
 then come from the operator PC's clock.
 
+**Never planned from zeros.** A reading that is no reading — `"q": null` (the arm's stack is
+down), joints all zero, or a reading older than 60 s — means "position unknown". A job that
+needs that slot's start is refused with "no joint states for 2R (FCI off?)"; `aris arms`
+shows "no reading". The phase-end check (in the coordinator, on whichever machine runs it)
+asks again for up to 10 s for a slot that reads all zeros, and fails the phase with the same
+words if no reading comes, instead of judging the arm at q = 0.
+
 ## A job
 
 One job at a time; a second one while one runs is refused.
@@ -70,14 +77,14 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | endpoint | what it does |
 |---|---|
 | `POST /jobs?name=...&note=...` | the drawing file (JSON) as the body; answers the job id; 409 if a job runs, 400 if the file is bad |
-| `POST /jobs?rest_of=<id>` | a new drawing of what that finished (done or stopped) job left over; 409 while it runs or when nothing is left |
+| `POST /jobs?rest_of=<id>` | a new drawing of what that finished (done, stopped, or failed: a link drop mid-job) job left over; 409 while it runs or when nothing is left |
 | `GET /jobs` | every job of this server run |
 | `GET /jobs/{id}` | state; the fitted drawing (bounding box before and after, scale); per phase and arm: motions queued, done, the current motion, what the planner handed back so far, checker refusals; at the end the report |
 | `GET /jobs/{id}/events` | the event log |
 | `POST /jobs/{id}/stop` | stop (409 if already finished) |
 | `POST /park` | park all arms |
 | `GET /rig` | slots (pose, park configuration, calibration state of both parts, and each file's parts with their dates), the drawing area and its centre, the pen that is in, the rig and calibration digests, tracking, driver and speed |
-| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, the joints the operator PC last reported, when (its clock), when the server heard it, and the job |
+| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, per controlled slot: the robot it named, the joints the operator PC last reported or `null` with why (`reading`: fresh, no joint states, too old, never reported), at its park (`null` without a reading), when (its clock), how long ago the server heard it, and the job |
 | `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
 | `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
 | `GET /jobs/{id}/queues/{phase}/{slot}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
@@ -99,7 +106,8 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `aris serve [--host --port --driver sim\|robot --tracking position\|impedance --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
 | `aris draw <drawing> [--note ...] [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
 | `aris draw <drawing> --air 30` | an air run, the validation every first drawing on the hardware starts with: the whole job planned and checked with the drawing surface 30 mm above the paper (the planner gets a press of −30 mm, the checker `surface_z` = paper + 30 mm), so every draw is flown in the air; the header says `air_mm`, the report starts with AIR RUN; `aris plan --air` too. |
-| `aris draw --rest-of <job id>` | draw what that stopped or finished job left over: its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
+| `aris arms` | a table: slot, robot, joints or "no reading", at park, reported when; FAIL when a slot has no reading |
+| `aris draw --rest-of <job id>` | draw what that stopped, failed or finished job left over (a job that failed before anything was accounted: the whole drawing): its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
 | `aris calibrate <slot>` | touch the paper on a grid with that slot's arm: the `base` part of its calibration file |
 | `aris mark [slots ...] [--group all\|row2\|rows12\|rows23]` | the mark job: guide each arm's pen onto its marks; x, y, yaw and the pen tip |
@@ -222,7 +230,11 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
   group "all", or every controlled slot when the rig has no such group), in rig order, one arm
   at a time, the others standing (parked, or given to the checker as their joints).
 - **What each arm touches.** Its marks among the group's (`rig.marks_for(slots)`, the ones it
-  shares): at its first mark six hand orientations — the pivot: the pen upright and five
+  shares); a slot sharing fewer than two marks within the job (a single slot, or a group cut
+  through a pair) touches every mark it shares with any controlled slot. Those need places
+  solved by an earlier run: if none is solved the job is refused before anything moves ("2L
+  alone needs marks solved by an earlier run; run `aris mark` (2L, 2R) first"), so the solver
+  never gets an empty set: at its first mark six hand orientations — the pivot: the pen upright and five
   tilts of 30 degrees, 72 degrees apart (turned by up to 60 degrees where a tilt is out of
   reach; tilting, not only turning, is what pins the pen length) — and one upright touch at
   every other mark. The first mark is the first in rig.json order where at least three of the
@@ -392,6 +404,14 @@ and 36 mm from nominal), the rig reloaded with base and pen applied; a ○ on 2R
 the solve refuses ("needs a partner"), nothing written, both arms home; a failed hand-over: the
 job fails, the arm holds at its hover; a touch named bad: one extra phase; `--group rows12` on
 the six-slot rig: 32 touches, four slots applied, 3L untouched. 6 tests, 32 s.
+
+The site-day fixes (`tests/test_server_field.py`): `aris mark 2L` on a fresh two-arm rig is
+refused before moving, and after a full run touches A and B (7 touches) with the marks known;
+a null, all-zero or 60 s old reading is no reading, refuses park, mark and a drawing with "no
+joint states for 2R (FCI off?)", and shows in `aris arms`; the phase-end check waits for a
+reading rather than judging zeros; `aris arms` on the simulated arms; the rest of a job that
+failed before it moved; a contact 1.5 mm into the descent dropped as tripped at the start.
+8 tests (2 slow).
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen, tracking and note; `--rest-of` (a job stopped midway, its leftovers
