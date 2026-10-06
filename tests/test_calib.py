@@ -584,7 +584,7 @@ def test_marks_refusals(tmp_path):
     # one slot, nothing known: nothing ties it to anything
     r = solve_marks(rn, {"2R": {"S12R": full["2R"]["A"],     # A's pivot, relabelled
                                 "S23R": full["2R"]["S23R"]}})
-    assert not r.passed and r.why == "2R needs a partner: only 0 shared marks"
+    assert not r.passed and r.why.startswith("2R alone needs marks solved before")
     # one known mark cannot hold the frame: it is solved again, with a note
     r = solve_marks(rn, {s: full[s] for s in ("2L", "2R")}, known={"A": m["A"]})
     assert r.passed and r.marks["A"].state == "solved" and "cannot hold the frame" in r.notes[0]
@@ -662,3 +662,24 @@ def test_crosshair_two_arms_seam(tmp_path, capsys):
               f"{worst[4] * 1e3:.2f} mm, xy {worst[0] * 1e3:.2f} mm, yaw {worst[1] * 1e3:.2f} "
               f"mrad, tip {worst[2] * 1e3:.2f} mm")
     assert worst[4] < 1.0e-3
+
+
+def test_empty_and_lonely_inputs_are_refusals(tmp_path):
+    """Site 2026-10-06: `aris mark 2L` alone reached the planar solve with no touches and
+    crashed (IndexError).  Every entry point refuses instead."""
+    from aris.calib import planar
+    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2L", "2R"))
+    for empty in ({}, None, {"2L": {}}, {"2L": {}, "2R": {}}):
+        r = solve_marks(rn, empty)
+        assert not r.passed and r.why == "no touches", empty
+    for Q in (None, [], np.zeros((0, 7)), np.zeros((4, 6))):
+        assert not pivot(rn, "2L", Q).passed
+    assert planar.solve(rn, [], [], [], {}) == "no touches"
+    assert planar.solve(rn, [], ["2L"], [], {}) == "no touches"
+    assert planar.solve(rn, [("2L", "A", np.zeros(2))], ["2L"], ["A"], {}).startswith(
+        "2L alone needs marks solved before")
+    tq = simulate_touches(rt, rn, ("2L",), true_marks(rn, ("A", "B")), (0.0, 0.0))
+    r = solve_marks(rn, tq)
+    assert not r.passed and r.why.startswith("2L alone needs marks solved before")
+    r = solve_marks(rn, tq, known={"A": np.zeros(2)})        # one known mark is not enough
+    assert not r.passed and r.why.startswith("2L alone needs marks solved before")

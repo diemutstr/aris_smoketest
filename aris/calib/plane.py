@@ -21,12 +21,15 @@ import numpy as np
 from aris.types import Slot
 
 # The pass rule.  Each limit catches one kind of fault; the sentence for it is in `_verdict`.
-MIN_POINTS = 9            # fewer touches cannot tell a tilt from one bad touch
+# The first three were 9 points, 0.5 mm RMS and 1.5 mm largest: they refused every real plane
+# on the wood on 2026-10-06 (RMS 0.87-0.92 mm, largest 1.69-1.83 mm with 8-12 points: the
+# table's flatness and the touch noise).  These are the values the site passed them with.
+MIN_POINTS = 8            # fewer touches cannot tell a tilt from one bad touch
 MIN_SPREAD_M = 0.02       # RMS spread of the touches along their second direction: below this
                           # they lie on a line and no plane is defined
-RMS_MAX_M = 0.0005        # scatter of all touches about the plane: a soft or loose paper, a
+RMS_MAX_M = 0.0010        # scatter of all touches about the plane: a soft or loose paper, a
                           # bent table, or touches from two different set-ups mixed together
-MAX_RESIDUAL_M = 0.0015   # one touch far off the plane: a slipped or early (false-onset) touch
+MAX_RESIDUAL_M = 0.0025   # one touch far off the plane: a slipped or early (false-onset) touch
 TILT_MAX_RAD = np.deg2rad(3.0)  # the paper leans far from what rig.json says: the wrong arm's
                           # touches, or an arm not mounted as rig.json says
 HEIGHT_MAX_M = 0.030      # the paper is far above or below where rig.json puts it: the wrong

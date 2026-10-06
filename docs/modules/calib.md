@@ -55,10 +55,15 @@ the same way at every point.
 
 | limit | value | catches |
 |---|---|---|
-| touches | at least 9 | too few to tell a tilt from one bad touch |
+| touches | at least 8 | too few to tell a tilt from one bad touch |
 | spread | 20 mm | touches on a line or at one spot: no plane |
-| RMS distance from the plane | 0.5 mm | a paper that is not one flat surface, or touches from two set-ups mixed together |
-| largest distance | 1.5 mm | one slipped or early touch; the reason names that touch |
+| RMS distance from the plane | 1.0 mm | a paper that is not one flat surface, or touches from two set-ups mixed together |
+| largest distance | 2.5 mm | one slipped or early touch; the reason names that touch (a touch 5 mm off is still refused) |
+
+The first limits were 9 points, 0.5 mm RMS and 1.5 mm largest. On 2026-10-06 they refused
+every real plane on the wood: RMS 0.87–0.92 mm and largest 1.69–1.83 mm with 8–12 points,
+from the table's flatness and the touch noise. The values above are the ones the site passed
+them with.
 | tilt | 3 deg | the wrong arm's touches, or an arm not mounted as rig.json says |
 | height change | 30 mm | a plane far from nominal: the wrong pen, the wrong base height, or the descent went past the paper |
 
@@ -149,6 +154,7 @@ cross-hairs placed by eye; dimples, which centre the pen, would allow half.
 
 | rule | value | catches |
 |---|---|---|
+| input | some touches; one slot alone only with two of its marks known | "no touches"; "2L alone needs marks solved before" (the site's `aris mark 2L` crash, 2026-10-06) |
 | pivot touches | at least 3 (six planned) | too few to separate the tip from the mark |
 | pivot spread | the pen axes at least 15 deg apart | the tip's length barely seen |
 | pivot condition | at least 0.1 | the hand only turned about one axis: tilt, do not only spin |
@@ -196,11 +202,15 @@ All tests use synthetic touches, with the kernel's forward kinematics as the tru
 | joint noise | tilt error, worst | height error, worst | fit RMS, mean | passes |
 |---|---|---|---|---|
 | 0.5 mrad | 0.024 deg | 0.055 mm | 0.14 mm | 20 of 20 |
-| 2 mrad | 0.097 deg | 0.22 mm | 0.56 mm | 7 of 20 (RMS or largest-distance rule) |
+| 2 mrad | 0.097 deg | 0.22 mm | 0.56 mm | 20 of 20 (7 of 20 under the first limits) |
 
   At 1 mrad all runs pass, with a largest distance of 0.95 mm.
+- On the hardware (2026-10-06): real planes on the wood came out at RMS 0.87–0.92 mm and
+  largest 1.69–1.83 mm with 8–12 points.
 
 **Touch-off.**
+- **On the hardware (2026-10-06), the first measured number:** the touch-off repeated to
+  0.04 mm, with a correction of +1.17 mm.
 - A pen 1.3 mm longer than nominal is found to 1e-9 mm without noise. The tip moves along
   the pen axis only.
 - An 8 mm error is refused.
@@ -263,5 +273,5 @@ after (b) with its marks known):
 | (c) | 0.1 mm, 0.05 mrad | 0.25 mm | 0.50 mrad | 0.12 mm | 0.12 mm | 0.30 mm |
 | (d) | 0.1 mm, 0.05 mrad | 0.19 mm | 0.46 mrad | 0.07 mm | 0.06 mm | — |
 
-Tests: `tests/test_calib.py`, 26 tests. 25 quick ones in about 5 s; the noise table is
+Tests: `tests/test_calib.py`, 27 tests. 26 quick ones in about 5 s; the noise table is
 `slow` and takes about 10 s.

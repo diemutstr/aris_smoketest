@@ -72,6 +72,10 @@ def _closed_form(rig, slots, obs, fixed):
 def solve(rig, obs, slots, names, fixed):
     """-> (pose {slot: (x, y, yaw against the rig's rotation)}, xy {mark: (2,)}, per-touch
     residual norms (N,), what fixed the frame) or a refusal string."""
+    if not slots or not obs:
+        return "no touches"
+    if len(slots) == 1 and not fixed:
+        return f"{slots[0]} alone needs marks solved before (two of its marks known)"
     held = None if fixed else slots[0]
     moving = [s for s in slots if s != held]
     free = [n for n in names if n not in fixed]

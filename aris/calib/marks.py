@@ -95,7 +95,10 @@ class MarkSolution:
 def pivot(rig, slot: Slot, Q) -> Pivot:
     """The common point of K >= 3 touches with the tip seated on one mark: least squares on
     R_k p + t_k = d for p (tip, hand frame) and d (mark, base frame)."""
-    Q = np.asarray(Q, float).reshape(-1, 7)
+    Q = np.zeros((0, 7)) if Q is None or np.size(Q) == 0 else np.asarray(Q, float)
+    if Q.ndim != 2 or Q.shape[1] != 7:
+        return Pivot(slot, False, f"{slot}: the pivot's touches are not K x 7 joint readings",
+                     None, None, np.zeros(0), float("nan"))
     nothing = lambda why, res=np.zeros(0), spread=float("nan"): Pivot(
         slot, False, why, None, None, res, spread)
     if len(Q) < PIVOT_MIN_TOUCHES:
@@ -235,6 +238,8 @@ def solve_marks(rig, touches, known=None, base_tips=None) -> MarkSolution:
     exact for the plane job's upright touches; without it z is kept.  Never raises on bad
     data: a refusal names the slot, mark or pair."""
     known, base_tips = known or {}, base_tips or {}
+    if not touches or not any(touches.values()):
+        return _refuse("no touches")
     pivots, obs, why = _observations(rig, touches)
     if why:
         return _refuse(why)
@@ -250,6 +255,9 @@ def solve_marks(rig, touches, known=None, base_tips=None) -> MarkSolution:
         notes.append(f"{next(iter(fixed))} was known but is solved again: one known mark "
                      f"cannot hold the frame")
         fixed = {}
+    if len(by_slot) == 1 and not fixed:
+        return _refuse(f"{next(iter(by_slot))} alone needs marks solved before (two of its "
+                       f"marks known)", notes=notes)
     more, why = _observable(by_mark, by_slot, fixed)
     notes += more
     if why:
