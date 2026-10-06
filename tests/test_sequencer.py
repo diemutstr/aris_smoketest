@@ -21,6 +21,7 @@ from aris.sequencer import TourOptions, TourReport, price, tour  # noqa: E402
 from arm_cases import drain  # noqa: E402
 from aris.sequencer.draw import draw_motions  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
+from aris.types import Line  # noqa: E402
 from aris.sequencer.lift import end_lift, lift, lift_height, trim
 from aris.sequencer.lift import reverse  # noqa: E402
 
@@ -240,3 +241,61 @@ def test_a_refused_move_home_is_the_end_refusal(problem):
     ms, left, rep = tour_all(arm, bunches, park, obs, rules, verify=last_refused)
     assert len(ms) == n - 1 and rep.end_refusal.startswith("failed_check: the move to q_end")
     assert not [x for x in left if x.reason == "failed_check"]
+
+
+# --------------------------------------------------------------------------- drag-only pens
+
+
+def test_pulled_shares_of_a_stroke_along_and_across_the_lean(problem):
+    from dataclasses import replace
+    from aris.sequencer.drag import pulled_shares
+    arm, obs, rules, bunches = problem
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    n = paper.normal / np.linalg.norm(paper.normal)
+    plan = bunches[0].plans[0]
+    lean = arm.pen_axis(plan.q)
+    lean -= (lean @ n)[:, None] * n
+    u = lean / np.linalg.norm(lean, axis=1, keepdims=True)
+    steps = np.cumsum(0.002 * u, axis=0)                      # a stroke along the lean
+    along = replace(plan, tip_base=steps)
+    assert pulled_shares(arm, along, n) == (0.0, 1.0)         # drawn this way it is pushed
+    mid = 0.5 * (lean[:-1] + lean[1:])                        # the lean at mid-step
+    side = np.cross(n, mid / np.linalg.norm(mid, axis=1, keepdims=True))
+    across = replace(plan, tip_base=np.concatenate([[np.zeros(3)], np.cumsum(0.002 * side, 0)]))
+    assert pulled_shares(arm, across, n) == (1.0, 1.0)
+
+
+def test_a_drag_only_pen_draws_every_piece_pulled(problem):
+    from dataclasses import replace
+    from aris.sequencer.drag import pulled_shares
+    arm, obs, rules, bunches = problem
+    drag = replace(rules, drag_only=True)
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), obs, drag)
+    assert rep.pieces == 2 and not left
+    noted = {x[0].line_id for x in rep.drag_notes}
+    for m in ms:
+        if m.kind == "draw" and m.piece.line_id not in noted:
+            fake = bunches[0].plans[0].__class__(m.piece, m.traj.q, np.zeros(len(m.traj.q)),
+                                                 m.tip_base, 0.0, 0.0)
+            assert pulled_shares(arm, fake, paper.normal)[0] >= 1.0 - 1e-9
+    assert sum(rep.drag_drawn.values()) == 2
+
+
+def test_a_drag_only_pen_flags_a_circle():
+    from dataclasses import replace
+    from aris import local
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    x, y = RIG.T_table_base("2L")[:2, 3]
+    t = np.linspace(0, 2 * np.pi, 120)
+    circle = RIG.to_base("2L", Line("circle", np.column_stack(
+        [x + 0.35 + 0.08 * np.cos(t), y + 0.08 * np.sin(t), np.full(len(t), RIG.paper_z)]),
+        "table"))
+    bunches, _ = local.plan(arm, [circle], obs, rules)
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), obs, replace(rules, drag_only=True))
+    drawn = {m.piece for m in ms if m.kind == "draw"}
+    flagged = {x[0] for x in rep.drag_notes}
+    # the lean turns with the hand around the circle: some piece is pushed somewhere, so it is
+    # flagged, or the local planner split the circle into pieces each pulled throughout
+    assert flagged or len(drawn) > 1
+    assert rep.drag_drawn.get("none", 0) == len(flagged)

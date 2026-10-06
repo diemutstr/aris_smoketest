@@ -96,6 +96,25 @@ every corner: such lifts took up to 3.2 s instead of 0.3.
 (Earlier the same day: a five-rung ladder, then the two rules with the shape held, which lost a
 1.85 m piece of the spiral whose end ran into a joint-limit margin on the way up.)
 
+## Drag-only pens
+
+A gel pen leaning in the lateral holder skids when a stroke pushes its tip forward and draws when
+it is pulled (2026-10-06). With `rules.drag_only` (rig.json's pen table) a piece is drawn only in
+the direction in which the pen is pulled: at every step the drawing direction's component along
+the pen's lean (the pen axis laid into the paper, from the hand toward the tip) is at most zero,
+so the tip trails (`drag.py`). Each alternative keeps only the direction pulled over its whole
+length; if neither is, the one pulled over more of it, and a drawn piece of that kind is noted in
+the report (`drag_notes`, with the share pulled). The tour's price sees only the allowed
+direction. Without the flag nothing changes (same motions, digests checked).
+
+Measured on arm 2L (rig of 2026-10-06): the word, 50 alternatives: 36 pulled one way throughout,
+14 neither way, none both; of the 13 pieces drawn, 10 pulled throughout, 3 noted (word:3 pulled
+over 74 %, word:9 and word:10 over 50 %); time on the rig 308.8 s against 313.9 without the flag.
+100 random lines, 360 alternatives: 237 one way, 123 neither; of 103 pieces drawn, 60 pulled
+throughout and 43 noted (pulled over 55 to 99 %: the lean turns with the hand's spin along a
+line); time on the rig 3 979 s against 3 945 (+0.9 %), one more piece left over. Splitting a
+piece where the pull changes side is not done.
+
 ## The drawing motion
 
 The local planner's joint path is timed here in one call (`kernel.retime`, pen within 0.1 mm of

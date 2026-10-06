@@ -332,3 +332,20 @@ def test_an_air_run_draws_every_piece_with_lifts_above_the_surface():
         if m.kind == "lower":
             assert abs(above(m.q_end)[0] - 0.030) < 1e-6
     assert_tour(arm, obs, rules, ms, q0, q0)
+
+
+@pytest.mark.slow
+def test_a_drag_only_pen_gives_every_piece_of_the_word_a_direction(tmp_path_factory):
+    """Measured 2026-10-06, arm 2L: 13 pieces drawn as without the flag; of the 50 alternatives
+    36 are pulled one way throughout and 14 neither way (none both); of the 13 drawn, 10 are
+    pulled throughout, 3 noted (word:3 pulled over 74 %, word:9 and word:10 over 50 %)."""
+    from dataclasses import replace
+    cache = tmp_path_factory.getbasetemp() / "kinematic_table"
+    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    lines = [RIG.to_base("2L", x) for x in ac.case_lines(RIG, "2L")["word"]]
+    plain = plan_detailed(arm, lines, obs, RIG.park_q("2L"), rules, None, 8, cache)
+    ms, left, st = plan_detailed(arm, lines, obs, RIG.park_q("2L"),
+                                 replace(rules, drag_only=True), None, 8, cache)
+    assert st.tour.pieces == plain[2].tour.pieces and len(left) == len(plain[1])
+    assert sum(st.tour.drag_drawn.values()) == st.tour.pieces
+    assert len(st.tour.drag_notes) == st.tour.drag_drawn.get("none", 0) <= 3

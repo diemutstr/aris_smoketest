@@ -24,6 +24,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from aris import free
+from aris.sequencer.drag import pulled_shares
 from aris.sequencer.draw import draw_motions, oriented
 from aris.sequencer.guard import Guard
 from aris.sequencer.lift import end_lift, trim
@@ -61,6 +62,11 @@ class TourReport:
     free_length: float = 0.0       # rad, joint-space length of the moves between lift-offs
     free_calls: int = 0            # free-space planner calls
     cut: float = 0.0               # m cut off pieces because rule 1 failed at an end (rule 2)
+    drag_notes: list = field(default_factory=list)  # drag-only pens: (piece, share pulled) of
+                                   # pieces drawn though neither direction is pulled throughout
+    drag_alternatives: dict = field(default_factory=dict)  # drag-only: alternatives whose
+                                   # directions are "both" pulled, "one", "none" (wholly)
+    drag_drawn: dict = field(default_factory=dict)  # the same, over the alternatives drawn
     refusals: dict = field(default_factory=dict)   # free-space refusals by reason
     motions: int = 0
     end_refusal: str = ""          # why the move to q_end failed; "" if it did not
@@ -151,6 +157,11 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
                 rep.failed_check += 1
                 continue
         rep.pieces += 1
+        if rules.drag_only:
+            kind = s.drag_kind[(b, s.chosen_plan)]
+            rep.drag_drawn[kind] = rep.drag_drawn.get(kind, 0) + 1
+        if (b, s.chosen_plan) in s.drag_note:
+            rep.drag_notes.append((s.bunches[b].piece, s.drag_note[(b, s.chosen_plan)]))
         rep.lifts += 1
         rep.move_time += float(move.traj.t[-1])
         rep.free_length += _length(move)
@@ -223,6 +234,9 @@ class _State:
         if len(papers) != 1:
             raise ValueError(f"the obstacles must hold exactly one paper plane, not {len(papers)}")
         self.paper: Plane = papers[0]
+        self.chosen_plan = -1          # the alternative of the piece found last
+        self.drag_note: dict = {}      # (b, p) -> share pulled, where neither direction is pulled
+        self.drag_kind: dict = {}      # (b, p) -> "both", "one", "none" (drag-only pens)
         self.lifts: dict = {}          # (b, p, end 0/1) -> (Lift, cut) | str
         self.draws: dict = {}          # (b, p, backwards) -> [Motion] | str
         self.dead: dict = {}           # (b, p, d) -> why
@@ -238,7 +252,28 @@ class _State:
         self.cands += new
         self.entry = np.concatenate([self.entry, np.array(
             [self.bunches[b].plans[p].q[-1 if d else 0] for b, p, d in new]).reshape(-1, 7)])
+        if self.rules.drag_only:
+            for b in range(first, len(self.bunches)):
+                for p in range(len(self.bunches[b].plans)):
+                    self._drag(b, p)
         return list(range(first, len(self.bunches)))
+
+    def _drag(self, b, p) -> None:
+        """Drag-only pens: only the direction(s) in which the pen is pulled stay candidates.  If
+        neither is pulled over the whole piece, the one pulled over more of it stays, noted."""
+        plan = self.bunches[b].plans[p]
+        fwd, back = pulled_shares(self.arm, plan, self.paper.normal)
+        whole = 1.0 - 1e-9
+        keep = [d for d, f in ((0, fwd), (1, back)) if f >= whole] or [0 if fwd >= back else 1]
+        if max(fwd, back) < whole:
+            self.drag_note[(b, p)] = max(fwd, back)
+        kind = "both" if len(keep) == 2 else ("one" if max(fwd, back) >= whole else "none")
+        self.drag_kind[(b, p)] = kind
+        self.rep.drag_alternatives[kind] = self.rep.drag_alternatives.get(kind, 0) + 1
+        for d in (0, 1):
+            if d not in keep:
+                self.dead[(b, p, d)] = (f"drag-only pen: pushed over "
+                                        f"{1 - (fwd, back)[d]:.0%} of the piece this way")
 
     # ------------------------------------------------------------------ one step
 
@@ -263,6 +298,7 @@ class _State:
                 if tries >= self.opt.max_tries:
                     break
                 continue
+            self.chosen_plan = p
             return (b, move, entry, draw, exit_, cut_off), refused, \
                 self._dead_pieces(live, {b})
         return None, refused, self._dead_pieces(live, set(refused))
