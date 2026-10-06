@@ -153,9 +153,19 @@ def test_steel_list(rig):
     assert len(rig.steel) == 13 + 6 * 4
 
 
-# the strut face schedule of docs/drawings/plan_centre_datum.pdf, sheet 3, panel D (mm)
-SCHEDULE = {"left": (-305.00, (-476.75, -400.55), (-159.15, -82.95), (-392.76, -166.94)),
-            "right": (305.00, (133.25, 209.45), (450.85, 527.05), (217.24, 443.06))}
+# the strut face schedule of docs/drawings/plan_centre_datum.pdf, sheet 3, panel D (mm), turned
+# 180 degrees (site, 2026-10-06): the sheet's right column, mirrored, is the left one, and back
+SHEET = {"left": (-305.00, (-476.75, -400.55), (-159.15, -82.95), (-392.76, -166.94)),
+         "right": (305.00, (133.25, 209.45), (450.85, 527.05), (217.24, 443.06))}
+
+
+def _turned(col):
+    axis, s1, s2, plate = col
+    flip = lambda ab: (-ab[1], -ab[0])
+    return (-axis, flip(s2), flip(s1), flip(plate))
+
+
+SCHEDULE = {"left": _turned(SHEET["right"]), "right": _turned(SHEET["left"])}
 
 
 def test_hanger_follows_the_drawing(rig):
@@ -166,7 +176,7 @@ def test_hanger_follows_the_drawing(rig):
         for name, (a, b) in ((f"strut{aid}_minus_x", s1), (f"strut{aid}_plus_x", s2),
                              (f"plate{aid}", plate)):
             box = next(x for x in rig.steel if x.name == name)
-            # plate edges are printed to 0.01 mm: the 225.82 plate is centred on axis + 25.15
+            # plate edges are printed to 0.01 mm: the 225.82 plate is centred on axis - 25.15
             np.testing.assert_allclose([box.lo_table[0] * 1000, box.hi_table[0] * 1000], [a, b],
                                        atol=0.006)
             if name.startswith("strut"):
@@ -340,7 +350,7 @@ def test_gates(rig):
 
 
 def test_execution(rig, tmp_path):
-    assert rig.execution().start_tolerance == 0.005
+    assert rig.execution().start_tolerance == 0.03
     cfg = json.loads((CONFIG / "rig.json").read_text())
     cfg["execution"]["start_tolerance_rad"] = 0.01
     (tmp_path / "rig.json").write_text(json.dumps(cfg))
@@ -365,7 +375,7 @@ def test_drawing_area(rig, tmp_path):
 def test_rules(rig):
     r = rig.rules()
     # press and speed on the paper are the current pen's (graphite_4h, 2026-10-01)
-    assert r.draw_speed == 0.015 and r.press == 0.0035
+    assert r.draw_speed == 0.015 and r.press == 0.0021 and r.landing_speed == 0.003
     assert r.speed_fraction == 0.30 and abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
     assert r.gates == rig.gates()
 
@@ -393,7 +403,7 @@ def test_pen_is_the_current_entry_with_its_name(rig):
     assert pen["name"] == "graphite_4h" == cfg["pens"]["current"]
     assert {k: v for k, v in pen.items() if k != "name"} == {
         k: v for k, v in entry.items() if not k.endswith("note") and k != "source"}
-    assert pen["press_m"] == 0.0035 and pen["force_band_n"] == [0.7, 1.0]
+    assert pen["press_m"] == 0.0021 and pen["force_band_n"] == [0.7, 1.0]
     assert json.loads(json.dumps(pen)) == pen                 # travels in a job header as is
     # the nominal pen is the tool model as built: nothing moved
     for slot in rig.arm_ids:
@@ -700,7 +710,9 @@ def test_the_two_live_arms_2L_and_2R():
     assert two.arm_ids == ("2L", "2R") and two.slot_names == six.slot_names
     assert two.rows == (("2L", "2R"),) and two.leader_sets == {1: ("2R",), 2: ("2L",)}
     assert two.wall_pairs == {1: (), 2: ()}
-    assert len(two.steel) == len(six.steel)                     # the empty hangers stay
+    # the empty hangers of row 1 stay; 3L (a floor arm) and 3R (no arm) have none
+    assert len(six.steel) == 13 + 6 * 4 and len(two.steel) == 13 + 4 * 4
+    assert not any(b.owner in ("3L", "3R") for b in two.steel)
     assert two.row_partner("2R") == "2L" and two.row_partner("1L") is None
     assert tuple(two.drawing_area_m) == (1.72, 0.9)
     assert tuple(two.drawing_area_centre_m) == (0.0, 0.0)
@@ -809,3 +821,26 @@ def test_two_arms_keep_their_marks_and_groups():
     out = subprocess.run([sys.executable, str(DEPLOY / "tools" / "mounted_rig.py"),
                           "--check", str(CONFIG / "two_arms")], capture_output=True)
     assert out.returncode == 0, out.stdout.decode() + out.stderr.decode()
+
+
+def test_the_gel_pen_is_drag_only(tmp_path):
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    cfg["pens"]["current"] = "gel_g2"
+    (tmp_path / "rig.json").write_text(json.dumps(cfg))
+    r = Rig.load(tmp_path)
+    pen = r.pen()
+    assert pen["name"] == "gel_g2" and pen["drag_only"] is True and pen["press_m"] == 0.0025
+    assert r.rules().press == 0.0025 and r.rules().draw_speed == 0.015
+    assert pen["force_cap_n"] == Rig.load(CONFIG).pen()["force_cap_n"]
+
+
+def test_the_hanger_turned_180_degrees(rig):
+    """Site, 2026-10-06: the frame is the drawing turned 180 degrees; the plate centre sits
+    25.15 mm toward table -x of every axis."""
+    for slot in rig.arm_ids:
+        ax = rig.T_table_base(slot)[0, 3]
+        plate = next(b for b in rig.steel if b.name == f"plate{slot}")
+        assert abs(0.5 * (plate.lo_table[0] + plate.hi_table[0]) - (ax - 0.02515)) < 1e-12
+        lo = next(b for b in rig.steel if b.name == f"strut{slot}_minus_x").lo_table[0]
+        hi = next(b for b in rig.steel if b.name == f"strut{slot}_plus_x").hi_table[0]
+        assert abs((ax - lo) - 0.22205) < 1e-12 and abs((hi - ax) - 0.17175) < 1e-12

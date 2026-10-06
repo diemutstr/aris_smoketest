@@ -2,54 +2,57 @@
   "about": {
     "what": "Which robot hangs in which slot of the frame, as of October 2026 (decided 2026-10-02: arms are named by slot; the old prime-number robot ids live on only here). Read by the robot side (robot/), never by the planning code: aris/rig.py does not read site/.",
     "slots_note": "slot = row 1..3 along table y (-1.21, 0, +1.21 m) and L/R by table x (-0.305 / +0.305); see config/rig.json slots.",
-    "mapping_source": "the orchestrator's brief, 2026-10-02: 13 -> 1L, 17 -> 1R, 31 -> 2L, 71 -> 2R, 2 -> 3L, 97 -> 3R. The ids were permuted on the hardware once already; verify every row with `aris-robot identify` before a run.",
+    "mapping_source": "confirmed on site 2026-10-06 (coordinator's field report): 1L = robot 2, 1R = 31, 2L = 97, 2R = 71, 3L = 13 (a floor arm, upright, never controlled by this rig), 3R = 17 (off the table, no arm in the slot). Earlier guesses (2026-10-02/05) are superseded.",
     "ip_source": "robot/site.json `arms` (control-stack briefing 2026-09-09, section 5, arm_registry.py), carried over by robot id. The DDS domain there was the robot id; it is copied as `domain`.",
-    "live_note": "on 2026-10-02 Pete confirmed the two arms under control are the MIDDLE ROW, 2L and 2R (config/two_arms); the other four hang in their slots switched off and are fenced off. The old stack drew the word with robots 97 (left half) and 71 (right half), so those two are 2L and 2R \u2014 which is which is checked on day one with `aris arms` (the address that answers).",
-    "sure_note": "`sure: false` marks a row nobody has checked against the hardware since the permutation; the reason is in `why`.",
-    "orientation": "Confirmed 2026-10-05 from the bases' forward side (the J1 axis is offset toward -x of the plate): Diemut's desk is at the +y end (row 3); standing there facing the table, the L slots (-x) are on her RIGHT. docs/figures/table_orientation.png"
+    "live_note": "the arms under control are the middle row, 2L (robot 97) and 2R (robot 71), config/two_arms. 1L and 1R hang in their slots switched off and are fenced off; 3L is a floor-mounted upright arm and 3R is empty (no hanger steel at either, config/rig.json slots `hanger: false`).",
+    "sure_note": "`sure: true` rows were checked on site on 2026-10-06. `controlled: \"never\"` marks a robot this rig must never drive; `absent: true` a slot with no robot in it (the robot named is kept, with its address, so that the table stays complete).",
+    "orientation": "Corrected 2026-10-06: the frame is the axes sheet turned 180 degrees. The J1 axis is offset 25.15 mm toward table +x of its plate centre (config/rig.json hanger.turned_note). Diemut's desk side and the L/R reading of 2026-10-05 (docs/figures/table_orientation.png) were made with the unturned sheet: re-check them against the drawn crosses."
   },
   "slots": {
     "1L": {
-      "robot": "fr3-13",
-      "ip": "192.168.50.11",
-      "domain": 13,
-      "sure": false,
-      "why": "not checked since the permutation; arm not under control"
-    },
-    "1R": {
-      "robot": "fr3-17",
-      "ip": "192.168.50.16",
-      "domain": 17,
-      "sure": false,
-      "why": "not checked since the permutation; arm not under control"
-    },
-    "2L": {
-      "robot": "fr3-71",
-      "ip": "192.168.50.14",
-      "domain": 71,
-      "sure": false,
-      "why": "live; L slots are on Diemut's RIGHT (drawing frame -x; confirmed 2026-10-05) and robot 71 drew the half on her right, so probably 2L; confirm which address answers here. Robot 71 had no IP on 2026-09-15; .14 is the briefing's guess"
-    },
-    "2R": {
-      "robot": "fr3-97",
-      "ip": "192.168.50.15",
-      "domain": 97,
-      "sure": false,
-      "why": "live; R slots are on Diemut's LEFT and robot 97 drew the half on her left, so probably 2R; confirm which address answers here"
-    },
-    "3L": {
       "robot": "fr3-2",
       "ip": "192.168.50.13",
       "domain": 2,
-      "sure": false,
-      "why": "hangs switched off (fenced); not checked since the permutation"
+      "sure": true,
+      "why": "confirmed on site 2026-10-06; hangs switched off"
     },
-    "3R": {
-      "robot": "unknown",
+    "1R": {
+      "robot": "fr3-31",
       "ip": "192.168.50.12",
       "domain": 31,
-      "sure": false,
-      "why": "hangs switched off (fenced); robot 31 or another \u2014 not checked since the permutation"
+      "sure": true,
+      "why": "confirmed on site 2026-10-06; hangs switched off"
+    },
+    "2L": {
+      "robot": "fr3-97",
+      "ip": "192.168.50.15",
+      "domain": 97,
+      "sure": true,
+      "why": "confirmed on site 2026-10-06; live"
+    },
+    "2R": {
+      "robot": "fr3-71",
+      "ip": "192.168.50.14",
+      "domain": 71,
+      "sure": true,
+      "why": "confirmed on site 2026-10-06; live"
+    },
+    "3L": {
+      "robot": "fr3-13",
+      "ip": "192.168.50.11",
+      "domain": 13,
+      "sure": true,
+      "controlled": "never",
+      "note": "floor-mounted, upright",
+      "why": "confirmed on site 2026-10-06; not one of this rig's hanging arms"
+    },
+    "3R": {
+      "robot": "fr3-17",
+      "ip": "192.168.50.16",
+      "domain": 17,
+      "sure": true,
+      "absent": true,
+      "why": "confirmed on site 2026-10-06: robot 17 is off the table, nothing in the slot"
     }
   }
 }

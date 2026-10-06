@@ -1,7 +1,7 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "d3f144d788cada109dbe1d6c",
+  "source_digest": "99da02c2b98bca44d149eddc",
   "mounted": [
    "2L",
    "2R"
@@ -70,6 +70,7 @@
  },
  "slots": {
   "about": "An arm is named by its SLOT on the frame, not by the robot that hangs there (decided 2026-10-02): rows 1, 2, 3 along table y (-1.21, 0, +1.21 m), L at table x = -0.305, R at +0.305. Which robot hangs in which slot is in site/ (site/aris_2026-10.json) and nowhere in the planning code. Old robot ids: 13 = 1L, 17 = 1R, 31 = 2L, 71 = 2R, 2 = 3L, 97 = 3R.",
+  "hanger_note": "per slot, default true: whether hanger steel (struts, plate, clamp) is there today. Site, 2026-10-06: nothing hangs in 3L (a floor-mounted, upright arm stands there, never controlled by this rig) or 3R (no arm), so false. It counts only for a slot that is not mounted: a mounted slot always has its hanger (this file, with all six mounted, stays the design rig).",
   "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for slot 2L (then arm 31), 2026-09-14 against the seam bars, at the lateral holder tool).",
   "list": [
    {
@@ -214,6 +215,7 @@
    },
    {
     "slot": "3L",
+    "hanger": false,
     "axis_xy_m": [
      -0.305,
      1.2102133333333334
@@ -249,6 +251,7 @@
    },
    {
     "slot": "3R",
+    "hanger": false,
     "axis_xy_m": [
      0.305,
      1.2102133333333334
@@ -337,11 +340,12 @@
   "walls_note": "a wall only between leaders that can reach each other (the diagonal pairs, 1.355 apart); the two end leaders of a column are 2.42 apart and cannot"
  },
  "hanger": {
-  "source": "the steel each arm hangs from, placed relative to its own axis, the same for all six arms (one clocking: every plate sits 25.15 mm toward table +x of its axis; the two columns are not mirrored). Pete, 2026-09-30: placed from the technical drawings, not from his tape. docs/drawings/plan_centre_datum.pdf, sheet 3 of 4 'PLAN, CENTRE DATUM, SIGNED' (2026-09-16), panel D 'STRUT FACE SCHEDULE' and panel B: left column (axis -305.00) strut faces -476.75..-400.55 and -159.15..-82.95, plate -392.76..-166.94; right column (axis +305.00) strut faces +133.25..+209.45 and +450.85..+527.05, plate +217.24..+443.06 (mm, table x). So: axis to outside face 171.75 on -x and 222.05 on +x, pair 393.8 outside to outside, 241.4 clear between. Struts 3 x 6 in, long side along y, centred on the row line.",
+  "source": "the steel each arm hangs from, placed relative to its own axis, the same for all six arms (one clocking: every plate sits 25.15 mm toward table -x of its axis since the frame was found turned 180 degrees against the sheet, see turned_note; the two columns are not mirrored). Pete, 2026-09-30: placed from the technical drawings, not from his tape. docs/drawings/plan_centre_datum.pdf, sheet 3 of 4 'PLAN, CENTRE DATUM, SIGNED' (2026-09-16), panel D 'STRUT FACE SCHEDULE' and panel B: left column (axis -305.00) strut faces -476.75..-400.55 and -159.15..-82.95, plate -392.76..-166.94; right column (axis +305.00) strut faces +133.25..+209.45 and +450.85..+527.05, plate +217.24..+443.06 (mm, table x). So: axis to outside face 171.75 on -x and 222.05 on +x, pair 393.8 outside to outside, 241.4 clear between. Struts 3 x 6 in, long side along y, centred on the row line.",
   "strut_size_x_m": 0.0762,
   "strut_size_y_m": 0.1524,
-  "axis_to_minus_x_outer_face_m": 0.17175,
-  "axis_to_plus_x_outer_face_m": 0.22205,
+  "axis_to_minus_x_outer_face_m": 0.22205,
+  "axis_to_plus_x_outer_face_m": 0.17175,
+  "turned_note": "the drawing's frame turned 180 degrees (site, 2026-10-06: confirmed by the artist with drawn crosses, and with the sheet's offsets 1L planned through its own inner strut). The slot positions are symmetric and do not change; the asymmetric hanger numbers turn: axis to outside face 222.05 mm on -x and 171.75 mm on +x (the sheet's 171.75 / 222.05 swapped), and the plate centre now sits 25.15 mm toward table -x of the J1 axis, i.e. the J1 axis is offset 25.15 mm toward table +x of the plate centre (on the sheet it was toward -x). BASE YAW KEPT (R_table_base unchanged): the site drew legible letters with it, which a 180-degree yaw error would have turned upside down; so with the turned hanger numbers the model's J1 axis sits 25 mm toward the base's BACK of the plate centre, the opposite of an FR3's footprint. The drawing itself flagged the plate-offset direction as an open item (sheet 3, panel C). Someone on site should look at which way the base connectors face; until then the mirrored steel and the kept yaw are what the hardware confirmed.",
   "strut_bottom_z_m": 0.90502,
   "strut_top_z_m": 1.62362,
   "strut_source": "section and x positions: sheet 3 of 4, plan_centre_datum.pdf, panel D. Bottom: the old model (system_model POST_OVER) has the posts end 34.98 mm below the plate underside; nobody will measure it, so on Pete's instruction (2026-09-30) every strut is made 0.030 longer to be conservative: 64.98 mm below the plate underside (0.970 - 0.06498). Top: old system_model GRID_U, the runway underside 1.62362.",
@@ -349,8 +353,8 @@
   "plate_size_y_m": 0.19,
   "plate_bottom_z_m": 0.97,
   "plate_top_z_m": 0.9827,
-  "plate_centre_offset_x_m": 0.02515,
-  "plate_source": "size: old system_model PLATE (drawing down_plate 225.82 x 190 x 12.7 mm); its underside is the mount plane. Position: sheet 3 of 4, panel D, plate centre 25.15 mm toward table +x of the axis (8.0 mm free to each strut).",
+  "plate_centre_offset_x_m": -0.02515,
+  "plate_source": "size: old system_model PLATE (drawing down_plate 225.82 x 190 x 12.7 mm); its underside is the mount plane. Position: sheet 3 of 4, panel D, plate centre 25.15 mm from the axis (8.0 mm free to each strut), toward table -x because the frame is the sheet turned 180 degrees (see turned_note).",
   "clamp_size_x_m": 0.226,
   "clamp_size_y_m": 0.1524,
   "clamp_bottom_z_m": 0.9827,
@@ -591,7 +595,7 @@
  },
  "drawing": {
   "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now). The speed on the paper and the press belong to the pen: pens.table.<pen>.speed_m_per_s and press_m (2026-10-02).",
-  "landing_speed_m_per_s": 0.01,
+  "landing_speed_m_per_s": 0.003,
   "landing_speed_note": "the pen tip's speed on a lower as it meets the paper: Diemut's landing rate on the hardware (10 mm/s); a fast landing against the soft normal spring spikes the force (orchestrator, 2026-10-01)",
   "min_piece_m": 0.01,
   "speed_fraction": 0.3,
@@ -603,7 +607,8 @@
   "table": {
    "graphite_4h": {
     "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule). Force numbers (mode B only): Diemut's hardware tests, control-stack briefing 2026-09-09 sections 9 and 10, moved here from robot/site.json 2026-10-01. A gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N.",
-    "press_m": 0.0035,
+    "press_m": 0.0021,
+    "press_measured_note": "0.0021 is what drew on 2L/2R (site, 2026-10-06); 0.0035 before",
     "press_note": "the drawing surface lies this far below the measured paper: with position control the pen is pressed into the paper by planning it there",
     "speed_m_per_s": 0.015,
     "speed_note": "speed of the tip along a line on the paper",
@@ -623,12 +628,34 @@
     "servo_ki_per_s": 1.0,
     "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
     "servo_trim_max_n": 1.0
+   },
+   "gel_g2": {
+    "source": "gel pen G2 in the lateral holder (site, 2026-10-06). A gel pen skids when pushed and draws when pulled: drag_only tells the planner to draw it only pulled. Length and capsule as the graphite until measured; force block copied from graphite_4h (a gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N in Diemut's tests).",
+    "press_m": 0.0025,
+    "speed_m_per_s": 0.015,
+    "tip_length_nominal_m": 0.02,
+    "capsule_radius_m": 0.005,
+    "drag_only": true,
+    "force_band_n": [
+     0.7,
+     1.0
+    ],
+    "force_band_note": "mode B: intensity 0..1 maps linearly onto this band; tone is force (about 0.04 N per step of 9)",
+    "force_levels": 9,
+    "force_cap_n": 3.5,
+    "force_ramp_m": 0.002,
+    "force_ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
+    "lift_ramp_s": 0.2,
+    "servo_ki_per_s": 1.0,
+    "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
+    "servo_trim_max_n": 1.0
    }
   }
  },
  "execution": {
   "source": "what the executor checks before it runs a motion (orchestrator, 2026-09-30)",
-  "start_tolerance_rad": 0.005,
+  "start_tolerance_rad": 0.03,
+  "start_tolerance_measured_note": "0.005 until 2026-10-06; 0.03 from the hardware: an arm holding position drifts between motions by more than 0.005 (measured on 2L/2R, site 2026-10-06)",
   "start_tolerance_note": "per joint: what a joint trajectory controller accepts before it starts; the executor refuses a motion whose start is further than this from the measured configuration in any joint"
  },
  "checker": {

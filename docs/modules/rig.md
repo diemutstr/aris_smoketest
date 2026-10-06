@@ -28,7 +28,7 @@ like `"2R"`.
 | `obstacles_for(a, phase)` | `obstacles` for a moving arm, with the parked arms it can reach (always its row partner) and the walls it stands next to |
 | `obstacles(a, parked=(), walls=(), for_planning=True)` | everything `a` must stay clear of |
 | `gates()` | the planners' `Gates`: joint-limit margin 0.15 rad, smallest singular value 0.04, self margin 0.020 + 0.003 |
-| `execution()` | what the executor checks before a motion: `start_tolerance`, 0.005 rad per joint |
+| `execution()` | what the executor checks before a motion: `start_tolerance`, 0.03 rad per joint (0.005 until 2026-10-06: a holding arm drifts more, measured on site) |
 | `drawing_area_m`, `drawing_area_centre_m` | the admissible drawing area, x by y (1.56 x 3.56 on the full rig), and its centre in the table frame ([0, 0] when `rig.json` has none). Written by the system planner from its maps; the area is None if absent |
 | `leaders(phase)`, `row_partner(a)` | (1L, 2R, 3L) in phase 1, (1R, 2L, 3R) in phase 2; rows 1L-1R, 2L-2R, 3L-3R |
 
@@ -42,10 +42,15 @@ An arm is named by its place on the frame, not by the robot that hangs there (de
 that the names in `rig.json` are well formed, used once, and agree with the axes: L at negative
 x, R at positive x, rows numbered in the order of y.
 
-The old robot ids map as 13 = 1L, 17 = 1R, 31 = 2L, 71 = 2R, 2 = 3L, 97 = 3R. That table, with
-the robots' addresses, is `site/aris_2026-10.json`, read only by the robot side. Every row in it
-is marked unverified: the robots were permuted on the hardware once already, and robot 71 had no
-address on 2026-09-15.
+Which robot is in which slot is in `site/aris_2026-10.json`, read only by the robot side.
+Confirmed on site 2026-10-06: 1L = robot 2, 1R = 31, 2L = 97 and 2R = 71 (the live pair), 3L =
+13, a floor-mounted upright arm that this rig never drives (`controlled: "never"`), and 3R empty
+(robot 17 is off the table, `absent: true`).
+
+A slot entry in `rig.json` may say `"hanger": false`: no hanger steel there today. 3L and 3R say
+so. It counts only for a slot that is not mounted (a mounted arm always hangs from its hanger;
+`config/rig.json` with all six mounted stays the design rig), so it changes the two-arm rig and
+not the six-arm one.
 
 ## Frames
 
@@ -103,15 +108,21 @@ All steel is axis-aligned boxes in the table frame. Every box has a source note.
 
 | part | boxes | numbers from |
 |---|---|---|
-| hanging struts | 2 per slot, 0.0762 x 0.1524 section (long side along y) | the technical drawing (Pete, 2026-09-30): `docs/drawings/plan_centre_datum.pdf`, sheet 3, panel D. For every arm, axis to outside face 0.17175 on −x and 0.22205 on +x (393.8 mm outside to outside, 241.4 mm clear between). Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
-| mounting plate | 1 per slot, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centre 25.15 mm toward table +x of the axis, for every arm (sheet 3, panel D). |
+| hanging struts | 2 per slot, 0.0762 x 0.1524 section (long side along y) | the technical drawing (Pete, 2026-09-30): `docs/drawings/plan_centre_datum.pdf`, sheet 3, panel D. Turned 180° (below): for every arm, axis to outside face 0.22205 on −x and 0.17175 on +x (393.8 mm outside to outside, 241.4 mm clear between). Top at the runway underside (old model). Bottom 65 mm below the plate underside (0.905): the old model's 35 mm plus 30 mm, on Pete's instruction (2026-09-30), to be conservative because nobody will measure it. |
+| mounting plate | 1 per slot, 0.2258 x 0.190 x 0.0127 | old model (drawing). Centre 25.15 mm toward table −x of the axis, for every arm (sheet 3, panel D, turned). |
 | clamp stack | 1 per slot, on the plate | old model (drawing) |
 | runways | 3, one double beam per row at 1.624 to 1.700 | old model (drawing) |
 | seam bars | 2, beside the table at y = 0, from the table top to the runway | old model, "representative, not measured" (Pete, 2026-09-14) |
 | perimeter rails and corner legs | 4 + 4 | old model (rails from the drawing, legs assumed) |
 
+**The frame is the drawing turned 180°** (site, 2026-10-06: confirmed with drawn crosses, and
+with the drawing's offsets 1L planned through its own inner strut). The slot positions are
+symmetric and do not change; the hanger numbers that are not do: the −x and +x outside faces
+swap (222.05 mm on −x, 171.75 mm on +x) and the plate centre moves to 25.15 mm toward table −x
+of the axis, so the J1 axis sits 25.15 mm toward table +x of its plate.
+
 **Hangers follow the calibration.** Every slot has its hanger, whether or not an arm hangs
-from it today (the 2L hanger is steel only on the two-arm rig). A mounted arm is bolted to its
+from it today (the row 1 hangers are steel only on the two-arm rig; 3L and 3R have none, see "Slots"). A mounted arm is bolted to its
 plate, so its hanger is placed from the arm's *calibrated* axis: the x and y of its calibrated
 `T_table_base` when the base part of its calibration applies, the nominal axis otherwise. Seen
 from the arm, its own hanger therefore never moves; seen from the table and from the
@@ -130,7 +141,7 @@ the old body model and 1.028 m with the new one. Each arm keeps 16 to 23 boxes.
 
 **Compared with the old `spec.static_obstacles()`.** The seam bars are identical. The old set had
 each neighbour's plate as a 0.226 x 0.190 x 0.050 block centred on the axis. It is now the
-drawing's 12.7 mm plate, 25.15 mm toward +x of the axis, as on the drawing. The old set had each neighbour's "boom" as one 0.2 m square
+drawing's 12.7 mm plate, 25.15 mm off the axis (toward −x since the frame was found turned). The old set had each neighbour's "boom" as one 0.2 m square
 column up to 2.34 m. Those are replaced by the two struts of the drawing, and the runway is at the
 drawing's 1.62 m. The old set also had 4 "body column" boxes per neighbour (20 per arm). Those
 are arms, not steel. They now arrive as a parked arm's capsules or stay behind a wall. The old set
@@ -146,14 +157,14 @@ Each park against its steel, the paper and itself. The first four columns come f
 body model and are plain distances (demanded: paper 0.020, lifted pen 0.020, self 0.020, steel 0.050). The
 last column comes from the new kernel and is measured beyond each obstacle's demanded margin:
 
-| slot | paper (body) | pen tip height | self | steel, old body model (tape struts, 35 mm) | everything, new kernel, beyond the margin |
+| slot | paper (body) | pen tip height | self | steel, old body model (tape struts, 35 mm) | everything, new kernel, beyond the margin (frame turned, 2026-10-06) |
 |---|---|---|---|---|---|
-| 1L | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.119 (link 2, own −x strut) |
-| 1R | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.123 (link 2, own −x strut) |
+| 1L | 0.250 | 0.300 | 0.123 | 0.179 (own strut) | +0.136 (link 2, own +x strut) |
+| 1R | 0.250 | 0.300 | 0.153 | 0.179 (own strut) | +0.127 (link 2, own −x strut) |
 | 2L | 0.300 | 0.350 | 0.126 | 0.080 (seam bar W) | +0.079 (link 6, seam bar W) |
-| 2R | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.151 (link 2, own +x strut) |
-| 3L | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.131 (link 2, own +x strut) |
-| 3R | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.130 (link 2, own −x strut) |
+| 2R | 0.150 | 0.200 | 0.133 | 0.179 (own strut) | +0.137 (link 2, own +x strut) |
+| 3L | 0.250 | 0.300 | 0.124 | 0.179 (own strut) | +0.115 (link 2, own +x strut) |
+| 3R | 0.250 | 0.300 | 0.114 | 0.179 (own strut) | +0.144 (link 2, own −x strut) |
 
 Every park keeps the demanded clearances, links 0 and 1 not counted (see "Link 1").
 
@@ -180,7 +191,7 @@ With 2L's base calibrated 20 mm off in x and y (its hanger moving with it) the n
 +0.031, +0.304, +0.180, +0.206, +0.488: the own-hanger clearance does not change, because the
 two are bolted together.
 
-With the struts where the drawing puts them and 30 mm longer, link 1 passes the end of the −x strut
+With the struts where the drawing puts them and 30 mm longer, link 1 passes the end of the near strut (+x since the turn)
 with 50.8 to 62.4 mm of room. That is even 0.8 mm beyond the 0.050 steel clearance. But it is not
 beyond 0.050 plus the 0.003 planning allowance: that fails on a third of the joint 1 range
 (−2.73 to −0.92 rad). So the exemption stays: without it, every planner would refuse those joint 1
@@ -190,7 +201,7 @@ angles.
 bands about the axis, radius 0.171 to 0.177 near the mounting face. It overlaps its own steel
 (distances; negative is overlap):
 
-| link 0 band (base z, m) | −x strut | +x strut | plate |
+| link 0 band (base z, m) | near (+x) strut | far (−x) strut | plate |
 |---|---|---|---|
 | link0.0, −0.238 to −0.075: the cable connector stub, above the mounting face | −0.081 | −0.031 | −0.115 |
 | link0.1, −0.075 to 0 | −0.080 | −0.030 | −0.176 |
@@ -234,8 +245,8 @@ and `drawing`, and `rig.gates()` and `rig.rules()` are the one source for them.
 | smallest singular value of the tip Jacobian | 0.04 | Pete, 2026-09-30, lowered from 0.08. It was the only gate that limited reach at the paper, costing 2 cm at full stretch, and self-collision passes at the rim |
 | pen lean | 15° | |
 | speed on the paper | 0.015 m/s | the pen's (below) |
-| press | 0.0035 m | the pen's (below) |
-| landing speed | 0.010 m/s | |
+| press | 0.0021 m | the pen's (below) |
+| landing speed | 0.003 m/s | 0.010 until 2026-10-06 (site) |
 | lift height | 0.025 m | to be replaced by the pen's clearance to the paper + 2 mm |
 | shortest piece | 0.010 m | |
 | speed fraction | 0.30 | of the joint speed limits |
@@ -243,15 +254,19 @@ and `drawing`, and `rig.gates()` and `rig.rules()` are the one source for them.
 ## Pens
 
 `rig.json` has a `pens` block: `current` names the pen that is in, `table` holds every pen by
-name. Today there is one, `graphite_4h` (2 mm 4H graphite in the lateral holder):
+name. `graphite_4h` (2 mm 4H graphite in the lateral holder) is in:
 
 | | value | used by |
 |---|---|---|
-| `press_m` | 0.0035 | `rules().press`: the system planner puts the drawing's points this far below the paper (position control presses by planning there) |
+| `press_m` | 0.0021 (what drew on 2L/2R, site 2026-10-06; 0.0035 before) | `rules().press`: the system planner puts the drawing's points this far below the paper (position control presses by planning there) |
 | `speed_m_per_s` | 0.015 | `rules().draw_speed`, the speed of the tip along a line |
 | `tip_length_nominal_m` | 0.020 | the tool model: how far the graphite stands past the cap's outer face. The kernel's tool is built for 0.020 (`MODEL_TIP_LENGTH` in `rig.py`); another length moves the tip along the pen axis by the difference |
 | `capsule_radius_m` | 0.005 | the pen capsule's radius in the tool model |
 | `force_band_n`, `force_levels`, `force_cap_n`, `force_ramp_m`, `lift_ramp_s`, `servo_ki_per_s`, `servo_trim_max_n` | 0.7-1.0 N, 9, 3.5 N, 0.002 m, 0.2 s, 1.0 /s, 1.0 N | mode B only (the impedance controller): the operator PC reads them from the job header |
+
+The second pen, `gel_g2`, presses 0.0025 at 0.015 m/s with the same length, capsule and force
+block, and carries `"drag_only": true`: a gel pen in the lateral holder skids when pushed and
+draws when pulled, and the planner uses the flag to draw it only pulled.
 
 `pen()` returns the current entry (notes and source left out) plus `"name"`; the server copies it
 into every job header. The drawing file stays pen-agnostic.
@@ -319,9 +334,10 @@ have are ignored, because the calibration folder is shared with the rigs of fewe
 
 `tools/mounted_rig.py --arms 2L,2R --area 1.72 0.9 --centre 0 0 --out config/two_arms` writes
 `config/two_arms/rig.json`: `config/rig.json` with only 2L and 2R mounted, a drawing area of
-1.72 x 0.9 m about the table centre, fences toward rows 1 and 3 (their robots hang there
-switched off), the marks both of whose sharers are controlled (A and B) and the mark groups made
-of controlled slots only (`row2`). Every hanger stays. In a row with one controlled arm, the
+1.72 x 0.9 m about the table centre, fences toward rows 1 and 3 (1L and 1R hang there switched
+off; 3L is the floor arm, whose body stands at the row 3 end, beyond the y = +0.605 fence, as
+long as it stays folded in its own row; 3R is empty), the marks both of whose sharers are controlled (A and B) and the mark groups made
+of controlled slots only (`row2`). Every hanger stays except where a slot has none (3L, 3R). In a row with one controlled arm, the
 switched-off arm beside it would get a fence at x = 0 (`fence_col_minus_x` or
 `fence_col_plus_x`, written once for several rows). The tool prints the area and its centre and
 reminds you that the area must lie inside the area the drawable maps give about that same
@@ -334,21 +350,22 @@ centre (the system planner computes it; the server refuses to start otherwise).
   2026-09-30. There will be no measured holder height, so the CAD and pen models are used as they
   are. It is also the limit on how far a pen may wear.
 - **The struts are placed from the drawing, and Pete's tape disagrees with it.** On 2026-09-16 the
-  tape read 156 and 240 mm from the axis to the two outside faces. The drawing says 171.75 (−x)
-  and 222.05 (+x), a 42 mm offset against the drawing's 25.15. Pete decided on 2026-09-30 to use
+  tape read 156 and 240 mm from the axis to the two outside faces. The drawing says 171.75 and
+  222.05 (now −x 222.05 and +x 171.75, the frame being the drawing turned), a 42 mm offset
+  against the drawing's 25.15. Pete decided on 2026-09-30 to use
   the drawing (sheet 3, panel C lists the disagreement).
 - The strut heights, the plate, the clamp, the runways, rails and legs are the old drawing-based
   model. The seam bars are "representative", and the corner legs were assumed in the old model.
 - **How far the hanging struts reach below the mounting plate is not measured, and will not be.**
   The old model says 35 mm. On Pete's instruction the struts are 30 mm longer, 65 mm below the
-  plate, to be conservative. Link 1 then passes the −x strut's end with 50.8 to 62.4 mm of room,
+  plate, to be conservative. Link 1 then passes the near strut's end (+x since the turn) with 50.8 to 62.4 mm of room,
   against the 0.020 it must keep to its own mount (see "Link 1").
 - The park configurations are the old home parks. They were not searched for the new phase
   scheme.
 
 ## Tests
 
-`tests/test_rig.py`: 48 tests, about 5 s in all. They cover the poses
+`tests/test_rig.py`: 50 tests, about 5 s in all. They cover the poses
 against the old code, the walls, the steel, the parks, link 1, the pens, the slot checks, the
 two calibration parts, hangers following the calibration, and the two-arm rig with its fences
 (for the planner and the checker), and the calibration marks.

@@ -256,8 +256,10 @@ class Rig:
             slot = a["slot"]
             axis = np.asarray(a["axis_xy_m"], float)
             if not a.get("mounted", True):
-                # The hanger is bolted to the frame whether or not an arm hangs from it today.
-                hangers += _hanger_boxes(slot, axis, cfg["hanger"])
+                # The hanger is bolted to the frame whether or not an arm hangs from it today,
+                # unless the slot has none (`"hanger": false`).
+                if a.get("hanger", True):
+                    hangers += _hanger_boxes(slot, axis, cfg["hanger"])
                 continue
             T = np.eye(4)
             T[:3, :3] = np.asarray(a["R_table_base"], float)
