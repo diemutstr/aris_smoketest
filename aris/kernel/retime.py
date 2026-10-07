@@ -107,8 +107,8 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     s: np.ndarray | None = None, *, deviation: float = 1.5e-4,
                     tip_budget_m: float | None = None, tip_of=None,
                     accel_fraction: float = 0.9, jerk_fraction: float = 0.9,
-                    blend_time: float = 0.025, knot_dt: float = 0.05, smooth: bool = False
-                    ) -> RetimeResult | Refusal:
+                    blend_time: float = 0.025, knot_dt: float = 0.05, smooth: bool = False,
+                    speed_cap=None) -> RetimeResult | Refusal:
     """`retime`, plus what it did.
 
     deviation       rad, joint-space distance allowed between the flown path and the input at
@@ -132,6 +132,9 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     `deviation` is then measured from the spline, the pen from the polyline
                     through the input's pen positions.  False (default): the samples are the
                     corners of a polyline (free-space paths); the numbers are those of before.
+    speed_cap       with `s`: a function u -> cap (m/s), u the arc length from s[0], that
+                    replaces rules.draw_speed as the cap along the path (each cell takes the
+                    smallest value at its ends and middle; inf: no cap there).
     """
     prepared = _prepare(path, limits, rules, s)
     if isinstance(prepared, Refusal):
@@ -151,7 +154,9 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
         rounded = round_corners(u_knots, q_knots, 0.9 * deviation, tip_of, tip_share)
     if isinstance(rounded, str):
         return Refusal("cannot_smooth", rounded)
-    cap = rules.draw_speed if s is not None else None
+    if speed_cap is not None and s is None:
+        return Refusal("bad_rules", "speed_cap needs s")
+    cap = speed_cap if speed_cap is not None else (rules.draw_speed if s is not None else None)
     nodes, x, rates = speed.profile(rounded, *targets, cap, blend_time, tip_of)
     t_fine, u_fine = _time_law(nodes, x, blend_time)
     if isinstance(t_fine, Refusal):

@@ -22,7 +22,7 @@ from arm_cases import drain  # noqa: E402
 from aris.sequencer.draw import draw_motions  # noqa: E402
 from aris.sequencer.guard import Guard  # noqa: E402
 from aris.types import Line  # noqa: E402
-from aris.sequencer.lift import end_lift, lift, lift_height, trim
+from aris.sequencer.lift import LANDING_WINDOW_M, end_lift, lift, lift_height, trim
 from aris.sequencer.lift import reverse  # noqa: E402
 
 
@@ -75,15 +75,23 @@ def test_lift_off_goes_straight_up_and_the_set_down_lands_slowly(problem):
     assert guard.hold(up.q_up, touching=False) is None
     # the lift keeps its fast timing (the joint limits alone): well under the landing-speed time
     assert up.up.traj.t[-1] < 0.5 * lift_height(paper, opt.lift_extra) / rules.landing_speed
-    # the set-down: the same path down, the pen never faster than the landing speed
+    # the set-down: the same path down, the pen never faster than the landing speed over the
+    # last LANDING_WINDOW_M before the paper, faster above, in one motion that does not stop
     td = np.linspace(0, up.down.traj.t[-1], int(up.down.traj.t[-1] * 4000) + 2)
     tip_d = arm.tip(sample(up.down.traj, td)[0])
-    speed = np.linalg.norm(np.diff(tip_d, axis=0), axis=1) / np.diff(td)
-    assert speed.max() <= rules.landing_speed * 1.005, speed.max()
+    step = np.linalg.norm(np.diff(tip_d, axis=0), axis=1)
+    speed = step / np.diff(td)
+    to_go = np.concatenate([np.cumsum(step[::-1])[::-1], [0.0]])[:-1]   # pen path left, per step
+    window = to_go <= LANDING_WINDOW_M + 1e-4
+    assert speed[window].max() <= rules.landing_speed * 1.005, speed[window].max()
+    assert speed[~window].max() > 5.0 * rules.landing_speed, speed[~window].max()
+    inner = (td[1:] > 0.05) & (td[1:] < td[-1] - 0.05)
+    assert speed[inner].min() > 0.2 * rules.landing_speed       # no stop at the junction
     fall = (tip_d - tip_d[-1]) @ n
     off = np.linalg.norm((tip_d - tip_d[-1]) - fall[:, None] * n, axis=1)
     assert np.all(np.diff(fall) < 1e-6) and off.max() < 3e-4      # straight down, only down
-    assert up.down.traj.t[-1] > lift_height(paper, opt.lift_extra) / rules.landing_speed
+    assert up.down.traj.t[-1] > LANDING_WINDOW_M / rules.landing_speed
+    assert up.down.traj.t[-1] < 3.0, up.down.traj.t[-1]          # 20 mm down: was 6.7 s at 3 mm/s
 
 
 def test_rule_2_shortens_the_piece_until_rule_1_works(problem):

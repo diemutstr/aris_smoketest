@@ -16,7 +16,7 @@ The pen clearance is the paper's lifted-pen margin (rig.json `pen_lifted_to_pape
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -25,6 +25,8 @@ from aris.sequencer.guard import Guard
 from aris.types import DrawPlan, DrawRules, JointPath, Motion, Piece, Plane, Refusal, Trajectory
 
 SAME = 1e-6           # rad: the IK answer that reproduces the drawing configuration itself
+LANDING_WINDOW_M = 0.005   # m of pen path before the paper flown at the landing speed
+LANDING_DT = 0.01          # s, longest gap between the samples of a set-down
 
 
 @dataclass(frozen=True)
@@ -34,7 +36,7 @@ class Lift:
     q_up: np.ndarray
     up: Motion                        # kind "lift": q_draw -> q_up
     down: Motion                      # kind "lower": q_up -> q_draw, the same path backwards,
-                                      # timed to land at `rules.landing_speed`
+                                      # its last LANDING_WINDOW_M at `rules.landing_speed`
 
 
 def lift_height(paper: Plane, extra: float) -> float:
@@ -143,21 +145,35 @@ def _lift(arm, guard, paper, q_draw, rules, extra, step, max_jump, spin, turn7) 
 
 
 def _lower(arm, guard, path, rules):
-    """The set-down along the lift's path backwards, timed so that the pen never goes faster
-    than `rules.landing_speed`: the pen's path length along the descent is the arc length, the
-    landing speed its cap (a fast landing against the controller's soft spring spikes the
-    force).  -> Trajectory or why not."""
-    tip = arm.tip(path)
-    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tip, axis=0), axis=1))])
-    res = retime_detailed(JointPath(path), arm.limits,
-                          replace(rules, draw_speed=rules.landing_speed), s=s, smooth=True,
-                          tip_of=arm.tip)
+    """The set-down along the lift's path backwards: the last `LANDING_WINDOW_M` of the pen's
+    path before the paper never faster than `rules.landing_speed` (a fast landing trips the
+    reflex or spikes the force), the descent above it at the lift's own speed (the joint
+    limits alone), in one motion.  -> Trajectory or why not."""
+    s = _tip_length(arm, path)
+    # knot_dt: the retimer places samples by changes relative to the motion's top speed, so the
+    # slow landing under a fast descent got too few and its cubic overshot the cap by 4 % as it
+    # came to rest; a sample every 10 ms keeps it within 0.5 %.
+    res = retime_detailed(JointPath(path), arm.limits, rules, s=s, smooth=True, tip_of=arm.tip,
+                          speed_cap=landing_cap(s[-1], rules.landing_speed), knot_dt=LANDING_DT)
     if isinstance(res, Refusal):
         return f"the set-down cannot be timed: {res.reason} {res.detail}"
     flown = guard.flown(res.traj, touching=True)
     if flown < 0.0:
         return f"the set-down comes {-flown * 1e3:.2f} mm too close"
     return res.traj
+
+
+def _tip_length(arm, path) -> np.ndarray:
+    """The pen tip's path length from the first sample, per sample."""
+    tip = arm.tip(path)
+    return np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tip, axis=0), axis=1))])
+
+
+def landing_cap(length: float, landing_speed: float):
+    """The retimer's speed cap for a descent of `length` metres of pen path: `landing_speed`
+    over the last `LANDING_WINDOW_M`, none above."""
+    start = length - LANDING_WINDOW_M
+    return lambda u: np.where(np.asarray(u) >= start, landing_speed, np.inf)
 
 
 def end_lift(arm, guard, paper: Plane, plan: DrawPlan, end: int, rules: DrawRules, opt):

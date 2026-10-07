@@ -82,6 +82,9 @@ def profile(r: Rounded, v_max, a_max, j_max, cap, blend_time, tip_of=None):
     probe = np.empty(2 * len(nodes) - 1)
     probe[0::2], probe[1::2] = nodes, 0.5 * (nodes[1:] + nodes[:-1])
     d1, d2, d3 = evaluate(r, probe, orders=(1, 2, 3))
+    if callable(cap):                       # a cap along the path: each cell its smallest
+        c = np.asarray(cap(probe), float)
+        cap = np.minimum.reduce([c[0:-2:2], c[1::2], c[2::2]])
     pen_gain = None
     if cap is not None and tip_of is not None:
         tips = tip_of(evaluate(r, probe)[0])

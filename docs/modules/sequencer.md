@@ -26,7 +26,7 @@ Per piece it hands out four motions:
 | motion | kind | what |
 |---|---|---|
 | move | free | from where the arm is to the piece's first lift-off configuration (free-space planner) |
-| set-down | lower | the pen straight down onto the paper along the lift-off's path, landing at 10 mm/s |
+| set-down | lower | the pen straight down onto the paper along the lift-off's path, its last 5 mm at the landing speed |
 | drawing | draw | the piece, pen on the paper |
 | lift-off | lift | the pen straight up by the pen clearance plus 2 mm (22 mm today) at the end of the piece |
 
@@ -67,11 +67,8 @@ Decided by Pete, 2026-09-30: as simple and reliable as possible.
 The pen clearance is rig.json's `pen_lifted_to_paper_m`: the free-space planner keeps the pen
 that far above the paper, so the lift is just enough to hand over to it. Today 20 mm (until the
 calibration is proven on the rig; then 3 mm), so the lift is 22 mm. The set-down (motion kind `lower`) follows the lift-off's path at the
-piece's first configuration backwards, timed so that the pen never goes faster than
-`rules.landing_speed` (rig.json `drawing.landing_speed_m_per_s`, 10 mm/s): the pen's path
-length along the descent is the arc length and the landing speed its cap, as on the hardware,
-where a fast landing against the controller's soft spring spikes the force. A 22 mm set-down
-takes 2.3 s instead of 0.3. The lift-off (kind `lift`) keeps its fast timing: leaving the paper
+piece's first configuration backwards in one motion: only the last 5 mm of pen path before the paper (`LANDING_WINDOW_M`) is capped at
+`rules.landing_speed` (rig.json, 3 mm/s), the descent above at the lift's speed (2026-10-07: 22 mm down 2.1 s instead of 7.5; word, arm 2L, 238.6 s on the rig instead of 317.1). The lift-off (kind `lift`) keeps its fast timing: leaving the paper
 fast does no harm. "Checked as flown": every IK sample
 inside the joint-limit margin and above the singular-value gate, the top configuration one the
 arm can hold with the pen judged against the paper (what the free-space planner asks of a
