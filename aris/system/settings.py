@@ -13,6 +13,9 @@ class Settings:
 
     # ---- the allocation
     sample_step: float = 0.004     # m between the points of a line judged against the maps
+    # With a measured paper surface, a line is handed to its arm with points at most this far
+    # apart, each at the surface's height there (a straight segment would cut through a bump).
+    surface_step: float = 0.01
     # Law 3: a stretch goes to a fill phase only when the leader phases hold less than this
     # share of it.
     leader_share: float = 0.8

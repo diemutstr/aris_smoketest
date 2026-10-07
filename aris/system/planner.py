@@ -35,7 +35,7 @@ from aris.system.phases import phases as all_phases
 from aris.system.run import ArmJob, run_phase
 from aris.system.settings import Settings
 from aris.system.stretch import Stretch, of_line
-from aris.types import DrawRules, Leftover, Line, Motion, Piece, Refusal, Slot
+from aris.types import DrawRules, Leftover, Line, Motion, Piece, Slot
 
 
 
@@ -82,7 +82,7 @@ class Report:
     wall: float = 0.0
     first_wall: float = -1.0    # s from the call to the first motion
     drawing_centre: np.ndarray | None = None         # (2,) m, its centre (table frame)
-    drawing_area: np.ndarray | None = None           # (2,) m, rig.json's, checked against the maps
+    drawing_area: np.ndarray | None = None           # (2,) m, the maps' area about that centre
     # the tightest checked clearance over every motion (m beyond the demanded one), and where
     tightest: float = float("inf")
     tightest_at: str = ""
@@ -117,17 +117,19 @@ def start_configs(rig, arm_configs, first_active) -> dict:
 
 def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir=None,
          workers: int = 1, settings: Settings | None = None, report: Report | None = None,
-         verify=None):
+         verify=None, surface=None):
     """Yields (phase name, arm id, Motion) as the arm planners produce them; returns the
-    leftovers, or a Refusal (before anything is planned) when rig.json has no drawing area, when
-    the maps disagree with it by more than a grid cell, or when a point of the drawing lies
-    outside it.  `rules`: default `rig.rules()`, the only source.
+    leftovers.
+    `rules`: default `rig.rules()`, the only source.
     `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
     stands (default: its park).  `cache_dir`: where the drawable maps and the local planner's
     kinematic table are kept.  `workers`: processes (map building, arms of a phase).
     `verify(slot, phase, motion, q_before) -> dict`: the independent checker, picklable; each
     arm planner gets it with its slot and phase bound and hands on only motions that passed.
-    None: nothing is checked here."""
+    None: nothing is checked here.
+    `surface`: the measured paper (`calib.paper.Surface`, anything with `z(x, y)`): each point is
+    drawn at `surface.z(x, y) - rules.press` instead of `paper_z - rules.press`.  The drawable
+    maps and the clearances keep the flat paper."""
     cfg = settings or Settings()
     rules = rig.rules() if rules is None else rules
     rep = report if report is not None else Report()
@@ -139,27 +141,12 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
     maps = maps_mod.load_or_build(rig, phases, rules.gates, cfg, cache_dir, workers, rules.press)
     rep.map_cpu, rep.map_wall = _cpu() - c0, time.perf_counter() - w0
     rep.coverage = maps_mod.coverage(maps, phases)
-    file_area = getattr(rig, "drawing_area_m", None)
-    if file_area is None:
-        return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
-    rep.drawing_area = np.asarray(file_area, float).reshape(2)
-    rep.drawing_centre = np.asarray(getattr(rig, "drawing_area_centre_m", None)
-                                    if getattr(rig, "drawing_area_centre_m", None) is not None
-                                    else (0.0, 0.0), float).reshape(2)
-    maps_area = area.admissible(maps, centre=rep.drawing_centre)
-    # the file's area may be smaller than the maps' on purpose (a conservative choice), never
-    # larger by more than a grid cell (a stale file)
-    if np.max(rep.drawing_area - maps_area) > cfg.grid_step + 1e-9:
-        return Refusal("stale_drawing_area",
-                       f"rig.json's drawing area {rep.drawing_area[0]:.3f} x "
-                       f"{rep.drawing_area[1]:.3f} m is larger than the maps' {maps_area[0]:.3f} x "
-                       f"{maps_area[1]:.3f} m by more than one grid cell ({cfg.grid_step} m)")
-    out = area.first_outside(lines, rep.drawing_area, rep.drawing_centre)
-    if out is not None:
-        return Refusal("outside_drawing_area",
-                       f"line {out[0]}: point ({out[1][0]:.4f}, {out[1][1]:.4f}) m lies outside "
-                       f"the drawing area {rep.drawing_area[0]:.3f} x {rep.drawing_area[1]:.3f} m "
-                       f"centred on ({rep.drawing_centre[0]:.3f}, {rep.drawing_centre[1]:.3f}) m")
+    # The drawing area is the server's business (it fits drawings into rig.json's area and
+    # checks that against the maps when it starts).  Here it is only reported: a point no map
+    # holds is left over as "unreachable", like any other.
+    centre = getattr(rig, "drawing_area_centre_m", None)
+    rep.drawing_centre = np.asarray((0.0, 0.0) if centre is None else centre, float).reshape(2)
+    rep.drawing_area = area.admissible(maps, centre=rep.drawing_centre)
     # the drawing surface: every point `press` below the paper (the planners below put the tip
     # where the points are; the real paper stays the plane for clearances)
     z = rig.paper_z - rules.press
@@ -177,7 +164,7 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
             rep.skipped.append((ph.name, "nothing allocated to it"))
             continue
         pool, final = yield from _phase(rig, phases, k, todo, mine, pool, q_now, rules,
-                                        cfg, cache_dir, workers, rep, w0, verify)
+                                        cfg, cache_dir, workers, rep, w0, verify, surface)
         left += final
         for a in todo:
             q_now[a] = rig.park_q(a)
@@ -187,7 +174,7 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
 
 
 def _phase(rig, phases, k, todo, mine, pool, q_now, rules, cfg, cache_dir, workers, rep,
-           w0, verify):
+           w0, verify, surface):
     """Runs phase k.  Yields the tagged motions; returns (the pool for the phases after,
     leftovers)."""
     ph = phases[k]
@@ -196,7 +183,7 @@ def _phase(rig, phases, k, todo, mine, pool, q_now, rules, cfg, cache_dir, worke
     t0 = time.perf_counter()
     jobs = {a: (rig.obstacles_for(a, ph), mine[a], q_now[a]) for a in todo}
     back, final = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0,
-                                  verify)
+                                  verify, surface, cfg)
     pr.wall = time.perf_counter() - t0
     for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
         pr.idle[a] = pr.arms.pop(a)
@@ -216,7 +203,8 @@ def on_surface(line: Line, z: float) -> Line:
     return replace(line, points=p)
 
 
-def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify):
+def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify,
+         surface=None, cfg: Settings | None = None):
     """The arm planners of `jobs` {slot: (obstacles, stretches, q_start)}, in parallel, each
     back to its park, each with `verify` bound to its slot and the phase.  Yields the tagged
     motions; returns (handed back, leftovers)."""
@@ -225,8 +213,9 @@ def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify
         pr.arms[a] = ArmReport(a, len(sts), float(sum(s.length for s in sts)))
         base = []
         for i, st in enumerate(sts):
-            subs[(a, f"{st.line_id}#{i}")] = st
-            base.append(rig.to_base(a, st.as_line(f"{st.line_id}#{i}")))
+            line, arcs = _on_paper(st, f"{st.line_id}#{i}", surface, rules.press, cfg)
+            subs[(a, line.id)] = (st, arcs)
+            base.append(rig.to_base(a, line))
         bound = None if verify is None else partial(verify, a, ph)
         arm_jobs.append(ArmJob(a, tuple(base), obs, q0, rig.park_q(a), bound))
     back, final = [], []
@@ -255,8 +244,8 @@ def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify
         ar.stats, ar.cpu, ar.wall = st, st.cpu, st.wall
         ar.first_cpu, ar.first_wall = st.first_cpu, st.first_wall
         for x in leftovers:
-            s = subs[(a, x.piece.line_id)]
-            part = s.sub(s.s0 + x.piece.s0, s.s0 + x.piece.s1)
+            s, arcs = subs[(a, x.piece.line_id)]
+            part = s.sub(_flat(s, arcs, x.piece.s0), _flat(s, arcs, x.piece.s1))
             ar.handed_back[x.reason] = ar.handed_back.get(x.reason, 0.0) + part.length
             detail = f"{ph.name}, arm {a}: {x.detail}"
             if x.reason == "too_short":
@@ -270,24 +259,43 @@ def _retag(m: Motion, subs: dict, arm_id: Slot) -> Motion:
     """The motion with its piece in the input line's own id and arc length."""
     if m.piece is None:
         return m
-    s: Stretch = subs[(arm_id, m.piece.line_id)]
-    a, b = (float(min(max(s.s0 + x, s.s0), s.s1)) for x in (m.piece.s0, m.piece.s1))
+    s, arcs = subs[(arm_id, m.piece.line_id)]
+    a, b = (float(min(max(_flat(s, arcs, x), s.s0), s.s1)) for x in (m.piece.s0, m.piece.s1))
     return replace(m, piece=Piece(s.line_id, a, b))
 
 
+def _on_paper(st: Stretch, line_id: str, surface, press: float, cfg):
+    """The stretch as the line its arm planner draws.  Without a surface: as it is (every point
+    at paper_z - press).  With one: points at most `cfg.surface_step` apart along it, each at
+    `surface.z(x, y) - press`, and the arc lengths (along this line, along the drawing) that
+    take the planner's pieces back to the drawing's own arc length.  -> (Line, arcs or None)."""
+    if surface is None:
+        return st.as_line(line_id), None
+    u, p = st.samples(cfg.surface_step)
+    p = p.copy()
+    p[:, 2] = np.asarray(surface.z(p[:, 0], p[:, 1]), float) - press
+    s3 = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))])
+    return Line(line_id, p, "table", st.intensity), (s3, u)
+
+
+def _flat(st: Stretch, arcs, s_line: float) -> float:
+    """Arc length along the drawing of a point `s_line` along the line the arm planner drew."""
+    return st.s0 + s_line if arcs is None else float(np.interp(s_line, arcs[0], arcs[1]))
+
+
 def plan_all(rig, lines, rules, arm_configs=None, cache_dir=None, workers=1, settings=None,
-             verify=None):
+             verify=None, surface=None):
     """-> ([(phase name, arm id, Motion)], leftovers)."""
     motions, left, _ = plan_detailed(rig, lines, rules, arm_configs, cache_dir, workers, settings,
-                                     verify)
+                                     verify, surface)
     return motions, left
 
 
 def plan_detailed(rig, lines, rules, arm_configs=None, cache_dir=None, workers=1, settings=None,
-                  verify=None):
+                  verify=None, surface=None):
     """`plan_all`, plus the Report (maps, per phase and arm: times, lengths, what came back)."""
     rep = Report()
-    gen = plan(rig, lines, rules, arm_configs, cache_dir, workers, settings, rep, verify)
+    gen = plan(rig, lines, rules, arm_configs, cache_dir, workers, settings, rep, verify, surface)
     out = []
     while True:
         try:

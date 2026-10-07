@@ -164,9 +164,12 @@ def load_or_build(rig, phases, gates: Gates, cfg: Settings, cache_dir=None,
 
 
 def coverage(maps: dict, phases) -> dict:
-    """{phase name: {arm id: share, "union": share}}, and {"all": share} over every map."""
+    """{phase name: {arm id: share, "union": share}}, and {"all": share} over every map.  A
+    phase nobody moves in (an unmounted rig's leaders) is left out; no maps at all: 0.0."""
     rep, every = {}, None
     for p in phases:
+        if not p.active:
+            continue
         row, union = {}, None
         for a in p.active:
             d = maps[(p.name, a)].state == DRAWABLE
@@ -175,5 +178,5 @@ def coverage(maps: dict, phases) -> dict:
         row["union"] = float(union.mean())
         rep[p.name] = row
         every = union if every is None else every | union
-    rep["all"] = float(every.mean())
+    rep["all"] = 0.0 if every is None else float(every.mean())
     return rep

@@ -57,11 +57,16 @@ every motion (`Report.tightest`, `tightest_at`). With `verify=None` nothing is c
 - the 2.6 cm at the line's start that only 1L reaches is refused again in fill 1L+3L and
   left over as "failed_check, fill 1L+3L, arm 1L";
 - every motion handed on carries a passing verdict.
-- **Refusals:**
-  - A drawing with any point outside the drawing area (below) is refused before anything is
-    planned. The generator yields nothing and returns a `Refusal("outside_drawing_area")`
-    naming the line, the point and the area.
-  - An arm away from its park that does not move in phase 1 is an error.
+- **What stops a job** (reviewed 2026-10-07: only real hazards and impossibilities):
+  - an arm away from its park that does not move in phase 1 (every phase assumes the arms it
+    does not move stand parked; an arm elsewhere would be an obstacle nobody sees);
+  - a slot in `arm_configs` that is not on the rig, a line not in the table frame, two lines
+    with one id (the account could not tell them apart);
+  - an arm planner process that dies or raises (a bug);
+  - the no-drop account failing (a bug).
+
+  Ink no arm can reach is not refused: it is left over as "unreachable", like any other ink
+  that is not drawn.
 
 ## The drawing surface
 
@@ -70,6 +75,18 @@ The system planner gives every point of the drawing its height: the paper less t
 the pen tip where the points are and know nothing about pens. The real paper stays the plane
 that the links and the holder must clear, and the plane from which the lifts are measured. The
 drawable maps are computed with the pen tip on that surface too.
+
+**A measured paper.** `plan(..., surface=)` takes the paper as measured (`calib.paper.surface`,
+anything with `z(x, y)` in the table frame). Each line then goes to its arm with points at most
+1 cm apart (`Settings.surface_step`), each at `surface.z(x, y) − press`, and the arm's pieces
+are taken back to the drawing's own arc length (along x and y). The drawable maps keep the
+flat paper: a paper a few millimetres off changes the pen's reach by much less than the 2 cm
+grid. The lifts and every clearance keep the flat paper plane too, as today. Without a surface
+nothing changes, the map digests included.
+- **Tested:** on a paper bumped ±2 mm (15 cm waves), the drawn tips follow the surface to
+  0.04 mm, and the account holds.
+- **Measured:** the seven cases drawn on that paper take the same rig time as on the flat
+  paper, within 0.7 %, and draw the same.
 
 ## The laws
 
@@ -143,11 +160,11 @@ grid):
 
 ## The drawing area
 
-`plan` reads the area and its centre from the rig (`rig.drawing_area_m`,
-`rig.drawing_area_centre_m`, default the table centre). Before planning anything it refuses:
-- if the file has no area;
-- if the file's area is larger than the maps give by more than one grid cell;
-- if any point of the drawing lies outside the area about its centre.
+The drawing area is the server's business: it fits drawings into rig.json's area about its
+centre (`rig.drawing_area_centre_m`, default the table centre) and checks at start-up that the
+maps hold that area. The planner only reports the maps' area about that centre
+(`Report.drawing_area`). A rig with one arm mounted plans like any other: phases nobody moves
+in are skipped; the maps' area about the table centre may be 0 x 0 when no arm reaches it.
 
 The drawing area is the largest rectangle about the given centre, with sides along the table,
 that lies inside the union of all maps shrunk by 2 cm (`area.py`). Drawings must lie inside
@@ -233,7 +250,8 @@ rectangle is the drawing area.
 - parts that meet are one;
 - the fill pairs cannot touch;
 - the account raises on a drop, a double and a stranger;
-- a drawing outside the area is refused, and so is a stale or missing area in the rig;
+- ink no arm reaches is left over, not refused; a one-arm rig plans (`tools/mounted_rig.py`'s
+  derivation, slot 1R), and a rig with no arm mounted does not load;
 - a line the checker refuses for one arm flows on and is left over as failed_check where no
   other arm reaches it;
 - a small drawing runs end to end on slots 1L and 2R in two processes, joined from park to

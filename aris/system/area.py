@@ -18,6 +18,8 @@ def admissible(maps: dict, margin: float = MARGIN, centre=(0.0, 0.0)) -> np.ndar
     """(2,) full width along x and y of the largest rectangle centred on `centre` (table
     frame) whose grid points all lie in the union of every map shrunk by `margin` (off the
     grid counts as not drawable)."""
+    if not maps:                                # no mounted arm: nothing can be drawn
+        return np.zeros(2)
     m0 = next(iter(maps.values()))
     union = np.zeros_like(m0.state, bool)
     for m in maps.values():
