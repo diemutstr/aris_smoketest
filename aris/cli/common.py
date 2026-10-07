@@ -52,7 +52,7 @@ def assumptions_line(a: dict) -> str:
     return (f"rig {a.get('rig_digest')}, calibration {a.get('calibration_digest')} "
             f"({applied} of {len(cal)} slots calibrated, base and pen"
             f"{'; UNCALIBRATED: nominal poses' if a.get('uncalibrated') else ''}), "
-            f"pen {a.get('pen')}, tracking {a.get('tracking')}, "
+            f"pen {a.get('pen')}, "
             f"driver {a.get('driver')}, speed {a.get('speed')}")
 
 
@@ -97,9 +97,6 @@ def report_lines(rep: dict) -> list[str]:
         out.append(f"arm          {rep.get('arm')}: {rep.get('points', 0)} points touched "
                    f"({rep.get('contacts', 0)} contacts), {len(rep.get('dropped', []))} out of "
                    f"reach, spin {rep.get('spin_deg')} deg")
-        if rep.get("tripped_at_start"):
-            out.append(f"dropped      {len(rep['tripped_at_start'])} contacts tripped within the "
-                       f"first 5 mm (the start transient): {rep['tripped_at_start']}")
         if rep.get("missed"):
             out.append(f"no contact   {rep['missed']}")
         f = rep.get("fit")
@@ -113,9 +110,16 @@ def report_lines(rep: dict) -> list[str]:
     if rep.get("kind") == "park":
         for a, r in rep.get("arms", {}).items():
             out.append(f"arm {a:<8} {r['result']}")
+    if rep.get("kind") == "calibrate" and rep.get("paper_surface"):
+        out.append(f"paper map    {paper_line(rep['paper_surface'])}")
     if "drawn_m" in rep:
         d = rep.get("drawing", {})
         out.append(f"scale        {d.get('scale', 1.0):.3f}")
+        u = rep.get("paper_under_drawing")
+        out.append("paper        flat (no height map)" if not u else
+                   f"paper        height map under the drawing: {1e3 * u['z_min_m']:+.2f} to "
+                   f"{1e3 * u['z_max_m']:+.2f} mm about the nominal paper "
+                   f"({u['range_mm']:.2f} mm)")
         if rep.get("account_error"):
             out.append(f"ACCOUNT      {rep['account_error']}")
         out.append(f"drawn        {rep['drawn_m'] or 0:.3f} m of {rep['length_m']:.3f} m")
@@ -141,6 +145,15 @@ def report_lines(rep: dict) -> list[str]:
         if rep.get(key) is not None:
             out.append(f"{label:<13}{float(rep[key]):.1f} s")
     return out
+
+
+def paper_line(p: dict) -> str:
+    """The paper height map in one line (`aris rig`, the calibrate report)."""
+    if not p or not p.get("exists"):
+        return "none: the flat paper (run `aris calibrate <slot>` to measure it)"
+    rng = ("" if p.get("z_min_m") is None else
+           f", {1e3 * p['z_min_m']:+.2f} to {1e3 * p['z_max_m']:+.2f} mm about the nominal paper")
+    return f"{p.get('points', 0)} points{rng}, from {p.get('date') or 'an unknown date'}"
 
 
 def job_passed(rep: dict) -> bool:

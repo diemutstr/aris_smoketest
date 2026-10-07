@@ -32,6 +32,7 @@ from aris.free import plan as free_plan
 from aris.kernel.retime import retime_detailed
 from aris.sequencer.guard import Guard
 from aris.sequencer.lift import reverse, rise_path
+from aris.server import paper
 from aris.server.steps import Scene, Step, lift_pens, pen_down
 from aris.types import JointPath, Motion, Phase, Refusal, Trajectory
 
@@ -242,34 +243,6 @@ def touch_points(plan: Plan) -> dict:
     return out
 
 
-START_TRIP = 0.005        # m: a contact closer than this to the hover is the start transient
-
-
-def tripped(rig, plan: Plan, rows, arm: str) -> tuple[list, list]:
-    """The contact rows split into real contacts and those whose force tripped within the
-    first START_TRIP of the descent (the start transient, seen on 1R): -> (kept rows, the grid
-    points of the dropped ones).  Every other row is kept as it is."""
-    hover, i = {}, 0
-    for s in plan.steps:
-        for m in s.motions:
-            if m.kind == "touch":
-                hover[i] = m.q_start
-            i += 1
-    points = touch_points(plan)
-    paper = rig.paper(arm)
-    n = np.asarray(paper.normal, float) / np.linalg.norm(paper.normal)
-    arm_m = rig.arm(arm)
-    kept, dropped = [], []
-    for r in rows:
-        if r.get("event") == "contact" and r.get("arm") == arm and r.get("index") in hover:
-            h, c = arm_m.tip(np.asarray([hover[r["index"]], r["q"]], float))
-            if float(n @ (h - c)) < START_TRIP:
-                dropped.append(points.get(r["index"]))
-                continue
-        kept.append(r)
-    return kept, dropped
-
-
 def misses(plan: Plan, rows, arm: str) -> list:
     """The grid points whose touch found no paper (a "contact" row is missing for them)."""
     got = {r.get("index") for r in rows
@@ -290,8 +263,8 @@ def _solve(st, rec, plan, run):
     arm = plan.arm
     if rec.stop.is_set():
         return "stopped", "stop requested", None, None
-    rows, start_trips = tripped(st.rig, plan, rec.log.read(), arm)
-    missed = misses(plan, rows, arm) + start_trips
+    rows = rec.log.read()
+    missed = misses(plan, rows, arm)
     n = sum(1 for r in rows if r.get("event") == "contact" and r.get("arm") == arm)
     if run.status != "done" and not (missed and "no contact" in run.why):
         return "failed", run.why, None, None
@@ -302,21 +275,22 @@ def _solve(st, rec, plan, run):
     if not result.passed:
         return "failed", f"the plane fit did not pass: {result.why}", result, None
     path = write_base(result, st.config_dir)
-    st.reload()                                    # the station runs on the new file now
-    return "done", "", result, str(path)
+    surface = paper.rebuild(st.config_dir)         # the table's height map, from every slot
+    st.reload()                                    # the station runs on the new files now
+    return "done", "", result, dict(base=str(path), paper_surface=surface)
 
 
 def _report(st, rec, plan, run, result, written, planning_s, state, why) -> dict:
     from aris.server.jobs import arm_progress
     rows, first = arm_progress(rec.log.read())
-    kept, start_trips = tripped(st.rig, plan, rec.log.read(), plan.arm)
-    contacts = sum(1 for r in kept if r.get("event") == "contact" and r.get("arm") == plan.arm)
+    contacts = sum(1 for r in rec.log.read() if r.get("event") == "contact"
+                   and r.get("arm") == plan.arm)
     out = dict(state=state, why=why, kind="calibrate", arm=plan.arm,
-               tripped_at_start=start_trips,
                points=len(plan.points_table), points_table=plan.points_table.tolist(),
                dropped=plan.dropped, spin_deg=round(float(np.rad2deg(plan.spin)), 3),
                contacts=contacts, missed=misses(plan, rec.log.read(), plan.arm),
                written=written, planning_s=planning_s,
+               paper_surface=paper.describe(st.surface),
                phases=[dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
                        for n, p, t, c in run.phase_ends],
                first_motion_s=None if first is None else first - rec.t_received,

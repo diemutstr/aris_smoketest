@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from aris.calib import files as calib_files
+from aris.server import paper as paper_mod
 from aris.server import drawing, operator, remote, runner
 from aris.server import park as park_job
 from aris.server.jobs import JobStore, view
@@ -56,8 +57,11 @@ def rig_view(st) -> dict:
                            calibration=rig.calibration_status(a)) for a in rig.arm_ids},
         drawing_area_m=list(st.drawing_area), drawing_area_centre_m=list(st.drawing_centre),
         canvas_m=rig.canvas_size, pen_in=st.pen(),
-        calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)},
+        calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)
+                           if f.get("slot")},                  # the slots' files, not paper.json
         drawing_area_from_maps_m=list(st.maps_area),
+        paper_surface=paper_mod.describe(st.surface),
+        drawing_area_problem=st.area_problem or None,
         **st.assumptions()))
 
 

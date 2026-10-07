@@ -25,12 +25,42 @@ def cmd_draw(a, http) -> int:
     if not a.drawing:
         return verdict(False, "no drawing given (or --rest-of <job id>)")
     path = Path(a.drawing)
-    body = path.read_bytes()
-    if _assume(http) is None:
+    rig = _assume(http)
+    if rig is None:
         return verdict(False, "the server does not answer")
+    if a.pen and a.pen != (rig.get("pen_in") or {}).get("name"):     # its length and press
+        return verdict(False, f"the pen in is {(rig.get('pen_in') or {}).get('name')!r}, not "
+                       f"{a.pen!r}: change pens.current in rig.json and restart the server")
+    if path.suffix.lower() == ".svg":
+        d = _svg(a, path, rig.get("drawing_area_centre_m") or (0.0, 0.0))
+        if isinstance(d, str):
+            return verdict(False, d)
+        body = json.dumps(d).encode()
+    else:
+        body = path.read_bytes()
     code, r = http.post(f"/jobs?name={urllib.parse.quote(path.name)}" + (f"&{q}" if q else ""),
                         body)
     return _follow_draw(a, http, code, r)
+
+
+def _svg(a, path: Path, centre) -> dict | str:
+    """The SVG as a drawing dict, or why not."""
+    from aris.server import svg
+    if a.width is None:
+        return "an SVG needs --width (metres along the table's x)"
+    d = svg.to_drawing(path, a.width, a.at if a.at else centre)
+    return d if isinstance(d, dict) else f"{d.reason}: {d.detail}"
+
+
+def cmd_import(a, _http=None) -> int:
+    """An SVG as the drawing JSON, written to -o; nothing is drawn."""
+    d = _svg(a, Path(a.svg), a.at or (0.0, 0.0))
+    if isinstance(d, str):
+        return verdict(False, d)
+    out = Path(a.out or Path(a.svg).with_suffix(".json"))
+    out.write_text(json.dumps(d) + "\n")
+    n = sum(len(x["points"]) for x in d["lines"])
+    return verdict(True, f"wrote {out}: {len(d['lines'])} lines, {n} points")
 
 
 def _follow_draw(a, http, code, r) -> int:
@@ -100,6 +130,8 @@ def cmd_plan(a, _http=None) -> int:
     if not hasattr(st, "rig"):
         return verdict(False, f"{st.reason}: {st.detail}")
     say(assumptions_line(st.assumptions()))
+    if st.area_problem:
+        return verdict(False, f"no_drawing_area: {st.area_problem}")
     lines = drawing.load(a.drawing)
     if not isinstance(lines, list):
         return verdict(False, f"{lines.reason}: {lines.detail}")

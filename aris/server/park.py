@@ -4,9 +4,7 @@ queued and run.
 1. Pens at the paper first.  An arm stopped in the middle of drawing has its pen on the paper,
    and every phase-end check fails while any pen is down.  So every such arm first raises its
    pen straight up (the sequencer's lift-off rule and turns, `LIFT_EXTRA` above the pen's
-   clearance), all together in one
-   phase, "lift pens", behind the walls they were drawing behind (the arms that were drawing
-   at a stop are one phase's arms, or arms that cannot touch each other).
+   clearance), one arm per phase ("lift pens 1L", ...), in rig order, the others standing.
 2. Then one arm at a time, in rig order, each in its own phase ("park 1L", ...): a free motion
    to its park.  No two arms move at once and no walls are needed.  An arm already at its park
    is left alone.
@@ -19,7 +17,7 @@ stays where it is, and the arms after it are planned around it there.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -33,7 +31,7 @@ __all__ = ["submit_park", "plan_park", "Step", "pen_down", "LIFT_EXTRA"]
 
 
 def plan_park(st, where: dict) -> list[Step]:
-    """Steps in the order they run: the pens-down arms' lifts (one phase), then one park phase
+    """Steps in the order they run: the pens-down arms' lifts (see steps.lift_pens), then one park phase
     per arm that is not at its park.  `where`: arm id -> where it stands now."""
     rig, rules = st.rig, st.rules
     now = {a: np.asarray(q, float) for a, q in where.items()}
@@ -41,14 +39,12 @@ def plan_park(st, where: dict) -> list[Step]:
     down = [a for a in rig.arm_ids if not rig.at_park(a, now[a]) and pen_down(rig, a, now[a])]
     stuck = set()                                  # pens that stay down
     if down:
-        lifts = lift_pens(st, scene, now, down)
-        if all(not s.why for s in lifts):          # all rise, or none: one phase end check
-            for s in lifts:
+        lifts = lift_pens(st, scene, now, down)    # one phase per pen, in rig order
+        for s in lifts:
+            if s.why:
+                stuck.add(s.arm)                   # its pen stays down; it does not park
+            else:
                 now[s.arm] = s.motions[-1].q_end
-        else:
-            lifts = [s if s.why else replace(s, motions=(), why="another pen cannot rise")
-                     for s in lifts]
-            stuck = set(down)
         steps += lifts
     for a in rig.arm_ids:
         if rig.at_park(a, now[a]):

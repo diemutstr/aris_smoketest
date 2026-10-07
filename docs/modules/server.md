@@ -24,10 +24,10 @@ says "UNCALIBRATED: every arm runs on its nominal pose and pen". Only the simula
 built (`--driver sim`, the default); `--speed` sets how many times faster than real time the
 simulated arms play.
 
-**Tracking.** `--tracking position` (mode A, the default): the operator PC flies every motion
-through the joint-trajectory controller and the press is geometric (the drawing surface lies
-the pen's press below the paper). `--tracking impedance` (mode B): the pen-force controller.
-The mode is written into every job header with the pen that is in (`rig.pen()`: its entry of
+**One tracking mode: position control.** The operator PC flies every motion through the
+joint-trajectory controller and the press is geometric (the drawing surface lies the pen's
+press below the paper, or below the paper's height map when there is one). Every job header
+carries the pen that is in (`rig.pen()`: its entry of
 rig.json's pens table with its name and press) and the person's note (`aris draw --note
 "4H on 120 g paper"`), so a job describes itself on both machines; the report repeats them.
 
@@ -83,7 +83,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `GET /jobs/{id}/events` | the event log |
 | `POST /jobs/{id}/stop` | stop (409 if already finished) |
 | `POST /park` | park all arms |
-| `GET /rig` | slots (pose, park configuration, calibration state of both parts, and each file's parts with their dates), the drawing area and its centre, the pen that is in, the rig and calibration digests, tracking, driver and speed |
+| `GET /rig` | slots (pose, park configuration, calibration state of both parts, and each file's parts with their dates), the drawing area and its centre, the pen that is in, the rig and calibration digests, the paper height map (points, height range, date), driver and speed |
 | `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, per controlled slot: the robot it named, the joints the operator PC last reported or `null` with why (`reading`: fresh, no joint states, too old, never reported), at its park (`null` without a reading), when (its clock), how long ago the server heard it, and the job |
 | `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
 | `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
@@ -103,7 +103,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 
 | command | what it does |
 |---|---|
-| `aris serve [--host --port --driver sim\|robot --tracking position\|impedance --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
+| `aris serve [--host --port --driver sim\|robot --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
 | `aris draw <drawing> [--note ...] [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
 | `aris draw <drawing> --air 30` | an air run, the validation every first drawing on the hardware starts with: the whole job planned and checked with the drawing surface 30 mm above the paper (the planner gets a press of −30 mm, the checker `surface_z` = paper + 30 mm), so every draw is flown in the air; the header says `air_mm`, the report starts with AIR RUN; `aris plan --air` too. |
 | `aris arms` | a table: slot, robot, joints or "no reading", at park, reported when; FAIL when a slot has no reading |
@@ -131,21 +131,34 @@ maps and the kinematic table; `--map-grid` (default 2 cm) is the maps' grid; `--
 ```
 
 Units "mm" or "m"; the frame must be "table" (origin at the table centre, on the paper, x
-across, y along). `intensity` (0 to 1, how hard to press) is optional, default 1. One pen.
-Ids must be distinct; every line needs at least two points. One format. **SVG is not read in
-this round.**
+across, y along). `intensity` (0 to 1, how hard to press; clamped into that range) is
+optional, default 1. One pen. A repeated id is renamed (`a#2`, ...); every line needs at least
+two points.
+
+**SVG** (`aris/server/svg.py`, by `svgelements` from PyPI): `aris draw pic.svg --width 1.70
+[--at X Y]` turns every shape's outline (paths, lines, polylines, polygons, rectangles,
+circles, ellipses; Béziers and arcs flattened so no chord strays more than 0.5 mm; every
+transform applied) into lines `svg1`, `svg2`, ... of the format above: the picture's bounding
+box `--width` metres along the table's x, centred on `--at` (default: the drawing area's
+centre), the SVG's y (down the page) along the table's −y. Text is not drawn (convert it to
+paths). The job's `drawing.json` is that drawing as fitted. `aris import pic.svg --width 1.70
+-o pic.json` writes the JSON without drawing. `aris draw ... --pen NAME` is refused when the
+rig has another pen in (its length and press are what is planned).
 
 ## The fit rule
 
 The drawing area is rig.json's rectangle (`canvas.drawing_area_m`) around its centre
 (`canvas.drawing_area_centre_m`, `Rig.drawing_area_centre_m`): the system planner refuses
-anything outside it. The server works out the same rectangle from the drawable maps at start
-and refuses to start when rig.json's is larger than that by more than one grid cell ("the rig
-file is stale"); smaller is allowed on purpose. `/rig` shows both and the centre. If a point of
+anything outside it. The server works out the same rectangle from the drawable maps at start;
+when rig.json's is larger by more than one grid cell (or the maps are empty about the centre:
+no mounted arm draws there), drawing jobs are refused with that reason (`no_drawing_area`) and
+`aris rig` says NO DRAWING, while park, calibrate and marks still run. Smaller is allowed on
+purpose. `/rig` shows both and the centre. `tools/mounted_rig.py --arms 1R --out DIR` without
+`--area` computes an area and centre from the mounted arms' maps. If a point of
 the drawing lies outside the area, the whole drawing is scaled uniformly **about the area's
 centre** until it fits;
-the scale is in the job state and the report. A drawing that fits is not touched. A drawing
-that would shrink below half its size is refused (the job fails at once). The drawing is not
+the scale is in the job state and the report, however small. A drawing that fits is not
+touched. The drawing is not
 moved, only scaled: a small drawing near an edge shrinks toward the area's centre.
 
 ## Planning, checking, queueing
@@ -176,8 +189,9 @@ cannot move an arm the wrong way.
    landing speed, so the lift-off starts where a lift-off starts. A stop can leave an arm closer
    to a joint limit than planning would choose; if the planning gates refuse the rise, it is
    tried once more with the joint-limit margin halved (0.075 rad; the checker still holds the
-   real limits). All such arms rise together in one phase, "lift pens", behind the walls they
-   were drawing behind (every phase-end check fails while any pen is down).
+   real limits). Always one arm per phase ("lift pens 1L", "lift pens 1R", ...), in rig order,
+   every other arm standing (the phase-end check accepts a standing pen at the paper that a
+   later phase raises). An arm whose pen cannot rise stays and does not park.
 2. Then one arm at a time in rig order, each in its own phase ("park 1L", ...): a free motion
    to its park, planned around the others (parked ones at their parks; ones not yet parked as
    their bodies where they stand, and for the checker as `standing` joints), checked, queued,
@@ -217,9 +231,9 @@ own pen and joints. `aris calibrate 2R`.
    roll, pitch and height change, and pass or fail.
 6. A touch that meets no paper within the extra depth is not a fault: the executor logs "no
    contact" and goes on, the point is named in the report, and the job fails only if fewer
-   than the plane fit's minimum (`aris.calib.plane.MIN_POINTS`, 8) remain. A contact whose
-   force tripped within the first 5 mm of the descent (the start transient) is dropped as
-   "tripped at the start", not used, and the report names its point.
+   than the plane fit's minimum (`aris.calib.plane.MIN_POINTS`, 8) remain. Every contact
+   is used: the robot's touch detector arms only once the descent runs at constant speed, so a
+   trip early in the descent is real contact.
 
 ## The mark job
 
@@ -315,7 +329,7 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 
 | file | what is in it |
 |---|---|
-| `job.json` | the header: rig, calibration and drawing digests, rules, the pen that is in (`rig.pen()`: name, press, force rules, which the operator PC applies), the tracking mode, the note, the drawing area and its centre, scale, `rest_of`, driver, speed |
+| `job.json` | the header: rig, calibration and drawing digests, rules, the pen that is in (`rig.pen()`: name, press, force rules, which the operator PC applies), the note, the drawing area and its centre, scale, `rest_of`, driver, speed |
 | `drawing.json` | the drawing as planned (after the fit), so its leftovers can be drawn again (`--rest-of`) |
 | `phases.jsonl` | the phases in the order they run, then an end line; a park or calibrate phase also names the arms standing still off their parks (`standing`: {slot: joints}), which `aris check` gives the checker |
 | `<phase>__<slot>.queue` | the checked motions of one arm in one phase (format: execute.md) |
@@ -329,7 +343,7 @@ One directory per job under `--jobs` (for `aris plan`, the `--out` directory):
 | field | meaning |
 |---|---|
 | `state`, `why` | done, stopped or failed, and why |
-| `note`, `pen`, `tracking`, `rest_of` | the person's note, the pen that was in, the tracking mode, the job this one drew the rest of |
+| `note`, `pen`, `rest_of`, `paper_under_drawing` | the person's note, the pen that was in, the job this one drew the rest of, the paper map's height range under the drawing (null: flat paper) |
 | `drawing` | lines, scale, bounding box before and after the fit |
 | `length_m`, `drawn_m` | the fitted drawing's length; what motions that ran to the end drew |
 | `left_m`, `left_by_reason`, `leftovers` | everything not drawn, as stretches of lines with a reason: the planner's (unreachable, blocked, too short, ...), `failed_check`, `stopped` or `failed` (queued and not run, or not planned yet). Drawn plus left over is the whole drawing; on a done job anything else would show as `unaccounted` |
@@ -388,11 +402,11 @@ A park job's report says per arm "parked", "already at its park" or why not.
 ## Tests
 
 `tests/test_server.py`. Quick: the file format and the fit (inside untouched, scaled, refused
-below half; bad files refused); the server refuses to start uncalibrated or with an unbuilt
+however far; bad files refused, a repeated id renamed); the server refuses to start uncalibrated or with an unbuilt
 driver; the rig and arms endpoints; a small drawing runs to done while a second job and a park
 are refused, with the state events in order; `aris plan` and `aris check`; a drawing outside
 the area is scaled, and a stop in the middle of drawing leaves every arm stopped and holding
-with the rest left over as "stopped"; a drawing too big to fit makes `aris draw` fail; `aris
+with the rest left over as "stopped"; a refused drawing file makes `aris draw` fail; `aris
 park` parks every arm from a random near-park configuration and `aris check` confirms the park
 queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
 
@@ -410,12 +424,32 @@ refused before moving, and after a full run touches A and B (7 touches) with the
 a null, all-zero or 60 s old reading is no reading, refuses park, mark and a drawing with "no
 joint states for 2R (FCI off?)", and shows in `aris arms`; the phase-end check waits for a
 reading rather than judging zeros; `aris arms` on the simulated arms; the rest of a job that
-failed before it moved; a contact 1.5 mm into the descent dropped as tripped at the start.
+failed before it moved.
 8 tests (2 slow).
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
-centre; the header's pen, tracking and note; `--rest-of` (a job stopped midway, its leftovers
+centre; the header's pen and note; `--rest-of` (a job stopped midway, its leftovers
 drawn as a new drawing, the two drawn lengths adding up to the whole within the shortest
 piece); the touch-off after the calibrate job on the two-arm rig (the pen part written beside
 the base part, the next touch-off at the remembered reference); park after a stop with a pen
 hovering (set down, then lifted).
+
+## Refusals (reviewed 2026-10-07)
+
+Kept, each for a real hazard or something that cannot work: no fresh joint reading / never
+reported (planning from an unknown position); not parked outside the first phase (the plan
+assumes them parked); an arm fault or not ready (a person must look); uncalibrated without
+`--uncalibrated` (wrong geometry); a motion the checker refused; a job from another server run
+(`/operator`, 409: stale work between machines); one job at a time (two jobs on one arm); the
+pen named is not the pen in (its length and press); `--air` below zero (a deeper press, not
+air); no drawing area the maps cover (the planner could plan nothing); the rig not loading, an
+unbuilt driver, a speed not above zero; a drawing file that cannot be read (not JSON, units,
+frame, a line without two finite points, no lines); rest-of a job still running, unknown, not
+a drawing, or with nothing left; mark slots or a group the rig does not have, a slot with no
+mark, a single slot whose marks no earlier run solved; calibrate a slot not on the rig.
+
+Removed: the shrink-below-half limit (scaled however far, the report says how much); the
+200 mm ceiling on `--air`; two lines with one id (renamed); an intensity outside 0..1
+(clamped); stopping a finished job (nothing to do, 200); pens down on row partners (they rise
+one arm per phase); the stale-rig start refusal (now refuses drawings only, and says when the
+maps are empty).

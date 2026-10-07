@@ -6,11 +6,12 @@ The drawing file (JSON):
      "lines": [{"id": "a", "points": [[x, y], ...], "intensity": 1.0}, ...]}
 
 `units` is "mm" or "m"; `frame` must be "table" (origin at the table centre, on the paper);
-`intensity` (0 to 1, how hard to press) is optional, default 1.  One pen.  One format.
+`intensity` (0 to 1, how hard to press; clamped into that range) is optional, default 1.  Line
+ids are made distinct (a repeated id gets `#2`, `#3`, ...).  One pen.  One format.
 
 `fit` scales a drawing that does not lie inside the drawing area uniformly about the area's
-centre (`Rig.drawing_area_centre_m`) until it does.  A drawing that fits is not touched; one that would have to shrink below
-half its size is refused.
+centre (`Rig.drawing_area_centre_m`) until it does, by however much that takes (the report
+prints the scale).  A drawing that fits is not touched.
 """
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ import numpy as np
 from aris.types import Line, Refusal
 
 UNITS = {"mm": 1e-3, "m": 1.0}
-MIN_SCALE = 0.5
 
 
 @dataclass(frozen=True)
@@ -76,10 +76,13 @@ def from_dict(d) -> list[Line] | Refusal:
             return Refusal("bad_line", f"line {lid}: {e}")
         if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2 or not np.all(np.isfinite(pts)):
             return Refusal("bad_line", f"line {lid}: points must be at least two finite [x, y]")
-        if not 0.0 <= intensity <= 1.0:
-            return Refusal("bad_line", f"line {lid}: intensity {intensity} is not in 0..1")
-        if lid in seen:
-            return Refusal("bad_line", f"two lines have the id {lid!r}")
+        if not np.isfinite(intensity):
+            return Refusal("bad_line", f"line {lid}: intensity {intensity} is not a number")
+        intensity = min(1.0, max(0.0, intensity))
+        base, n = lid, 1
+        while lid in seen:
+            n += 1
+            lid = f"{base}#{n}"
         seen.add(lid)
         out.append(Line(lid, np.column_stack([pts * k_m, np.zeros(len(pts))]), "table",
                         intensity))
@@ -112,11 +115,6 @@ def fit(lines, area, centre=(0.0, 0.0)) -> tuple[list[Line], Fit] | Refusal:
     area_t, centre_t = tuple(float(a) for a in area), tuple(float(x) for x in c)
     if scale >= 1.0:
         return list(lines), Fit(1.0, box, box, area_t, centre_t)
-    if scale < MIN_SCALE:
-        return Refusal("too_large", f"the drawing reaches {ext[0]:.3f} x {ext[1]:.3f} m from "
-                       f"the centre of the drawing area ({c[0]:.3f}, {c[1]:.3f}); to fit the "
-                       f"area {area[0]:.2f} x {area[1]:.2f} m it would shrink to {scale:.2f} "
-                       f"of its size (the least allowed is {MIN_SCALE})")
     out = []
     for x in lines:
         q = np.asarray(x.points, float).copy()

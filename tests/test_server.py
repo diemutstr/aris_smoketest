@@ -89,11 +89,12 @@ def test_drawing_file_read_and_fitted(tmp_path):
     # refusals are returned, never raised
     for bad in (b"not json", b'{"units": "inch", "lines": []}',
                 b'{"units": "mm", "frame": "base", "lines": [{"points": [[0,0],[1,1]]}]}',
-                b'{"units": "mm", "lines": [{"id": "a", "points": [[0, 0]]}]}',
-                b'{"units": "mm", "lines": [{"id": "a", "points": [[0,0],[1,1]]},'
-                b' {"id": "a", "points": [[0,0],[1,1]]}]}',
-                b'{"units": "mm", "lines": [{"points": [[0,0],[1,1]], "intensity": 2}]}'):
+                b'{"units": "mm", "lines": [{"id": "a", "points": [[0, 0]]}]}'):
         assert isinstance(drawing.parse(bad), Refusal), bad
+    # a repeated id is renamed, an intensity outside 0..1 clamped: no refusal
+    two = drawing.parse(b'{"units": "mm", "lines": [{"id": "a", "points": [[0,0],[1,1]]},'
+                        b' {"id": "a", "points": [[0,0],[1,1]], "intensity": 2}]}')
+    assert [x.id for x in two] == ["a", "a#2"] and two[1].intensity == 1.0
     # fitting: inside is not touched; outside is scaled about the centre; too big is refused
     area = (1.56, 3.56)
     same, fit = drawing.fit(lines, area)
@@ -108,8 +109,8 @@ def test_drawing_file_read_and_fitted(tmp_path):
     assert off[0].points[0, 0] == pytest.approx(0.3 + fit.scale * 0.7)
     assert np.all(np.abs(off[0].points[:, :2] - (0.3, 0.605)) <= (0.45 + 1e-12, 0.8))
     huge = drawing.parse(b'{"units": "m", "lines": [{"points": [[0, 0], [2, 0]]}]}')
-    r = drawing.fit(huge, area)
-    assert isinstance(r, Refusal) and r.reason == "too_large" and "0.39" in r.detail
+    small, fit = drawing.fit(huge, area)                  # shrunk however much it takes
+    assert fit.scale == pytest.approx(0.78 / 2.0)
 
 
 # --------------------------------------------------------------------------- the station
@@ -122,13 +123,15 @@ def test_refuses_to_start_without_calibration_or_with_an_unbuilt_driver():
     assert isinstance(r, Refusal) and r.reason == "driver"
 
 
-def test_a_stale_drawing_area_in_the_rig_file_is_refused():
+def test_a_drawing_area_the_maps_do_not_cover_is_named():
     from aris.server.station import area_mismatch
     assert area_mismatch((1.56, 3.56), (1.56, 3.56), 0.02) == ""
     assert area_mismatch((1.56, 3.56), (1.58, 3.56), 0.02) == ""  # within one grid cell
     assert area_mismatch((1.56, 3.56), (1.20, 1.00), 0.02) == ""  # smaller on purpose: allowed
     why = area_mismatch((1.56, 3.56), (1.60, 3.56), 0.02)
     assert "stale" in why and "4.0 cm" in why
+    why = area_mismatch((0.0, 0.0), (0.10, 0.90), 0.02, (0.3, -1.2))
+    assert "the drawable maps are empty about the centre (+0.300, -1.200)" in why
 
 
 def test_the_report_reasons_are_the_shared_ones():
@@ -149,7 +152,7 @@ def test_rig_and_arms_endpoints(station):
     r = c.get("/rig").json()
     assert set(r["arms"]) == {"1L", "1R", "2L", "2R", "3L", "3R"}
     assert r["arms"]["2L"]["calibration"] == {"base": "none", "pen": "none"}
-    assert r["uncalibrated"] is True and r["tracking"] == "position"
+    assert r["uncalibrated"] is True and "tracking" not in r
     assert r["pen_in"]["name"] == station.rig.pen()["name"] and len(r["drawing_area_centre_m"]) == 2
     assert np.allclose(r["arms"]["2R"]["park_q"], station.rig.park_q("2R"))
     assert len(r["rig_digest"]) == 24 and len(r["calibration_digest"]) == 24
@@ -272,7 +275,7 @@ def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_pat
     for a, d in st.drivers.items():
         s = d.state()
         assert "moving" not in s.flags and not s.ok and np.all(s.qd == 0.0), (a, s.flags)
-    assert c.post(f"/jobs/{jid}/stop").status_code == 409      # already finished
+    assert c.post(f"/jobs/{jid}/stop").status_code == 200      # already finished: nothing to do
     # park from where the stop left them (a pen at the paper rises first)
     assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0
     for a, d in st.drivers.items():
@@ -287,13 +290,13 @@ def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_pat
     assert rep["drawn_m"] + rest["drawn_m"] == pytest.approx(rep["length_m"],
                                                              abs=st.rules.min_piece)
     head = json.loads((st.jobs_dir / rid / "job.json").read_text())
-    assert head["note"] == "4H on 120 g paper" and head["tracking"] == "position"
+    assert head["note"] == "4H on 120 g paper" and "tracking" not in head
     assert head["pen"]["name"] == st.rig.pen()["name"] and head["rest_of"] == jid
     assert c.post(f"/jobs?rest_of={rid}").json()["refused"] == "nothing_left"
-    # a drawing that would shrink below half is a failed job, and `aris draw` says FAIL
-    huge = tmp_path / "huge.json"
-    huge.write_text('{"units": "m", "lines": [{"id": "x", "points": [[0, 0], [3, 0]]}]}')
-    assert cli.main(["draw", str(huge), "--poll", "0.05"], http=ClientHttp(c)) == 1
+    # a refused drawing is a FAIL of `aris draw`
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"units": "inch", "lines": [{"id": "x", "points": [[0, 0], [3, 0]]}]}')
+    assert cli.main(["draw", str(bad), "--poll", "0.05"], http=ClientHttp(c)) == 1
 
 
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)

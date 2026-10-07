@@ -3,6 +3,8 @@
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
     aris draw   <drawing.json> [--note ..] [--server URL]   submit, follow, report; exit
                                                      0 on PASS; --rest-of <job> draws its leftovers
+    aris draw <file.svg> --width M [--at X Y] [--pen NAME]
+    aris import <file.svg> --width M [--at X Y] [-o out.json]
     aris status | stop | park | rig | arms   [--server URL]
     aris calibrate <slot>                            touch the paper on a grid: the base part
     aris touchoff <slot>                             one touch: the pen part
@@ -26,11 +28,20 @@ import argparse
 from aris.cli.calibration import cmd_calibrate, cmd_mark, cmd_recover, cmd_touchoff
 from aris.cli.common import (CONFIG, DEFAULT_SERVER, Http, _summary, assumptions_line, follow,
                              job_passed, report_lines, say, verdict)
-from aris.cli.jobs import cmd_check, cmd_draw, cmd_park, cmd_plan, cmd_status, cmd_stop
+from aris.cli.jobs import (cmd_check, cmd_draw, cmd_import, cmd_park, cmd_plan, cmd_status,
+                           cmd_stop)
 from aris.cli.rig import cmd_arms, cmd_rig, cmd_serve
 
 __all__ = ["main", "parser", "Http", "job_passed", "report_lines", "follow", "say", "verdict",
            "assumptions_line", "_summary"]
+
+
+def svg_args(s) -> None:
+    s.add_argument("--width", type=float, default=None, metavar="M",
+                   help="an SVG: its picture this wide along the table's x, in metres")
+    s.add_argument("--at", type=float, nargs=2, default=None, metavar=("X", "Y"),
+                   help="an SVG: its centre on the table, metres (default: the drawing "
+                   "area's centre)")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -54,9 +65,6 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--driver", default="sim",
                    help="sim: simulated arms here; robot: the operator PC runs the arms")
     s.add_argument("--speed", type=float, default=1.0, help="simulated arm: times real time")
-    s.add_argument("--tracking", default="position", choices=("position", "impedance"),
-                   help="how the operator PC flies motions: position (mode A, the default) or "
-                   "impedance (mode B, the pen force)")
     s.add_argument("--sim-truth", default=None, metavar="CONFIG_DIR",
                    help="the simulated arms' true rig for the mark job (another config folder)")
     s.add_argument("--sim-base-error", default=None, metavar="MM,MRAD",
@@ -76,6 +84,13 @@ def parser() -> argparse.ArgumentParser:
                        "contact), to validate the plan's geometry and timing first")
         s.add_argument("--rest-of", default=None, metavar="JOB",
                        help="draw what that finished job left over")
+        svg_args(s)
+        s.add_argument("--pen", default=None, help="the pen you put in: refused if the rig "
+                       "has another in (its length and press are planned with)")
+    s = sub.add_parser("import", help="an SVG as a drawing file (JSON); nothing is drawn")
+    s.add_argument("svg")
+    s.add_argument("-o", "--out", default=None, help="the JSON to write (default: beside it)")
+    svg_args(s)
     for name, what in (("calibrate", "touch the paper on a grid: the slot's base calibration"),
                        ("touchoff", "one touch at the reference point: the slot's pen calibration"),
                        ("recover", "release an arm after a fault, once a person has looked")):
@@ -106,10 +121,10 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-COMMANDS = dict(arms=cmd_arms, serve=cmd_serve, draw=cmd_draw, status=cmd_status, stop=cmd_stop,
-                park=cmd_park, rig=cmd_rig, plan=cmd_plan, check=cmd_check,
-                calibrate=cmd_calibrate, recover=cmd_recover, touchoff=cmd_touchoff,
-                mark=cmd_mark)
+COMMANDS = {"import": cmd_import, "arms": cmd_arms, "serve": cmd_serve, "draw": cmd_draw,
+            "status": cmd_status, "stop": cmd_stop, "park": cmd_park, "rig": cmd_rig,
+            "plan": cmd_plan, "check": cmd_check, "calibrate": cmd_calibrate,
+            "recover": cmd_recover, "touchoff": cmd_touchoff, "mark": cmd_mark}
 
 
 def main(argv=None, http=None) -> int:

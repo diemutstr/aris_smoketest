@@ -17,6 +17,7 @@ import numpy as np
 
 from aris.execute.queue import digest
 from aris.rig import Rig
+from aris.server import paper as paper_mod
 from aris.system import area as area_mod
 from aris.system import maps as maps_mod
 from aris.system import phases as all_phases
@@ -26,7 +27,6 @@ from aris.types import Refusal
 # "sim": simulated arms in this process.  "robot": the arms are on the operator PC, whose
 # runner copies the queues and posts the events back; the server runs no executors.
 DRIVERS = ("sim", "robot")
-TRACKING = ("position", "impedance")
 
 
 @dataclass
@@ -47,9 +47,11 @@ class Station:
     positions: object = None
     calib_settings: object = None      # calibrate.CalibSettings; None: the defaults
     operator: object = None            # the operator channel (operator.py)
-    # how the operator PC flies the motions: "position" (mode A, the trajectory controller,
-    # the press is geometric) or "impedance" (mode B, the pen-force controller)
-    tracking: str = "position"
+    # the paper's height map (aris.calib.paper.Surface), None: the flat paper (server/paper.py)
+    surface: object = None
+    # why a drawing cannot be planned on this rig ("" when it can): no drawing area, or one the
+    # maps do not cover.  Only drawing jobs are refused; park, calibrate and marks still run.
+    area_problem: str = ""
 
     @property
     def drawing_centre(self) -> tuple:
@@ -64,6 +66,7 @@ class Station:
     def reload(self) -> None:
         """Read the rig again (after a calibration file was written)."""
         self.rig = Rig.load(self.config_dir)
+        self.surface = paper_mod.load(self.config_dir)
         self.uncalibrated = any(not self.rig.calibrated(a) for a in self.rig.arm_ids)
 
     @property
@@ -87,7 +90,7 @@ class Station:
         """What every job runs on, printed once by every command."""
         cal = self.calibration()
         return dict(self.digests(), calibration=cal, uncalibrated=self.uncalibrated,
-                    driver=self.driver_kind, speed=self.speed, tracking=self.tracking,
+                    driver=self.driver_kind, speed=self.speed,
                     pen=self.pen().get("name"),
                     note=("UNCALIBRATED: every arm runs on its nominal pose and pen"
                           if self.uncalibrated else "calibrated"))
@@ -179,7 +182,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  workers: int | None = None,
                  settings: Settings | None = None, drivers: dict | None = None,
                  with_arms: bool = True, with_area: bool = True,
-                 sim_paper=None, tracking: str = "position", sim_truth=None,
+                 sim_paper=None, sim_truth=None,
                  sim_base_error=None, sim_buttons=None,
                  sim_mark_error=None) -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
@@ -204,8 +207,6 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         return Refusal("driver", f"driver {driver!r} is not built; built: {DRIVERS}")
     if not speed > 0:
         return Refusal("speed", "the speed must be positive")
-    if tracking not in TRACKING:
-        return Refusal("tracking", f"tracking {tracking!r} is not one of {TRACKING}")
     if drivers is None and with_arms and driver == "sim":
         from aris.execute.drivers.sim import SimArm
         from aris.server.simtruth import Person, Truth
@@ -222,7 +223,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         drivers = {}
     st = Station(rig, config_dir, dict(drivers or {}), kind, float(speed), bool(missing),
                  None if cache_dir is None else Path(cache_dir), Path(jobs_dir), w,
-                 cfg, tracking=tracking)
+                 cfg)
     if st.cache_dir is not None:
         st.cache_dir.mkdir(parents=True, exist_ok=True)
     st.positions = Positions()
@@ -234,11 +235,11 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
         st.maps_area = drawing_area(st)
         fa = file_area(rig)
         if fa is None:
-            return Refusal("no_drawing_area", "config/rig.json has no canvas.drawing_area_m")
-        stale = area_mismatch(st.maps_area, fa, cfg.grid_step)
-        if stale:
-            return Refusal("stale_rig_file", stale)
-        st.drawing_area = fa
+            st.area_problem = "rig.json has no canvas.drawing_area_m"
+        else:
+            st.area_problem = area_mismatch(st.maps_area, fa, cfg.grid_step, st.drawing_centre)
+            st.drawing_area = fa
+    st.surface = paper_mod.load(config_dir)
     return st
 
 
@@ -249,15 +250,19 @@ def file_area(rig) -> tuple | None:
     return None if a is None else tuple(float(x) for x in np.asarray(a).reshape(2))
 
 
-def area_mismatch(maps_area, rig_area, cell: float) -> str:
-    """Why the rig file's drawing area is stale, or "".  It may be smaller than the area the
-    drawable maps give (a conservative choice), never larger by more than one grid cell (the
-    system planner checks the same)."""
+def area_mismatch(maps_area, rig_area, cell: float, centre=(0.0, 0.0)) -> str:
+    """Why the rig file's drawing area cannot be drawn, or "".  It may be smaller than the
+    area the drawable maps give (a conservative choice), never larger by more than one grid
+    cell (the system planner checks the same)."""
     if rig_area is None:
         return ""
     gap = max(b - a for a, b in zip(maps_area, rig_area))
     if gap <= cell + 1e-9:
         return ""
+    if min(maps_area) <= 0.0:
+        return (f"the drawable maps are empty about the centre ({centre[0]:+.3f}, "
+                f"{centre[1]:+.3f}) m: no mounted arm can draw a rectangle around it; write a "
+                "drawing area and centre for these arms (tools/mounted_rig.py computes them)")
     return (f"rig.json's canvas.drawing_area_m {rig_area[0]:.3f} x {rig_area[1]:.3f} m is larger "
             f"than the area the drawable maps give, {maps_area[0]:.3f} x {maps_area[1]:.3f} m, "
             f"by {100 * gap:.1f} cm (more than one grid cell, {100 * cell:.0f} cm): the rig file "

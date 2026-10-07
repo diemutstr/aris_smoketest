@@ -181,7 +181,7 @@ def add_routes(app, st, store) -> None:
 
     @app.get("/calibration")
     def calibration():
-        files = calib_files.listing(st.config_dir)
+        files = [f for f in calib_files.listing(st.config_dir) if f.get("slot")]
         return dict(arms=sorted(f["slot"] for f in files), files=files,
                     status={str(a): st.rig.calibration_status(a) for a in st.rig.arm_ids})
 

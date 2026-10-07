@@ -56,8 +56,9 @@ def surface_z(st, rec) -> float | None:
 def _pump(st, lines, arm_configs, rep, stop, box, verify, rules) -> None:
     """The planner, in its own thread: every item goes into `box`, then ("end", value)."""
     try:
+        kw = {} if st.surface is None else dict(surface=st.surface)
         gen = system_plan(st.rig, lines, rules, arm_configs, st.cache_dir, st.workers,
-                          st.settings, rep, verify)
+                          st.settings, rep, verify, **kw)
         while True:
             if stop.is_set():
                 gen.close()

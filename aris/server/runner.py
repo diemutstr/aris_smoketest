@@ -57,9 +57,9 @@ def job_header(st, rec, extra) -> dict:
         rig_digest=st.digests()["rig_digest"],
         calibration_digest=st.digests()["calibration_digest"], rules=None)
     # The job describes itself: the pen that is in (its entry of rig.json's pens table, with
-    # its name and press), the tracking mode, and the person's note (the material, ...).  The
+    # its name and press) and the person's note (the material, ...).  The
     # operator PC applies the header's values.
-    h.update(pen=st.pen(), tracking=st.tracking, note=rec.note, kind=rec.kind, name=rec.name,
+    h.update(pen=st.pen(), note=rec.note, kind=rec.kind, name=rec.name,
              uncalibrated=st.uncalibrated, driver=st.driver_kind, speed=str(st.speed), **extra)
     return h
 
@@ -89,8 +89,10 @@ def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
     `air_mm`: an air run, the validation every first drawing on the hardware starts with: the
     whole job planned and checked with the drawing surface that far above the paper, so every
     draw is flown in the air; phases, checker and queues otherwise identical."""
-    if not 0.0 <= air_mm <= 200.0:
-        return Refusal("air", f"--air {air_mm} mm is not a height above the paper (0 to 200)")
+    if st.area_problem:                        # nowhere to draw: the planner would refuse all
+        return Refusal("no_drawing_area", st.area_problem)
+    if not air_mm >= 0.0:                      # below the paper is a deeper press, not air
+        return Refusal("air", f"--air {air_mm} mm is not a height above the paper")
     fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
 
     def prepare(rec):
@@ -325,9 +327,9 @@ def _end_state(rec, out, run) -> tuple[str, str]:
 
 
 def stop(st, rec: JobRecord) -> Refusal | None:
-    """Every arm stops now and holds; the job ends as stopped."""
+    """Every arm stops now and holds; the job ends as stopped.  A finished job: nothing to do."""
     if rec.finished:
-        return Refusal("finished", f"job {rec.id} is already {rec.state}")
+        return None
     rec.stop_time = time.time()
     rec.stop.set()
     if rec.coordinator is not None:

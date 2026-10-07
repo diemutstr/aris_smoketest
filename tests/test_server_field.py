@@ -1,5 +1,6 @@
 """Fixes from the first site day (2026-10-06): a single slot's mark job, positions that are no
-readings, `aris arms`, the rest of a failed job, contacts tripped at the start."""
+readings, `aris arms`, the rest of a failed job; then (2026-10-07) pens lifted one arm per
+phase, the paper map, SVG import, a one-arm config."""
 from __future__ import annotations
 
 import json
@@ -153,23 +154,216 @@ def test_the_rest_of_a_failed_job(tmp_path):
     c.post(f"/jobs/{rid}/stop")
 
 
-# --------------------------------------------------------------------------- 5. start trips
+# --------------------------------------------------------------------------- 2026-10-07: lifts
 
 
-def test_a_contact_tripped_at_the_start_is_dropped(tmp_path):
-    from aris.server.calibrate import CalibSettings, plan_calibrate, tripped
-    st = open_station(TWO, uncalibrated=True, cache_dir=None, with_arms=False, with_area=False)
-    st.drawing_area = tuple(st.rig.drawing_area_m)
+def _pen_on_paper(st, a):
+    """A joint configuration of arm a with its pen tip on the paper (a calibrate touch's descent
+    where it meets the nominal paper)."""
+    from aris.server.calibrate import CalibSettings, plan_calibrate
     rig = st.rig
-    plan = plan_calibrate(st, "2L", {a: rig.park_q(a) for a in rig.arm_ids},
+    plan = plan_calibrate(st, a, {b: rig.park_q(b) for b in rig.arm_ids},
                           CalibSettings(grid=3), min_points=1)
-    touches = [(i, m) for i, m in enumerate(m for s in plan.steps for m in s.motions)
-               if m.kind == "touch"]
-    (i0, t0), (i1, t1) = touches[:2]
-    bottom = lambda m: m.traj.q[int(np.argmax(np.linalg.norm(m.traj.q - m.traj.q[0], axis=1)))]
-    early = t0.traj.q[np.searchsorted(t0.traj.t, 0.3)]        # 1.5 mm into the descent
-    rows = [dict(event="contact", arm="2L", index=i0, q=list(early)),
-            dict(event="contact", arm="2L", index=i1, q=list(bottom(t1)))]
-    kept, dropped = tripped(rig, plan, rows, "2L")
-    assert [r["index"] for r in kept] == [i1] and len(dropped) == 1
-    assert dropped[0] == tuple(round(float(x), 4) for x in plan.points_table[0])
+    touch = next(m for s in plan.steps for m in s.motions if m.kind == "touch")
+    tips = rig.arm(a).tip(touch.traj.q)
+    z = np.array([rig.to_table(a, t)[2] for t in tips]) - rig.paper_z
+    return touch.traj.q[int(np.argmin(np.abs(z)))]
+
+
+def _two_pens_down(tmp_path):
+    from aris.server.steps import pen_down
+    st = open_station(ROOT / "config", speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    where = {a: st.rig.park_q(a) for a in st.rig.arm_ids}
+    for a in ("1L", "1R"):                               # row partners: never draw together
+        where[a] = _pen_on_paper(st, a)
+        assert pen_down(st.rig, a, where[a])
+    return st, where
+
+
+def test_row_partners_with_pens_down_lift_one_per_phase(tmp_path):
+    from aris.server.park import plan_park
+    st, where = _two_pens_down(tmp_path)
+    steps = plan_park(st, where)
+    assert all(not s.why or s.why == "already at its park" for s in steps), \
+        [s.why for s in steps]
+    moving = [s.phase.name for s in steps if s.motions]
+    assert moving == ["lift pens 1L", "lift pens 1R", "park 1L", "park 1R"]
+    assert [s.phase.active for s in steps if s.motions][:2] == [("1L",), ("1R",)]
+
+
+def test_row_partners_with_pens_down_park_cleanly(tmp_path):
+    from aris.execute.drivers.sim import SimArm
+    st, where = _two_pens_down(tmp_path)
+    rig = st.rig
+    for a in ("1L", "1R"):
+        st.drivers[a] = SimArm(a, where[a])
+    c = TestClient(create_app(st))
+    assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - rig.park_q(a))) < 1e-9, a
+
+
+# --------------------------------------------------------------------------- 2026-10-07: paper map
+
+
+class _Surface:
+    """A stand-in for aris.calib.paper.Surface: a 1.8 mm slope along x."""
+    points = np.array([[-0.5, 0.0, -0.0018], [0.5, 0.0, 0.0018], [0.0, 0.3, 0.0]])
+    date, paper_z = "2026-10-07", 0.0
+
+    def z(self, x, y):
+        return 0.0036 * np.asarray(x)
+
+
+def _fake_paper_module(monkeypatch, written):
+    import types
+    import aris.calib
+    mod = types.ModuleType("aris.calib.paper")
+
+    class _Plane(_Surface):
+        points = np.zeros((0, 3))
+    mod.surface = lambda config_dir: (_Surface() if (Path(config_dir) / "calibration"
+                                                     / "paper.json").exists() else _Plane())
+
+    def write_paper(surface, config_dir):
+        written.append(Path(config_dir))
+        f = Path(config_dir) / "calibration" / "paper.json"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("{}")
+        return f
+    mod.write_paper, mod.build_surface = write_paper, lambda config_dir: _Surface()
+    monkeypatch.setitem(sys.modules, "aris.calib.paper", mod)
+    monkeypatch.setattr(aris.calib, "paper", mod, raising=False)
+
+
+def test_the_paper_map_reaches_the_planner_rig_and_report(tmp_path, monkeypatch, capsys):
+    import shutil
+    from aris.server import paper, pipeline
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg)
+    written = []
+    _fake_paper_module(monkeypatch, written)
+    assert paper.load(cfg) is None                        # the module, but no file yet
+    assert paper.rebuild(cfg).endswith("paper.json") and written == [cfg]
+    got, real = [], pipeline.system_plan
+
+    def spy(*args, surface=None, **kw):                   # until the planner takes it
+        got.append(surface)
+        return real(*args, **kw)
+    monkeypatch.setattr(pipeline, "system_plan", spy)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    assert isinstance(st.surface, _Surface)
+    c = TestClient(create_app(st))
+    assert cli.main(["rig"], http=ClientHttp(c)) == 0
+    assert "paper map 3 points, -1.80 to +1.80 mm about the nominal paper, from 2026-10-07" in capsys.readouterr().out
+    small = tmp_path / "d.json"
+    small.write_text(json.dumps(dict(units="mm", frame="table", lines=[
+        dict(id="a", points=[[-300, 100], [-200, 150]])])))
+    cli.main(["draw", str(small), "--poll", "0.05"], http=ClientHttp(c))
+    out = capsys.readouterr().out
+    assert got and isinstance(got[0], _Surface)
+    rep = c.get(f"/jobs/{c.get('/jobs').json()[-1]['id']}").json()["report"]
+    u = rep["paper_under_drawing"]
+    assert u["range_mm"] > 0 and "paper        height map under the drawing" in out
+
+
+@pytest.mark.slow
+def test_a_plane_job_rebuilds_the_paper_map(tmp_path, monkeypatch):
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg)
+    written = []
+    _fake_paper_module(monkeypatch, written)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    c = TestClient(create_app(st))
+    assert cli.main(["calibrate", "2L", "--poll", "0.05"], http=ClientHttp(c)) == 0
+    rep = c.get(f"/jobs/{c.get('/jobs').json()[-1]['id']}").json()["report"]
+    assert written == [cfg] and rep["written"]["paper_surface"].endswith("paper.json")
+    assert rep["paper_surface"]["exists"] and rep["paper_surface"]["points"] == 3
+
+
+# --------------------------------------------------------------------------- 2026-10-07: svg
+
+SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="50mm" viewBox="0 0 100 50">
+  <g transform="translate(10,5) scale(2)">
+    <path d="M 0 0 C 10 0 10 10 20 10" fill="none" stroke="black"/>
+    <polyline points="0,15 5,20 10,15" fill="none" stroke="black"/>
+  </g>
+  <path d="M 60 40 Q 70 30 80 40" stroke="black" fill="none"/>
+  <text x="0" y="0">not drawn</text>
+</svg>"""
+
+
+def test_an_svg_becomes_table_lines(tmp_path):
+    from aris.server import drawing, svg
+    f = tmp_path / "pic.svg"
+    f.write_text(SVG)
+    d = svg.to_drawing(f, 0.5, at=(0.1, -0.2))
+    lines = drawing.from_dict(d)
+    assert [x.id for x in lines] == ["svg1", "svg2", "svg3"]
+    p = np.concatenate([x.points[:, :2] for x in lines])
+    assert p[:, 0].max() - p[:, 0].min() == pytest.approx(0.5)            # --width
+    centre = 0.5 * (p.min(axis=0) + p.max(axis=0))
+    assert centre == pytest.approx((0.1, -0.2))                           # --at
+    # the picture: x 10..80, y 5..45 user units (the group's transform applied) -> 70 wide
+    k, mid = 0.5 / 70.0, (45, 25)
+    cubic = lines[0].points[:, :2]
+    assert len(cubic) > 10                                                 # flattened
+    assert cubic[0] == pytest.approx((0.1 + (10 - 45) * k, -0.2 - (5 - 25) * k))
+    assert cubic[-1] == pytest.approx((0.1 + (50 - 45) * k, -0.2 - (25 - 25) * k))
+    # every chord within 0.5 mm of the curve: compare with a fine sampling of the Bézier
+    t = np.linspace(0, 1, 2001)[:, None]
+    P = [np.array(v, float) for v in ((10, 5), (30, 5), (30, 25), (50, 25))]
+    curve = ((1 - t) ** 3 * P[0] + 3 * (1 - t) ** 2 * t * P[1] + 3 * (1 - t) * t ** 2 * P[2]
+             + t ** 3 * P[3] - mid) * k * (1, -1) + (0.1, -0.2)
+    a, b = cubic[:-1], cubic[1:]
+    seg = b - a
+    for c in curve:
+        u = np.clip(np.einsum("ij,ij->i", c - a, seg) / np.einsum("ij,ij->i", seg, seg), 0, 1)
+        assert np.min(np.linalg.norm(a + u[:, None] * seg - c, axis=1)) <= 0.5e-3 + 1e-9
+    assert len(lines[1].points) == 3 and len(lines[2].points) > 4         # polyline, quad
+
+
+def test_aris_import_and_draw_an_svg(tmp_path, capsys):
+    f = tmp_path / "pic.svg"
+    f.write_text(SVG)
+    out = tmp_path / "pic.json"
+    assert cli.main(["import", str(f), "--width", "0.3", "-o", str(out)]) == 0
+    assert len(json.loads(out.read_text())["lines"]) == 3
+    assert cli.main(["import", str(f), "-o", str(out)]) == 1               # no --width
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    c = TestClient(create_app(st))
+    assert cli.main(["draw", str(f), "--width", "0.3", "--pen", "gel_g2"],
+                    http=ClientHttp(c)) == 1
+    assert "the pen in is" in capsys.readouterr().out
+    cli.main(["draw", str(f), "--width", "0.3", "--at", "-0.3", "0.1", "--poll", "0.05"],
+             http=ClientHttp(c))
+    jid = c.get("/jobs").json()[-1]["id"]
+    d = json.loads((st.jobs_dir / jid / "drawing.json").read_text())
+    p = np.concatenate([np.asarray(x["points"]) for x in d["lines"]]) * 1e-3
+    assert np.ptp(p[:, 0]) == pytest.approx(0.3)
+    assert 0.5 * (p.min(axis=0) + p.max(axis=0)) == pytest.approx((-0.3, 0.1))
+
+
+# --------------------------------------------------------------------------- one-arm config
+
+
+@pytest.mark.slow
+def test_mounted_rig_for_one_arm_gives_a_working_config(tmp_path):
+    import subprocess
+    out = tmp_path / "one_arm"
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "mounted_rig.py"), "--arms", "1R",
+                        "--out", str(out)], capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stderr
+    st = open_station(out, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=4)
+    assert hasattr(st, "rig") and st.area_problem == "", st
+    assert min(st.drawing_area) > 0.3 and st.rig.arm_ids == ("1R",)

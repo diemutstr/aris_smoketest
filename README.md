@@ -103,16 +103,26 @@ aris touchoff 2L                      # one touch at a reference point: the pen'
 aris touchoff 2R
 ```
 
-Drawing runs in **mode A** by default: joint position control, the plan 3.5 mm below the paper
-(the pen's `press_m` in rig.json), 15 mm/s on the paper — the recipe that drew the first word on
-the rig. `aris serve --tracking impedance` chooses mode B (the pen-force controller).
+Drawing is joint position control with a geometric press: the plan runs the pen's `press_m`
+(rig.json) below the measured paper, 15 mm/s on the paper — the recipe that drew Diemut's
+installation and every line on this rig. It is the only mode (the impedance controller was
+removed on 2026-10-07; it lives at commit cb6e958).
+
+**Paper height.** Every `aris calibrate <slot>` adds its touches to one height map of the table
+(`config/calibration/paper.json`); drawings are planned on that surface minus the press and the
+checker judges the tip against the same file; `aris rig` shows the map. Following paper that
+varies by millimetres needs touches about 5 cm apart. A slot without a real joint reading (none,
+all zeros, or older than 60 s — FCI off, stack down) is never planned from.
 
 Then a drawing, from the planning PC or any machine that reaches the server
 (`--server http://<planning pc>:8420`):
 
 ```
 aris draw drawings/today.json --note "4H on 120 g paper"   # submits, prints a line on every change, then the report
-aris draw --rest-of <job id>          # what a stopped job left, as a new drawing
+aris draw pic.svg --width 1.70        # an SVG, 1.70 m wide about the area's centre (--at X Y places it)
+aris import pic.svg --width 1.70 -o pic.json   # the same, written as a drawing file
+aris draw --rest-of <job id>          # what a stopped or failed job left, as a new drawing
+aris arms                             # every slot: robot, joints (or "no reading"), at park?, last reported
 aris status                           # the current or last job, any time
 aris stop                             # every arm stops at once and holds; the job is finished
 aris park                             # every arm back to its park, one at a time (pens lifted first)
@@ -151,7 +161,7 @@ Everything a job produces is in one directory, `out/jobs/<job id>/` on the plann
 
 | file | what it is |
 |---|---|
-| `job.json` | the header: rig and calibration digests, the fit, the pen, the tracking mode, your note |
+| `job.json` | the header: rig and calibration digests, the fit, the pen, your note |
 | `drawing.json` | the drawing as planned (after the fit) |
 | `phases.jsonl` | the phases, in order: who moves, who stands parked |
 | `<phase>__<slot>.queue` | the motions of that slot in that phase, in order, each one checked |

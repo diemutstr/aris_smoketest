@@ -1,7 +1,7 @@
 """The rig and the server: rig, arms, serve."""
 from __future__ import annotations
 
-from aris.cli.common import _assume, assumptions_line, say, verdict
+from aris.cli.common import _assume, assumptions_line, paper_line, say, verdict
 
 
 def cmd_arms(a, http) -> int:
@@ -35,7 +35,7 @@ def cmd_rig(a, http) -> int:
     c = r.get("drawing_area_centre_m") or [0.0, 0.0]
     say(f"drawing area {r['drawing_area_m'][0]:.3f} x {r['drawing_area_m'][1]:.3f} m around "
         f"({c[0]:+.3f}, {c[1]:+.3f}), canvas {r['canvas_m'][0]:.3f} x {r['canvas_m'][1]:.3f} m")
-    say(f"pen {(r.get('pen_in') or {}).get('name')}, tracking {r.get('tracking')}")
+    say(f"pen {(r.get('pen_in') or {}).get('name')}")
     files = r.get("calibration_files", {})
     for aid, arm in r["arms"].items():
         T = arm["T_table_base"]
@@ -44,6 +44,9 @@ def cmd_rig(a, http) -> int:
                           for k in ("base", "pen") if k in f) or "no file"
         say(f"slot {aid:<3} axis ({T[0][3]:+.4f}, {T[1][3]:+.4f}) m  calibration "
             f"{arm['calibration']}  [{parts}]")
+    say(f"paper map {paper_line(r.get('paper_surface'))}")
+    if r.get("drawing_area_problem"):
+        say(f"NO DRAWING: {r['drawing_area_problem']} (park, calibrate and marks still run)")
     return verdict(True, "rig read")
 
 
@@ -59,7 +62,6 @@ def _station(a, with_arms: bool):
                         jobs_dir=getattr(a, "jobs", "out/jobs"), workers=a.workers,
                         settings=Settings(grid_step=a.map_grid), with_arms=with_arms,
                         sim_paper=_sim_paper(getattr(a, "sim_paper", None)),
-                        tracking=getattr(a, "tracking", "position"),
                         sim_truth=getattr(a, "sim_truth", None),
                         sim_base_error=None if not getattr(a, "sim_base_error", None) else
                         tuple(float(x) for x in a.sim_base_error.split(",")),

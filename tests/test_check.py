@@ -1058,6 +1058,30 @@ def test_phase_end_catches_a_touching_pair_and_a_missing_arm():
     _fails(check_phase_end(CONFIG, RIG.phase(1), {"1L": RIG.park_q("1L")}), "well formed")
 
 
+def _pen_down(slot, xy):
+    Q, _ = ik_path(slot, np.array([[*xy, -PRESS], [xy[0], xy[1] + 1e-4, -PRESS]]))
+    return Q[0]
+
+
+def test_phase_end_with_a_pen_still_down():
+    """Pens are lifted one arm per phase: at the end of the phase that lifted 2L's pen, 2R (not
+    moved, in `standing`) still has its pen on the paper and is accepted where it stands; the
+    pair rows still count it.  Without `standing` it fails its paper row, and a phase that
+    leaves the arm it MOVED at the paper fails too."""
+    down = {"2L": _pen_down("2L", (-0.56, 0.17)), "2R": _pen_down("2R", (0.55, 0.17))}
+    ph = Phase("lift pens 2L", ("2L",), tuple(a for a in SLOTS if a != "2L"), ())
+    lifted = dict(down, **{"2L": RIG.park_q("2L")})
+    v = check_phase_end(CONFIG, ph, lifted, standing={"2R": down["2R"]})
+    print(f"\n{v}")
+    assert v.passed, v.failed
+    assert "arm 2R: paper (pen)" not in [m.name for m in v.measurements]
+    assert len([m for m in v.measurements if m.name.startswith("arms ")]) == 15
+    _fails(check_phase_end(CONFIG, ph, lifted), "arm 2R: paper (pen)")
+    left = check_phase_end(CONFIG, ph, down, standing={"2R": down["2R"]})
+    _fails(left, "arm 2L: paper (pen)")
+    _fails(check_phase_end(CONFIG, ph, lifted, standing={"2L": None}), "well formed")
+
+
 # =========================================================================== standing arms
 
 

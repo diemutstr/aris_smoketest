@@ -70,14 +70,13 @@ yourself.
 
 ```
 cd ~/aris-clean/aris/robot/ros2_ws
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -40
-colcon test --packages-select aris_controllers && colcon test-result --verbose
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release -DFranka_DIR=<libfranka build dir> 2>&1 | tail -40
 source install/setup.bash
 ```
 
-Expected: `Summary: 3 packages finished` and the test result `0 failures`. A compile error in
-`joint_impedance_controller.cpp` is a known possibility (the Jazzy API could not be compiled on
-the planning side): report the first 40 lines of the error verbatim and stop. Do not patch it.
+Expected: `Summary: 1 package finished` (the bringup package; there is no controller of our own
+any more — the arms run the stock trajectory controller). A build error: report the first 40
+lines verbatim and stop. Do not patch it.
 
 ## Step 5 — the Python side
 
@@ -86,11 +85,11 @@ cd ~/aris-clean/aris
 python3 -m venv --system-site-packages .venv && . .venv/bin/activate && pip install -U pip
 pip install ./native/fr3_ik ./native/collide ./native/retime
 pip install -e . && pip install -e robot && pip install pytest fastapi uvicorn httpx
-python -c "import rclpy, aris_msgs.msg, aris, aris_robot; print('ok')"
+python -c "import rclpy, aris, aris_robot; print('ok')"
 python -m pytest robot/tests -q -m "not slow"
 ```
 
-Expected: `ok`, then `N passed` (around 67) and no `failed`. Every later step assumes this
+Expected: `ok`, then `N passed` (around 55) and no `failed`. Every later step assumes this
 terminal has run `source /opt/ros/jazzy/setup.bash; source ~/ros2_ws/install/setup.bash;
 source ~/aris-clean/aris/robot/ros2_ws/install/setup.bash; . ~/aris-clean/aris/.venv/bin/activate`.
 

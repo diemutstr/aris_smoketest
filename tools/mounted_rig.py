@@ -4,9 +4,14 @@
         --out config/two_arms
     .venv/bin/python tools/mounted_rig.py --check config/two_arms      # is it still in step?
 
-The written file is config/rig.json with `"mounted": false` on every other slot and the given
-drawing area (x by y, metres, around the given centre in the table frame, [0, 0] by default; it
-must lie inside what the drawable maps allow, which the server checks when it starts).
+    .venv/bin/python tools/mounted_rig.py --arms 1R --out config/one_arm   # area computed
+
+The written file is config/rig.json with `"mounted": false` on every other slot and a drawing
+area (x by y, metres, around a centre in the table frame).  Given (`--area`, `--centre`, [0, 0]
+by default), it must lie inside what the drawable maps allow, which the server checks when it
+starts.  Not given, it is computed: the drawable maps of these arms (with the pen's press), the
+centre at the middle of what they can draw (to 1 cm), the largest rectangle about it the
+server accepts (`aris.system.area.admissible`, rounded down to 1 cm).
 Everything else — steel, hangers, clearances, gates, pens — is copied, so there is one source of
 truth and this file is derived from it; `--check` says whether the derived file still matches
 its source.  A `calibration` link next to the file points at config/calibration, so the same
@@ -55,6 +60,35 @@ def derive(source: dict, slots: list[str], area: tuple[float, float] | None,
                 "edit by hand; change config/rig.json and run the tool again.",
     }
     return out
+
+
+def computed_area(out_dir: Path) -> tuple[tuple, tuple]:
+    """(area, centre) the mounted arms' drawable maps give, for the rig file in out_dir."""
+    sys.path.insert(0, str(ROOT))
+    import numpy as np
+    from aris.rig import Rig
+    from aris.system import area as area_mod, maps as maps_mod, phases
+    from aris.system.settings import Settings
+    rig = Rig.load(out_dir)
+    rules = rig.rules()
+    maps = maps_mod.load_or_build(rig, phases(rig), rules.gates, Settings(),
+                                  ROOT / "out" / "cache", os.cpu_count() or 1, press=rules.press)
+    if not maps:
+        raise SystemExit("no drawable maps: no mounted arm")
+    m0 = next(iter(maps.values()))
+    union = np.zeros_like(m0.state, bool)
+    for m in maps.values():
+        union |= m.state == maps_mod.DRAWABLE
+    if not union.any():
+        raise SystemExit("the mounted arms can draw nowhere on the paper")
+    X, Y = np.meshgrid(m0.x, m0.y, indexing="ij")
+    centre = (round(float(X[union].mean()), 2), round(float(Y[union].mean()), 2))
+    size = area_mod.admissible(maps, centre=centre)
+    area = tuple(float(np.floor(s * 100.0) / 100.0) for s in size)
+    if min(area) <= 0.0:
+        raise SystemExit(f"no rectangle about {centre} lies inside what the arms can draw; "
+                         "give --area and --centre")
+    return area, centre
 
 
 def fences(slot_list: list[dict], mounted: list[str]) -> dict:
@@ -119,7 +153,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--arms", help="comma-separated slots that are mounted, e.g. 2R,3R")
     ap.add_argument("--area", nargs=2, type=float, metavar=("X", "Y"),
-                    help="drawing area in metres, x by y")
+                    help="drawing area in metres, x by y (default: computed from the arms' maps)")
     ap.add_argument("--centre", nargs=2, type=float, metavar=("X", "Y"),
                     help="centre of the drawing area, table frame, metres (default 0 0)")
     ap.add_argument("--out", help="the config directory to write")
@@ -142,21 +176,25 @@ def main() -> int:
     slots = [x.strip() for x in a.arms.split(",")]
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "rig.json").write_text(json.dumps(derive(source, slots, a.area, a.centre), indent=1)
-                                  + "\n")
     link = out / "calibration"
     if not link.exists():
         os.symlink(os.path.relpath(ROOT / "config" / "calibration", out), link)
-    canvas = derive(source, slots, a.area, a.centre)["canvas"]
+    area, centre = a.area, a.centre
+    if area is None:                         # computed from the arms' maps
+        (out / "rig.json").write_text(json.dumps(derive(source, slots, None, centre), indent=1))
+        area, centre = computed_area(out)
+    (out / "rig.json").write_text(json.dumps(derive(source, slots, area, centre), indent=1)
+                                  + "\n")
+    canvas = derive(source, slots, area, centre)["canvas"]
     area = canvas.get("drawing_area_m")
     centre = canvas.get("drawing_area_centre_m", [0.0, 0.0])
     print(f"wrote {out / 'rig.json'} for slots {slots}")
     print(f"drawing area {area[0]:.3f} x {area[1]:.3f} m about the centre "
           f"({centre[0]:+.3f}, {centre[1]:+.3f}) m" if area else
           f"no drawing area; centre ({centre[0]:+.3f}, {centre[1]:+.3f}) m")
-    print("reminder: the area must lie inside the area the drawable maps give for these arms "
-          "about that same centre (the system planner computes it; the server refuses to start "
-          "otherwise)")
+    print("computed from the arms' drawable maps" if a.area is None else
+          "given: it must lie inside the area the drawable maps give for these arms about that "
+          "centre (the server refuses drawings otherwise)")
     return 0
 
 

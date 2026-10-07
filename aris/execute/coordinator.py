@@ -132,7 +132,10 @@ class Coordinator:
         if isinstance(q, str):
             self.log.write("phase failed", phase=phase.name, why=q)
             return f"{phase.name}: {q}"
-        v = check_phase_end(self.config_dir, phase, q)
+        # arms the phase did not move are accepted where they stand (a pen still at the
+        # paper, to be lifted in a later phase); the moved arms answer to every rule
+        v = check_phase_end(self.config_dir, phase, q,
+                            standing=[a for a in q if a not in phase.active])
         out.phase_ends.append((phase.name, v.passed, v.tightest, v.min_clearance))
         self.log.write("phase end check", phase=phase.name, passed=v.passed,
                        tightest=v.tightest, min_clearance=v.min_clearance,

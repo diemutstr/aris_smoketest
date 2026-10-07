@@ -89,13 +89,21 @@ are read on this parameter at 1 kHz.
 
 ## Before the next phase: `check_phase_end`
 
-`check_phase_end(config_dir, phase, q_by_slot)` takes where every arm stands, by slot (active arms at the
+`check_phase_end(config_dir, phase, q_by_slot, standing=None)` takes where every arm stands, by slot (active arms at the
 end of their queues; a parked arm left out stands at its park configuration; an active arm left
 out fails). Everything stands still, so it checks one configuration per arm: every one of the 15
 pairs of arms against each other, whole bodies with their bases, at `arm_to_arm_m` (one row per
 pair, `arms 2L and 2R`), and every arm against the steel, the paper (links, tool, pen) and itself
 (one row per arm, the tightest of those). No walls: the pairs are measured directly. The
 coordinator calls it before it starts the next phase.
+
+`standing` names the arms the phase did not move that stand away from their park (pens are
+lifted one arm per phase, and after a stop mid-drawing several arms may stand with pens down).
+Such an arm is accepted wherever it stands, with no row of its own: it is where it was, and every
+motion of the phase was checked against that pose. It still counts in all 15 pairs. A slot the
+phase moves cannot be standing. Measured: 2L's pen lifted (2L to park) with 2R's pen still on the
+paper passes with 2R standing; without `standing` it fails `arm 2R: paper (pen)`, and a phase
+that leaves the arm it moved at the paper fails `arm 2L: paper (pen)`.
 
 ## How the motion between samples is covered
 
