@@ -221,8 +221,8 @@ def test_each_stack_is_pinned_to_its_core(tmp_path):
     f.write_text(json.dumps(dict(arm="2R")))
     cmd = launch_commands([f], site)["2R"]
     assert site.arm("2R").rt_core == 17 and site.arm("2L").rt_core == 16
-    assert cmd[:6] == ["chrt", "-f", "95", "taskset", "-c", "17"]
-    assert cmd[6:9] == ["ros2", "launch", "aris_bringup"]
+    assert cmd[:3] == ["taskset", "-c", "17"]                 # no chrt: it froze the PC
+    assert cmd[3:6] == ["ros2", "launch", "aris_bringup"]
     assert launch_commands([f])["2R"][0] == "ros2"
 
 
@@ -371,3 +371,85 @@ def test_a_job_that_cannot_start_fails_with_a_row_instead_of_hanging(tmp_path):
     last = app.state.received["p2"][-1]
     assert last["event"] == "runner finished" and last["status"] == "failed"
     assert Stuck.moves == 0 and not (tmp_path / "w" / "p2" / "events.jsonl").exists()
+
+
+def test_serve_restarts_a_stack_that_never_reads(tmp_path):
+    """A stack started while FCI was off reads an error and never joint states again.  Once
+    FCI is on, serve restarts it by itself after the stale time, and the joints are fresh;
+    while FCI stays off it does not restart more often than the restart period."""
+    from aris.execute.drivers import ArmState
+
+    class Arm:
+        def __init__(self):
+            self.fresh = False
+
+        def state(self):
+            if not self.fresh:
+                return ArmState(np.full(7, np.nan), np.zeros(7), False, ("no joint states",))
+            return ArmState(np.zeros(7) + 0.1, np.zeros(7), True, ("holding",))
+
+    arm, fci = Arm(), {"on": False}
+
+    class Stacks:
+        calls = []
+
+        def restart(self, a):
+            Stacks.calls.append(a)
+            arm.fresh = fci["on"]               # a new stack reads only once FCI is on
+            return ""
+
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": arm}, tmp_path / "log",
+                  stacks=Stacks(), rows=rows)
+    op.stale_restart_s, op.restart_every_s = 0.2, 0.5
+    op._restart_stale()                                  # stale only just now: nothing
+    time.sleep(0.25)
+    op._restart_stale()                                  # FCI still off: restarted, no use
+    op._restart_stale()                                  # within the period: not again
+    assert Stacks.calls == ["2L"] and not arm.fresh
+    fci["on"] = True                                     # the person switched FCI on
+    time.sleep(0.55)
+    op._restart_stale()
+    assert Stacks.calls == ["2L", "2L"] and arm.fresh
+    texts = [r["text"] for r in said if r["event"] == "restarting the stack"]
+    assert texts[0].startswith("restarting the stack of 2L: no joint states for 0 s")
+    assert texts[0].endswith("(FCI off? Desk: unlock, activate FCI)")
+    op._restart_stale()                                  # fresh now: nothing more
+    assert Stacks.calls == ["2L", "2L"]
+
+
+
+def test_a_refused_job_is_told_on_the_job_before_serve_moves_on(tmp_path):
+    from aris.execute import Job
+    from aris.rig import Rig
+    from aris_robot.remote import Remote
+    from aris_robot.simarm import SimTouchArm
+    from fake_server import Served, create_app
+    rig = Rig.load(CONFIG)
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    Job.create(jobs / "wc", dict(_header(rig), code=dict(commit="e7741e5", digest="0" * 16)))
+    app = create_app(jobs)
+    app.state.commands += [dict(id="a", command="run", job="wc"),
+                           dict(id="b", command="report")]
+    with Served(app) as srv:
+        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w",
+                      {"2L": SimTouchArm(rig, "2L", rig.park_q("2L"), speed=math.inf)},
+                      tmp_path / "log", idle_s=5.0, wait_s=0.3)
+        seen = []
+        op.rows.say_orig = op.rows.say
+
+        def say(event, **f):                # what the job's log holds when serve says it
+            if event == "run refused":
+                seen.append(list(app.state.received.get("wc", [])))
+            return op.rows.say_orig(event, **f)
+        op.rows.say = say
+        assert _serve_until(app, op, "report")
+    job_rows = app.state.received["wc"]
+    assert job_rows[0]["event"] == "runner finished" and job_rows[0]["status"] == "refused"
+    assert job_rows[0]["reason"] == "wrong_code" and "e7741e5" in job_rows[0]["why"]
+    assert seen and seen[0] == job_rows                 # on the job before serve moved on
+    refused = next(r for r in app.state.rows if r["event"] == "run refused")
+    assert refused["on_job"] is True

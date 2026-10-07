@@ -55,7 +55,6 @@ class Site:
     desk: dict = field(default_factory=dict)        # Desk's web API: "mode_endpoint"
     execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
     hardware_component: str = "FrankaHardwareInterface"
-    rt_priority: int = 95                           # SCHED_FIFO of each arm's stack
 
     def arm(self, slot: str) -> SiteArm:
         for a in self.arms:
@@ -109,8 +108,7 @@ def load(path) -> Site:
                 dict(d.get("touch", {})), tuple(arms),
                 dict(d.get("collision", {})), dict(d.get("desk", {})),
                 dict(d.get("execution", {})),
-                str(ros.get("hardware_component", "FrankaHardwareInterface")),
-                int(ros.get("rt_priority", 95)))
+                str(ros.get("hardware_component", "FrankaHardwareInterface")))
 
 
 def identity(arm: SiteArm, found_serial: str | None) -> str:

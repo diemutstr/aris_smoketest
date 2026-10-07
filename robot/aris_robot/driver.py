@@ -130,11 +130,12 @@ class RosArm:
         self._halt.set()
 
     def recover(self) -> Result:
-        """Clear a fault (a reflex, a link drop, guiding mode left) and bring the arm back,
-        one row per step: franka error recovery; the hardware component inactive -> active;
-        the trajectory controller and the broadcasters active; the joint states fresh again
-        (their stamp advancing).  Not fresh within `fresh_wait_s`: serve restarts the arm's
-        ROS stack and the freshness is checked again."""
+        """Bring the arm back after a fault, a link drop, guiding mode or a stack that started
+        with FCI off; one row per step, and every step runs even when one before failed:
+        the hardware component inactive -> active (the error-recovery action lives behind
+        it), franka error recovery, the trajectory controller and the broadcasters active,
+        the joint states fresh (their stamp advancing).  Still not fresh: serve restarts the
+        arm's ROS stack and the freshness is checked again."""
         if self._busy.locked():
             return Result.failed("still moving", self.state().q)
         mode, _ = self.ros.mode_and_errors()
@@ -142,29 +143,32 @@ class RosArm:
             return Result.failed("the arm is in user stop: release it at the arm first",
                                  self.state().q)
         steps = [] if self.fake else [          # fake hardware has neither
-            ("error recovery", self.ros.error_recovery),
-            ("hardware component", lambda: self.ros.reactivate_hardware(self.hw_component))]
+            ("hardware component", lambda: self.ros.reactivate_hardware(self.hw_component)),
+            ("error recovery", self.ros.error_recovery)]
         steps.append(("controllers", self._controllers_back))
+        failed = []
         for name, fn in steps:
             why = fn()
             self.say(f"recover: {name}", ok=not why, why=why)
             if why:
-                return Result.failed(f"{name}: {why}", self.state().q)
-        if not self._fresh(self.fresh_wait_s):
+                failed.append(f"{name}: {why}")
+        fresh = self._fresh(self.fresh_wait_s)
+        if not fresh:
             self.say("recover: joint states not fresh", waited_s=self.fresh_wait_s)
-            if self.restart_stack is None:
-                return Result.failed("the joint states are not fresh", self.state().q)
-            self.say("recover: restarting the stack")
-            self.restart_stack()
-            if not self._fresh(60.0):
-                self.say("recover: joint states not fresh after the restart")
-                return Result.failed("the joint states are not fresh after a stack restart",
-                                     self.state().q)
-        self.say("recover: joint states fresh")
+            if self.restart_stack is not None:
+                self.say("recover: restarting the stack")
+                self.restart_stack()
+                fresh = self._fresh(60.0)
+        self.say("recover: joint states fresh" if fresh else "recover: joint states not fresh")
+        if not fresh:
+            return Result.failed("; ".join(failed + ["the joint states are not fresh"]),
+                                 self.state().q)
         self._halt.clear()
         self._stopped = False
         s = self.state()
-        return Result.ok(s.q) if s.ok else Result.failed(", ".join(s.flags), s.q)
+        if s.ok:
+            return Result.ok(s.q)
+        return Result.failed("; ".join(failed + [", ".join(s.flags)]), s.q)
 
     def _trajectory_controller(self) -> str:
         """The trajectory controller active ("" when it is)."""

@@ -155,9 +155,12 @@ the Desk/FCI hand-over. The rules now:
 - **Cores**: each stack is pinned to its own isolated core (`taskset -c rt_core`).
 
 **Recovery (2026-10-07).**
-- `recover` is error recovery → hardware component inactive → active → the trajectory
+- `recover` is hardware component inactive → active → error recovery → the trajectory
   controller and broadcasters active → the joint states fresh (stamp advancing over 1 s) → if
-  not within 10 s, serve restarts the arm's stack and checks again. Every step is a row.
+  not, serve restarts the arm's stack and checks again. Every step runs and is a row.
+- serve restarts the stack of an arm with no fresh joint states for 30 s (at most once per
+  90 s), after the link-drop auto-recover. A stack started while FCI was off comes up once
+  FCI is on.
 - A reading older than 2 s is stale: `q` null, with "stale joint states (last x s ago)".
 
 **2026-10-07, second round.**
@@ -166,7 +169,8 @@ the Desk/FCI hand-over. The rules now:
   3 N above it over 15 readings. A trip before arming (the descent's own jolt) is counted, not
   taken. The cap (6 N over the hover's air zero) counts from the first reading. An extension
   past the planned end re-arms after its own ramp and keeps the first zero.
-- **Cores.** Stacks run as `chrt -f 95 taskset -c <rt_core>` (16-19).
+- **Cores.** Stacks run as `taskset -c <rt_core>` (16-19). Real-time priority goes on the
+  control-loop threads only, set by the site's helper. The whole tree at FIFO 95 froze the PC.
 - **No silent hangs.** serve watches a job until it has started: no progress for 10 s
   fails it with a row naming the step, also in the job's log, and the late start is blocked.
 - **Fewer refusals.** The touch refuses only when there is no force signal at all.
@@ -261,7 +265,7 @@ paper stands in for the force estimate.
   sits on the calibrated fake paper. "where" rows come while idle. A job planned for another
   rig gives a "run refused" row, and the process goes on. The stack keeper restarts a dying
   child after 0.05, 0.1, 0.2 s and stops a running one with SIGINT in under 3 s. Stacks are
-  launched as `chrt -f 95 taskset -c <core>`. A park after a stack restart runs. A job whose
+  launched as `taskset -c <core>` (no chrt). A park after a stack restart runs. A job whose
   start hangs in a call that never answers fails within the timeout, with a row naming the
   step, and never starts late.
 - **Runner.** Real HTTP against the stand-in server with simulated arms. The job is written
@@ -281,7 +285,7 @@ paper stands in for the force estimate.
 
 - The `/**/node` wildcards in the controllers file on Jazzy.
 - Anything with an arm: the sign and drift of the force estimate, the arming of the touch on
-  a real descent, error recovery and the hardware component coming back, `chrt`/`taskset` on
+  a real descent, error recovery and the hardware component coming back, `taskset` on
   the stacks.
 - Whether fake hardware offers a position command interface (the fake setup assumes it).
 - The touch on a real arm: cancelling a trajectory goal mid-descent (the controller then holds

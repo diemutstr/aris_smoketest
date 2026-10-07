@@ -5,7 +5,7 @@
     "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
     "force_sign_note": "per slot: +1 when the paper pushing the pen up reads positive; -1 on the hung (inverted) arms, as found 2026-10-06. The first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
     "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table",
-    "rt_core_note": "each mounted slot's stack runs on its own isolated core at SCHED_FIFO 95 (`chrt -f 95 taskset -c rt_core`): link drops ended on 2026-10-07 once each arm's loop had its own core (16-19), with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). 3L (the floor arm) and 3R (empty) get none: their robots are never driven."
+    "rt_core_note": "each mounted slot's stack runs pinned to its own isolated core (`taskset -c rt_core`, 16-19); link drops ended on 2026-10-07 once each arm's loop had its own core, with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). Real-time priority is set on the control-loop threads only, by the site's helper (README), never on the whole launch: that froze the PC. 3L (the floor arm) and 3R (empty) get none: their robots are never driven."
   },
   "server_url": "http://192.168.50.1:8420",
   "site_table": "site/aris_2026-10.json",
@@ -14,9 +14,7 @@
     "joint_prefix_note": "joint names are <joint_prefix>_joint1..7; the briefing notes one stack that used fr3v2",
     "rmw": "rmw_fastrtps_cpp",
     "hardware_component": "FrankaHardwareInterface",
-    "hardware_component_note": "the ros2_control hardware component of franka_description's fr3 ros2_control xacro; recovery brings it back (inactive, then active) after the reflex is cleared",
-    "rt_priority": 95,
-    "rt_priority_note": "SCHED_FIFO priority of each arm's stack (chrt -f); the unit's LimitRTPRIO must allow it"
+    "hardware_component_note": "the ros2_control hardware component of franka_description's fr3 ros2_control xacro; recovery brings it back (inactive, then active) after the reflex is cleared"
   },
   "touch": {
     "source": "the calibration touch under position control (DESIGN section 6 step 1; orchestrator 2026-10-01)",

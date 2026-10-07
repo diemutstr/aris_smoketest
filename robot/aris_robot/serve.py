@@ -235,6 +235,11 @@ class Operator:
         self.start_timeout_s = 10.0          # a job starts, or fails with a row, within this
         self.auto_recover: dict = {}         # site.json execution.auto_recover
         self._recovered: dict = {}
+        # an arm without fresh joint states this long gets its stack restarted (a stack started
+        # while FCI was off never reads again by itself), at most once per restart_every_s
+        self.stale_restart_s, self.restart_every_s = 30.0, 90.0
+        self._stale_since: dict = {}
+        self._restarted: dict = {}
         self.busy = threading.Event()
         self.quit = threading.Event()
 
@@ -316,8 +321,12 @@ class Operator:
         if res is None:
             return
         if isinstance(res, Refusal):
+            # on the job first (the server ends the job by it), then as this PC's row
+            posted = self.remote.post_events(job, [dict(
+                seq=0, time=time.time(), event="runner finished", status="refused",
+                reason=res.reason, why=res.detail, **self.where_fields())])
             self.rows.say("run refused", job=job, reason=res.reason, why=res.detail,
-                          **self.where_fields())
+                          on_job=not isinstance(posted, Refusal), **self.where_fields())
         else:
             self.rows.say("run ended", job=job, status=res.status, why=res.why,
                           **self.where_fields())
@@ -383,9 +392,33 @@ class Operator:
         while not self.quit.wait(self.idle_s):
             if not self.busy.is_set():
                 self.rows.say("where", **self.where_fields())
-                self._auto_recover()
+                self._auto_recover()            # first: a link drop recovers by itself
+                self._restart_stale()           # second: a stack that does not read restarts
             else:
                 self.rows.flush()
+
+    def _restart_stale(self) -> None:
+        """Restart the stack of every arm whose joint states have not been fresh for
+        `stale_restart_s`, at most once per `restart_every_s` per arm."""
+        if self.stacks is None:
+            return
+        now = time.monotonic()
+        for a, d in self.drivers.items():
+            q, why = reading(d)
+            if q is not None:
+                self._stale_since.pop(a, None)
+                continue
+            since = self._stale_since.setdefault(a, now)
+            if now - since < self.stale_restart_s:
+                continue
+            if now - self._restarted.get(a, -1e9) < self.restart_every_s:
+                continue
+            self._restarted[a] = now
+            text = (f"restarting the stack of {a}: no joint states for {now - since:.0f} s "
+                    f"(FCI off? Desk: unlock, activate FCI)")
+            self.rows.say("restarting the stack", arm=a, seconds=round(now - since, 1),
+                          reason=why, text=text)
+            self.stacks.restart(a)
 
     def _auto_recover(self) -> None:
         """A link drop (a fault matching `auto_recover.patterns`) is recovered by itself, at
@@ -409,15 +442,13 @@ class Operator:
 
 def launch_commands(args_files, site=None) -> dict:
     """slot -> the `ros2 launch` command of its stack, from bringup's argument files; pinned
-    to the slot's isolated core (site.json `rt_core`, `taskset -c`) at SCHED_FIFO
-    (`chrt -f`, site.json `ros.rt_priority`) when it has one, so no other process's real-time
-    loop preempts its control loop (link drops ended so, 2026-10-07)."""
+    to the slot's isolated core (site.json `rt_core`, `taskset -c`) when it has one.  No
+    real-time priority here: the whole launch tree at SCHED_FIFO froze the PC (2026-10-07);
+    the site's helper raises the control-loop threads only (README)."""
     out = {}
-    prio = 95 if site is None else int(site.rt_priority)
     for f in args_files:
         a = json.loads(Path(f).read_text())
         cmd = ["ros2", "launch", "aris_bringup", "arm.launch.py", f"args:={f}"]
         core = None if site is None else site.arm(a["arm"]).rt_core
-        out[a["arm"]] = cmd if core is None else (
-            ["chrt", "-f", str(prio), "taskset", "-c", str(core)] + cmd)
+        out[a["arm"]] = cmd if core is None else ["taskset", "-c", str(core)] + cmd
     return out

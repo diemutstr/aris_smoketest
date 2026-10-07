@@ -84,11 +84,11 @@ def test_fault_then_recover_then_park(monkeypatch, rig, site):
     assert not arm.move(park).done                              # faulted: refused
     r = arm.recover()
     assert r.done, r.why
-    assert node.recovery_steps == ["error recovery", "hardware FrankaHardwareInterface"]
+    assert node.recovery_steps == ["hardware FrankaHardwareInterface", "error recovery"]
     assert node.active == {"fr3_arm_controller", "joint_state_broadcaster",
                            "franka_robot_state_broadcaster"}
-    assert [x["event"] for x in said] == ["recover: error recovery",
-                                          "recover: hardware component",
+    assert [x["event"] for x in said] == ["recover: hardware component",
+                                          "recover: error recovery",
                                           "recover: controllers", "recover: joint states fresh"]
     assert arm.move(park).done and np.allclose(node.q_d, rig.park_q("2L"))
     assert "fr3_arm_controller" in node.active                 # left active and holding
@@ -116,3 +116,51 @@ def test_a_stalled_stack_is_restarted_by_recovery(monkeypatch, rig, site):
     events = [x["event"] for x in said]
     assert events[-3:] == ["recover: joint states not fresh", "recover: restarting the stack",
                            "recover: joint states fresh"]
+
+
+def test_recover_with_a_dead_hardware_component_ends_fresh(monkeypatch, rig, site):
+    """The stack started with FCI off: its hardware component read an error and was taken
+    down, the joint states are stale, and error recovery alone fails.  Bringing the component
+    back comes first, so the error recovery behind it then works, and the joints are fresh."""
+    arm, node = _arm(monkeypatch, rig, site, rig.park_q("2L"))
+    said = []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    node.hardware_dead, node.stalled_at = True, time.time() - 40.0
+
+    def reactivate(component, timeout=10.0):
+        node.recovery_steps.append(f"hardware {component}")
+        node.hardware_dead, node.stalled_at = False, None
+        return ""
+
+    def error_recovery(timeout=15.0):
+        node.recovery_steps.append("error recovery")
+        return "the error recovery did not succeed" if node.hardware_dead else ""
+
+    node.reactivate_hardware, node.error_recovery = reactivate, error_recovery
+    r = arm.recover()
+    assert r.done, r.why
+    assert node.recovery_steps == ["hardware FrankaHardwareInterface", "error recovery"]
+    assert said[-1]["event"] == "recover: joint states fresh"
+
+
+def test_recover_runs_every_step_and_restarts_a_stale_stack(monkeypatch, rig, site):
+    """A failing step does not stop the sequence; joints still stale after it: the stack
+    is restarted and checked again."""
+    arm, node = _arm(monkeypatch, rig, site, rig.park_q("2L"))
+    said, restarts = [], []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    arm.fresh_wait_s = 1.2
+    node.stalled_at = time.time() - 40.0
+    node.reactivate_hardware = lambda component, timeout=10.0: "no hardware component service"
+
+    def restart():
+        restarts.append(1)
+        node.stalled_at = None
+    arm.restart_stack = restart
+    r = arm.recover()
+    assert r.done, r.why and restarts == [1]
+    events = [x["event"] for x in said]
+    assert events[:3] == ["recover: hardware component", "recover: error recovery",
+                          "recover: controllers"]
+    assert said[0]["ok"] is False and "recover: restarting the stack" in events
+    assert events[-1] == "recover: joint states fresh"

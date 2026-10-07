@@ -304,7 +304,7 @@ message on the screen and wait for his answer.
 
 | what you see | what to do |
 |---|---|
-| `aris arms` does not list an arm | Desk: unlocked, FCI on? Then `sudo systemctl restart aris-robot` on the robot PC (the one exception to "leave it alone") |
+| `aris arms` says "no reading" for an arm | Desk: unlocked, FCI on? Then wait a minute: the robot PC brings the arm back by itself and says so in `aris arms`. Only if it still says "no reading" after two minutes: `sudo systemctl restart aris-robot` on the robot PC |
 | a job fails before any motion | read the reason in the output; usually "not calibrated", "arm not parked" (`aris park`), or the drawing is larger than the area (it is scaled down automatically unless that would halve it) |
 | an arm holds mid-job | look at it, clear the cause, `aris recover 2L` (or 2R), then `aris draw --rest-of <job id>` |
 | the arm's light is yellow or red | a robot fault: Desk, as before; then `aris recover` |

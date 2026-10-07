@@ -247,9 +247,18 @@ stack is down.
 with panda-py 1.1.1: take control, FCI on, connect, guide, release; `listen` and
 `stop_listen`; that the joints read the same standing still after the hand-back.
 
-**Real-time cores.** Each mounted slot's stack runs on its own isolated core at SCHED_FIFO
-95: serve launches it as `chrt -f 95 taskset -c <rt_core> ros2 launch ...`. The cores are
-site.json `rt_core`: 2L → 16, 2R → 17, 1L → 18, 1R → 19, and the priority is `ros.rt_priority`.
+**Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
+it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,
+2R → 17, 1L → 18, 1R → 19. serve sets no real-time priority. With the whole launch tree at
+SCHED_FIFO 95 on top of the site's own helper, the Dell froze twice (2026-10-07, NIC
+watchdog). Real-time priority belongs on the control-loop threads only, and the site's helper
+script sets it. For each running stack, the helper must:
+1. Find the `ros2_control_node` process of that arm's namespace.
+2. Find its franka_hardware control thread (the 1 kHz libfranka loop; `ps -T -p <pid>` lists
+   the threads).
+3. Run `chrt -f -p 95 <tid>` on that thread alone.
+
+The helper must run again after serve restarts a stack.
 3L (the floor arm) and 3R (empty) get no stack at all: the site table marks them
 `controlled: never` / `absent`, and site.json refuses to mount them. Link drops ended on
 2026-10-07 once each arm's loop had its own core and the network card's interrupts were kept
@@ -281,9 +290,9 @@ are applied at every boot.
   - After a move, the arm is standing when every |qd| ≤ 0.005 rad/s; the joints are read
     after waiting at most 1.5 s for that.
   - Recovery (`aris recover <slot>` on the planning PC; 2026-10-07) runs these steps, each
-    reported in a row:
-    1. Franka error recovery.
-    2. The hardware component inactive, then active.
+    reported in a row. Every step runs, even after one before it failed:
+    1. The hardware component inactive, then active (the error recovery lives behind it).
+    2. Franka error recovery.
     3. The trajectory controller and both broadcasters active.
     4. The joint states must be fresh: their stamp advances over 1 s.
     5. If they are not fresh within 10 s, serve restarts that arm's stack and checks again.
@@ -293,6 +302,12 @@ are applied at every boot.
   - After a job the trajectory controller stays active and holds.
   - A link drop (`communication_constraints_violation`) is recovered by itself, at most once
     per 2 minutes per arm (site.json `execution.auto_recover`).
+  - Serve restarts the stack of an arm whose joint states have not been fresh for 30 s, at
+    most once per 90 s, for example a stack started while FCI was off. The row says
+    "restarting the stack of 2L: no joint states for 32 s (FCI off? Desk: unlock, activate
+    FCI)". Once FCI is on, serve brings the arm up by itself; nobody restarts serve.
+  - A job refused at its start (wrong code, wrong rig, ...) is told on the job itself first,
+    then as serve's own row.
   - Touch: onset at 3 N over 15 readings, cap 6 N. The detector arms only once the descent
     runs at constant speed (its acceleration ramp over, plus 0.1 s), and takes its zero
     then. A trip during the ramp is the descent's own jolt, not the paper; it tripped 60 mm
