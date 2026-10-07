@@ -151,6 +151,17 @@ the Desk/FCI hand-over. The rules now:
   arms.
 - **Cores**: each stack is pinned to its own isolated core (`taskset -c rt_core`).
 
+**Recovery and mode B start (2026-10-07).**
+- `recover` is error recovery → hardware component inactive → active → the trajectory
+  controller and broadcasters active (impedance inactive) → the joint states fresh (stamp
+  advancing over 1 s) → if not within 10 s, serve restarts the arm's stack and checks again.
+  Every step is a row.
+- A reading older than 2 s is stale: `q` null, with "stale joint states (last x s ago)".
+- Mode B: the job's start tolerance is set on the impedance controller before it is switched
+  in (it re-reads `start_tolerance` on activation). The stream begins with a join from the
+  hold pose to the plan's start, over max(0.5 s, distance / 0.2 rad/s), at zero force, with a
+  "join" row. A start beyond the tolerance is refused with the distance.
+
 ## How the arm follows a motion in mode B (`tracking: impedance`)
 
 Two controllers, one at a time, switched by the driver:
@@ -277,7 +288,7 @@ touch settings.
 
 ## Tested here (no ROS), 2026-09-30
 
-`robot/tests`: 76 tests, 72 in the quick set; the 4 slow ones compile the controller
+`robot/tests`: 79 tests, 75 in the quick set; the 4 slow ones compile the controller
 core (6 to 15 s under load).
 
 - **Sampling.** The trajectory sampled at 1 kHz matches `aris.kernel.retime.sample` to

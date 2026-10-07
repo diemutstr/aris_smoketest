@@ -136,7 +136,8 @@ def test_stop_then_recover(monkeypatch, rig, site):
     assert rec.done, rec.why
     # the reflex is cleared first, then the hardware component comes back
     assert node.recovery_steps == ["error recovery", "hardware FrankaHardwareInterface"]
-    assert arm.state().ok and node.active == {"fr3_arm_controller"}
+    assert arm.state().ok and node.active == {"fr3_arm_controller", "joint_state_broadcaster",
+                                         "franka_robot_state_broadcaster"}
 
 
 def test_a_stream_not_starting_at_the_arm_is_refused(monkeypatch, rig, site):
@@ -163,9 +164,86 @@ def test_position_tracking_flies_every_kind_through_the_trajectory_controller(mo
         assert r.done, r.why
     assert node.goals == [m.traj for m in motions] and not node.published
     assert "aris_joint_impedance_controller" not in node.active
+    assert "fr3_arm_controller" in node.active                 # left active, holding
     assert arm.set_collision("job") == "" and arm.set_collision("normal") == ""
     c = site.collision
     assert node.collision_calls == [(c["job"]["torque_nm"], c["job"]["force_n"]),
                                     (c["normal"]["torque_nm"], c["normal"]["force_n"])]
     with pytest.raises(ValueError):
         arm.set_job(rig.pen(), "fast")
+
+
+def test_switching_in_joins_from_where_the_arm_holds(monkeypatch, rig, site):
+    """Mode B after a position move: the arm holds 0.02 rad off the plan's start.  The job's
+    start tolerance goes to the controller, and the stream starts with a join from the hold
+    pose; 0.1 rad off is refused with the distance."""
+    (lower,) = _chain(rig, "2L", ("lower",))
+    arm, node = _arm(monkeypatch, rig, site, lower.q_start)
+    said = []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    arm.start_tol = 0.03
+    node.switch(["fr3_arm_controller"], ["aris_joint_impedance_controller"])
+    hold = lower.q_start + np.array([0, 0.02, 0, 0, 0, 0, 0])
+    node.q_d = hold.copy()
+    r = arm.draw(lower)
+    assert r.done, r.why
+    assert ("aris_joint_impedance_controller", "start_tolerance", 0.03) in node.parameters
+    first = [c for c in node.published if c.stream == arm.last_report["stream"]][0]
+    assert np.allclose(first.q[0], hold) and np.all(first.f == 0.0)
+    join = next(x for x in said if x["event"] == "join")
+    assert join["rad"] == pytest.approx(0.02) and join["seconds"] == pytest.approx(0.5)
+    assert join["text"] == "join 0.020 rad over 0.5 s"
+    node.switch(["fr3_arm_controller"], ["aris_joint_impedance_controller"])
+    node.q_d = lower.q_start + np.array([0, 0.1, 0, 0, 0, 0, 0])
+    r = arm.draw(lower)
+    assert not r.done and "0.1 rad from the arm" in r.why
+
+
+def test_fault_then_recover_then_park(monkeypatch, rig, site):
+    """A reflex: recovery clears it, brings the hardware and the controllers back (the
+    trajectory controller and the broadcasters active, the impedance controller not), sees the
+    joint states fresh, and a park flies without a restart of anything."""
+    (lower,) = _chain(rig, "2L", ("lower",))
+    arm, node = _arm(monkeypatch, rig, site, lower.q_start)
+    said = []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    node.mode, node.errors = 4, ["cartesian_reflex"]
+    node.q_d = rig.park_q("2L") + np.array([0, 0, 0, 0, 0, 0, 0.05])   # stopped near park
+    park = retime(JointPath(np.array([node.q_d, rig.park_q("2L")])), rig.arm("2L").limits,
+                  rig.rules())
+    assert not arm.move(park).done                              # faulted: refused
+    r = arm.recover()
+    assert r.done, r.why
+    assert node.recovery_steps == ["error recovery", "hardware FrankaHardwareInterface"]
+    assert node.active == {"fr3_arm_controller", "joint_state_broadcaster",
+                           "franka_robot_state_broadcaster"}
+    assert [x["event"] for x in said] == ["recover: error recovery",
+                                          "recover: hardware component",
+                                          "recover: controllers", "recover: joint states fresh"]
+    assert arm.move(park).done and np.allclose(node.q_d, rig.park_q("2L"))
+    assert "fr3_arm_controller" in node.active                 # left active and holding
+
+
+def test_a_stalled_stack_is_restarted_by_recovery(monkeypatch, rig, site):
+    (lower,) = _chain(rig, "2L", ("lower",))
+    arm, node = _arm(monkeypatch, rig, site, lower.q_start)
+    said, restarts = [], []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    arm.fresh_wait_s = 1.5
+    node.stalled_at = __import__("time").time() - 5.0          # joint states 5 s old
+    s = arm.state()
+    assert not s.ok and np.all(np.isnan(s.q)) and s.flags[0].startswith("stale joint states")
+    from aris_robot.runner import reading
+    q, why = reading(arm)
+    assert q is None and why.startswith("stale joint states (last 5.")
+
+    def restart():
+        restarts.append(1)
+        node.stalled_at = None                                 # the new stack publishes
+    arm.restart_stack = restart
+    r = arm.recover()
+    assert r.done, r.why
+    assert restarts == [1]
+    events = [x["event"] for x in said]
+    assert events[-3:] == ["recover: joint states not fresh", "recover: restarting the stack",
+                           "recover: joint states fresh"]

@@ -91,6 +91,9 @@ def cmd_serve(a, site, rig) -> int:
         stacks = Stacks(launch_commands(files, site), rows, log_dir).start()
         drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
                    for i in mounted}
+        for i, d in drivers.items():          # recovery steps as rows; a stalled stack restarts
+            d.say = lambda event, _i=i, **f: rows.say(event, arm=_i, **f)
+            d.restart_stack = lambda _i=i: stacks.restart(_i)
     op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows,
                   robots=robots(site), make_calib=calibration_driver(a, site, drivers))
     op.auto_recover = dict(site.execution.get("auto_recover", {}))

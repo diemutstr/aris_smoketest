@@ -36,7 +36,7 @@ from aris.types import Refusal
 from aris_robot import force as F
 from aris_robot import stream as S
 from aris_robot import touch as T
-from aris_robot.rosarm import IMPEDANCE, MODES, TRAJECTORY, ArmNode, wait
+from aris_robot.rosarm import BROADCASTERS, IMPEDANCE, MODES, TRAJECTORY, ArmNode, wait
 
 log = logging.getLogger("aris_robot")
 CONTROLLERS = {"trajectory": TRAJECTORY, "impedance": IMPEDANCE}
@@ -55,6 +55,10 @@ class RosArm:
         self.rest_qd = float(ex.get("rest_qd_rad_per_s", 5e-3))
         self.settle_s = float(ex.get("settle_s", 1.5))
         self.hw_component = site.hardware_component
+        self.stale_s = float(ex.get("stale_s", 2.0))
+        self.fresh_wait_s = float(ex.get("fresh_wait_s", 10.0))
+        self.say = lambda event, **f: None       # serve: its rows
+        self.restart_stack = None                # serve: restart this arm's ROS stack
         self.tracking = "position"
         self.set_pen(rig.pen())
         self.ts = T.TouchSettings.from_site(site.touch, self.fs.sign)
@@ -78,6 +82,11 @@ class RosArm:
         if q is None:
             # no reading (stack down, FCI off): NaN, never zeros a planner could start from
             return ArmState(np.full(7, np.nan), np.zeros(7), False, ("no joint states",))
+        _, age = self.ros.joint_freshness()
+        if age is not None and age > self.stale_s:
+            # an old reading is no reading (a stalled stack keeps its last joints)
+            return ArmState(np.full(7, np.nan), np.zeros(7), False,
+                            (f"stale joint states (last {age:.1f} s ago)",))
         mode, errors = self.ros.mode_and_errors()
         st = self.ros.status
         holding = bool(st is not None and st.holding)
@@ -139,9 +148,19 @@ class RosArm:
             refused = self._refuse(motion.q_start)
             if refused:
                 return refused
+            switching_in = IMPEDANCE not in (self.ros.active_controllers() or set())
+            if switching_in:   # the job's start tolerance, read by the controller as it starts
+                why = self.ros.set_parameter(IMPEDANCE, "start_tolerance", self.start_tol)
+                if why:
+                    self.say("impedance: start tolerance not set", why=why)
             why = self.switch("impedance")
             if why:
                 return Result.failed(why, self.state().q)
+            hold = self._hold_pose(switching_in)
+            gap = float(np.abs(motion.q_start - hold).max())
+            if gap > self.start_tol:
+                return Result.failed(f"the arm holds {gap:.3f} rad from the plan's start "
+                                     f"(tolerance {self.start_tol:g})", self.state().q)
             if motion.kind == "lower":
                 zero = self._tare()
                 if isinstance(zero, Refusal):
@@ -150,7 +169,20 @@ class RosArm:
             arc = None if motion.tip_base is None else F.arc_length(motion.tip_base)
             fn = F.profile(motion.kind, motion.traj.t, arc, motion.intensity, self.fs,
                            f_start=self._press)
-            return self._run_stream(S.samples(motion.traj, fn, self.normal), motion.kind, fn)
+            samples, t_join = S.samples(motion.traj, fn, self.normal), 0.0
+            if gap > 1e-6:      # from where the arm holds onto the plan, then the plan
+                samples, t_join = S.with_join(hold, samples)
+                self.say("join", rad=round(gap, 4), seconds=round(t_join, 3),
+                         text=f"join {gap:.3f} rad over {t_join:.1f} s")
+            return self._run_stream(samples, motion.kind, fn, t_join)
+
+    def _hold_pose(self, switched_in: bool) -> np.ndarray:
+        """Where the impedance controller holds: the arm as it stood when switched in, else
+        the reference it holds (the end of the last stream)."""
+        st = self.ros.status
+        if not switched_in and st is not None and not st.streaming:
+            return np.asarray(st.q_d, float)
+        return self.state().q
 
     def touch(self, motion) -> Result:
         """The calibration touch (touch.py): the descent under the trajectory controller,
@@ -182,27 +214,63 @@ class RosArm:
             self.ros.trigger(self.ros.hold_srv, timeout=0.5)
 
     def recover(self) -> Result:
+        """Clear a fault (a reflex, a link drop, guiding mode left) and bring the arm back,
+        one row per step: franka error recovery; the hardware component inactive -> active;
+        the trajectory controller and the broadcasters active, the impedance controller not;
+        the joint states fresh again (their stamp advancing).  Not fresh within
+        `fresh_wait_s`: serve restarts the arm's ROS stack and the freshness is checked again."""
         if self._busy.locked():
             return Result.failed("still moving", self.state().q)
         mode, _ = self.ros.mode_and_errors()
         if mode in (3, 5):                  # the old stack's rule: never heal these by software
             return Result.failed(f"the arm is in {MODES[mode]}: release it at the arm first",
                                  self.state().q)
-        if not self.fake:                                 # fake hardware has no such action
-            # the reflex is cleared first, then the hardware component is brought back
-            # (the controller manager takes it down on a libfranka error)
-            why = self.ros.error_recovery() or self.ros.reactivate_hardware(self.hw_component)
+        steps = [] if self.fake else [          # fake hardware has neither
+            ("error recovery", self.ros.error_recovery),
+            ("hardware component", lambda: self.ros.reactivate_hardware(self.hw_component))]
+        steps.append(("controllers", self._controllers_back))
+        for name, fn in steps:
+            why = fn()
+            self.say(f"recover: {name}", ok=not why, why=why)
             if why:
-                return Result.failed(why, self.state().q)
-        active = self.ros.active_controllers() or set()
-        why = self.ros.switch([], [c for c in CONTROLLERS.values() if c in active])
-        why = why or self.ros.switch([TRAJECTORY], [])    # fresh: holds where the arm is
-        if why:
-            return Result.failed(why, self.state().q)
+                return Result.failed(f"{name}: {why}", self.state().q)
+        if not self._fresh(self.fresh_wait_s):
+            self.say("recover: joint states not fresh", waited_s=self.fresh_wait_s)
+            if self.restart_stack is None:
+                return Result.failed("the joint states are not fresh", self.state().q)
+            self.say("recover: restarting the stack")
+            self.restart_stack()
+            if not self._fresh(60.0):
+                self.say("recover: joint states not fresh after the restart")
+                return Result.failed("the joint states are not fresh after a stack restart",
+                                     self.state().q)
+        self.say("recover: joint states fresh")
         self._halt.clear()
         self._stopped = False
         s = self.state()
         return Result.ok(s.q) if s.ok else Result.failed(", ".join(s.flags), s.q)
+
+    def _controllers_back(self) -> str:
+        """Deactivate every one of ours, then the trajectory controller and the broadcasters
+        active again (fresh: it holds where the arm is)."""
+        ours = (TRAJECTORY, IMPEDANCE) + BROADCASTERS
+        active = self.ros.active_controllers()
+        if active is None:
+            return "cannot list the controllers"
+        why = self.ros.switch([], [c for c in ours if c in active]) if active & set(ours) else ""
+        want = [TRAJECTORY, BROADCASTERS[0]] + ([] if self.fake else [BROADCASTERS[1]])
+        return why or self.ros.switch(want, [])
+
+    def _fresh(self, wait_s: float) -> bool:
+        """The joint states' stamp advances over 1 s and the newest arrived recently."""
+        t_end = time.monotonic() + wait_s
+        while time.monotonic() < t_end:
+            s0, _ = self.ros.joint_freshness()
+            time.sleep(1.0)
+            s1, age = self.ros.joint_freshness()
+            if s0 is not None and s1 is not None and s1 > s0 and age <= self.stale_s:
+                return True
+        return False
 
     def close(self) -> None:
         self.ros.close()
@@ -274,7 +342,7 @@ class RosArm:
         self._stream += 1
         return self._stream
 
-    def _run_stream(self, samples: S.Samples, kind: str, fn) -> Result:
+    def _run_stream(self, samples: S.Samples, kind: str, fn, t_join: float = 0.0) -> Result:
         """Streams one motion and watches it.  Returns done or failed with why."""
         sid = self._next_stream()
         pacer = S.Pacer(samples, sid, self.lead)
@@ -312,10 +380,12 @@ class RosArm:
                         and report["contact_at"] is None:
                     report["contact_at"] = contact.at
                 if kind == "draw" and t_prev is not None:
-                    servo.update(float(fn(st.t)), f_rel, st.t - t_prev, contact.at is not None)
+                    servo.update(float(fn(st.t - t_join)), f_rel, st.t - t_prev,
+                                 contact.at is not None)
                 t_prev = st.t
                 if st.done:
-                    self._press = float(fn(duration)) + servo.trim if kind == "draw" else 0.0
+                    self._press = (float(fn(duration - t_join)) + servo.trim if kind == "draw"
+                                   else 0.0)
                     return self._end(report, Result.ok(self.state().q))
             if elapsed > duration + 2.0:
                 why = "the controller did not follow the stream" if started else \

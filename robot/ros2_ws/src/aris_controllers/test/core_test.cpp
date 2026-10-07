@@ -158,6 +158,15 @@ static void scenarios() {
     c.offer(make(3, 0.0, q0));
     CHECK(c.status().streaming && c.status().stream == 3);
   }
+  {  // the start tolerance can be set for a job: 0.02 rad off is then accepted
+    Core c(p, 64);
+    c.set_start_tolerance(0.03);
+    c.activate(q0);
+    Vec7 off = q0;
+    off(1) += 0.02;
+    c.offer(make(9, 0.0, off));
+    CHECK(c.status().streaming && c.status().stream == 9);
+  }
   {  // a stream that does not start at the reference is refused, and stays refused
     Core c(p, 64);
     c.activate(q0);

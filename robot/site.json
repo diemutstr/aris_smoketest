@@ -77,6 +77,10 @@
       "every_s": 120,
       "patterns": ["communication_constraints_violation"],
       "note": "a link drop is recovered by itself, once per every_s per arm; any other fault waits for a person (aris recover on the planning PC)"
-    }
+    },
+    "stale_s": 2.0,
+    "stale_note": "a joint reading older than this is no reading: rows say q null with 'stale joint states (last x s ago)'",
+    "fresh_wait_s": 10.0,
+    "fresh_note": "after a recovery the joint states must be fresh again (their stamp advancing over 1 s) within this, else serve restarts the arm's stack and checks again"
   }
 }

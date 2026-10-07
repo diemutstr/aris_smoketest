@@ -16,7 +16,7 @@ STUBS = ["rclpy", "rclpy.action", "rclpy.executors", "rclpy.qos", "action_msgs",
          "builtin_interfaces.msg", "control_msgs", "control_msgs.action",
          "controller_manager_msgs", "controller_manager_msgs.srv", "franka_msgs",
          "franka_msgs.action", "franka_msgs.msg", "franka_msgs.srv", "sensor_msgs", "sensor_msgs.msg", "std_srvs",
-         "std_srvs.srv", "trajectory_msgs", "trajectory_msgs.msg", "lifecycle_msgs",
+         "std_srvs.srv", "trajectory_msgs", "trajectory_msgs.msg", "lifecycle_msgs", "rcl_interfaces", "rcl_interfaces.msg", "rcl_interfaces.srv",
          "lifecycle_msgs.msg"]
 
 
@@ -47,7 +47,11 @@ class FakeArmNode:
         self.normal = np.asarray(normal, float)
         self.force_model = force_model or (lambda t, f: bias * self.normal)   # air
         self.drop_after = drop_after          # stream time after which chunks are lost
-        self.active = {"fr3_arm_controller"}
+        self.active = {"fr3_arm_controller", "joint_state_broadcaster",
+                       "franka_robot_state_broadcaster"}
+        self.mode, self.errors = 2, []
+        self.stalled_at = None                # the joint states' stamp stopped advancing here
+        self.parameters, self.switches = [], []
         self.hold_srv, self.resume_srv = "hold", "resume"
         self._lock = threading.Lock()
         self.statuses, self.status = [], None
@@ -68,7 +72,19 @@ class FakeArmNode:
             return self.q_d.copy(), np.zeros(7)
 
     def mode_and_errors(self):
-        return 2, []
+        return self.mode, list(self.errors)
+
+    def joint_freshness(self):
+        """A live stack's joint states arrive at 100 Hz with advancing stamps; a stalled one
+        keeps its last stamp and stops arriving."""
+        now = time.time()
+        if self.stalled_at is None:
+            return now, 0.005
+        return self.stalled_at, now - self.stalled_at
+
+    def set_parameter(self, node, name, value, timeout=3.0):
+        self.parameters.append((node, name, value))
+        return ""
 
     def drain_statuses(self):
         with self._lock:
@@ -80,6 +96,7 @@ class FakeArmNode:
 
     def switch(self, activate, deactivate, timeout=3.0):
         with self._lock:
+            self.switches.append((list(activate), list(deactivate)))
             self.active -= set(deactivate)
             self.active |= set(activate)
             if "aris_joint_impedance_controller" in activate:
@@ -128,6 +145,7 @@ class FakeArmNode:
 
     def error_recovery(self, timeout=15.0):
         self.recovery_steps.append("error recovery")
+        self.mode, self.errors = 2, []
         return ""
 
     def reactivate_hardware(self, component, timeout=10.0):
@@ -159,7 +177,8 @@ class FakeArmNode:
                     stream=self.stream, rejected=self.rejected, t=self.t,
                     streaming=self.streaming, done=self.done, starved=self.starved,
                     holding=self.holding, reason=self.reason, error_joint=-1,
-                    force=self.force_model(self.t, self.f_ff), f_ff=self.f_ff.copy())
+                    force=self.force_model(self.t, self.f_ff), f_ff=self.f_ff.copy(),
+                    q_d=self.q_d.copy())
                 self.status = st
                 self.statuses.append(st)
 

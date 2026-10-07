@@ -53,7 +53,8 @@ def reading(driver) -> tuple:
     q = np.asarray(s.q, float)
     if q.shape == (7,) and np.all(np.isfinite(q)):
         return [float(x) for x in q], None
-    why = next((f for f in s.flags if f.startswith("no joint states")), "no joint states")
+    why = next((f for f in s.flags if f.startswith(("no joint states", "stale joint states"))),
+               "no joint states")
     return None, why
 
 

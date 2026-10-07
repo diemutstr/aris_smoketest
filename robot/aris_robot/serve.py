@@ -157,6 +157,13 @@ class Stacks:
                 return f"the stack of {arm} (pid {p.pid}) does not exit"
         return ""
 
+    def restart(self, arm) -> str:
+        """Stop `arm`'s stack and start it again at once (a stalled stack, after recovery)."""
+        self.rows.say("stack restart", arm=arm)
+        why = self.pause(arm)
+        self.resume(arm)
+        return why
+
     def resume(self, arm) -> None:
         """Start `arm`'s stack again (at once)."""
         with self._locks[arm]:

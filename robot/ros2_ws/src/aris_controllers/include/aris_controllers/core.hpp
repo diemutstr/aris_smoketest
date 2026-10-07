@@ -215,6 +215,10 @@ class Core {
   const Status& status() const { return s_; }
   const Params& params() const { return p_; }
 
+  // The job's start tolerance (rig.json / the job header), set by the driver before the
+  // controller is switched in.
+  void set_start_tolerance(double rad) { p_.start_tolerance = rad; }
+
   // Stand still at q; forget every stream and every hold.
   void activate(const Vec7& q) {
     ref_.clear();

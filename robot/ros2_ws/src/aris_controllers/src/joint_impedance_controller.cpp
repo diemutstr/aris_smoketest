@@ -175,6 +175,9 @@ CallbackReturn JointImpedanceController::on_activate(const rclcpp_lifecycle::Sta
   }
   Vec7 q, qd;
   read_joints(q, qd);
+  // the start tolerance may have been set for this job since configure (the driver does it
+  // before switching the controller in)
+  core_->set_start_tolerance(get_node()->get_parameter("start_tolerance").as_double());
   core_->activate(q);                 // hold where the arm stands; no jump
   Sample stale;
   while (queue_->pop(stale)) {

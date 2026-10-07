@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import collections
 import threading
+import time
 
 import numpy as np
 import rclpy
@@ -28,6 +29,8 @@ from franka_msgs.action import ErrorRecovery
 from franka_msgs.msg import FrankaRobotState
 from franka_msgs.srv import SetFullCollisionBehavior
 from lifecycle_msgs.msg import State
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -37,6 +40,7 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 
 TRAJECTORY = "fr3_arm_controller"
 IMPEDANCE = "aris_joint_impedance_controller"
+BROADCASTERS = ("joint_state_broadcaster", "franka_robot_state_broadcaster")
 MODES = {0: "other", 1: "idle", 2: "move", 3: "guiding", 4: "reflex", 5: "user stopped",
          6: "automatic error recovery"}
 
@@ -65,6 +69,7 @@ class ArmNode:
         n = self.node
         self._lock = threading.Lock()
         self.q = self.qd = None
+        self.joint_stamp, self.joint_rx = None, None   # the newest joint state: stamp, arrival
         self.robot_state = None
         self.status = None
         self.statuses = collections.deque(maxlen=4096)   # every status, for the force servo
@@ -110,6 +115,8 @@ class ArmNode:
         with self._lock:
             self.q, self.qd = q, qd
             self.joint_readings.append(q)
+            self.joint_stamp = m.header.stamp.sec + 1e-9 * m.header.stamp.nanosec
+            self.joint_rx = time.monotonic()
 
     def _on_robot_state(self, m) -> None:
         js = m.measured_joint_state
@@ -120,6 +127,25 @@ class ArmNode:
             if order is not None:
                 self.readings.append((np.array([js.position[i] for i in order]),
                                       np.array([f.x, f.y, f.z])))
+
+    def joint_freshness(self) -> tuple:
+        """(stamp of the newest joint state in s, seconds since it arrived), or (None, None)."""
+        with self._lock:
+            if self.joint_rx is None:
+                return None, None
+            return self.joint_stamp, time.monotonic() - self.joint_rx
+
+    def set_parameter(self, node: str, name: str, value: float, timeout: float = 3.0) -> str:
+        """A double parameter of a node in this arm's namespace; "" when set."""
+        cli = self.node.create_client(SetParameters, f"/{self.arm.namespace}/{node}/set_parameters")
+        if not cli.wait_for_service(timeout_sec=timeout):
+            return f"{node} has no parameter service"
+        p = Parameter(name=name, value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE,
+                                                      double_value=float(value)))
+        res = wait(cli.call_async(SetParameters.Request(parameters=[p])), timeout)
+        if res is None or not res.results or not res.results[0].successful:
+            return f"{node} refused {name} = {value}"
+        return ""
 
     def drain_readings(self, joints_only: bool = False) -> list:
         """Every (q, F) from the robot state since the last call; `joints_only`: every q from

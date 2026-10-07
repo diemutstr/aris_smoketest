@@ -275,7 +275,22 @@ cores are 8-19 and 28-39; keep `rt_core` inside them, one per slot.
   - Trajectory goal tolerance 0.03 rad, `goal_time` 3 s.
   - After a move, the arm is standing when every |qd| ≤ 0.005 rad/s; the joints are read
     after waiting at most 1.5 s for that.
-  - Recovery clears the reflex first, then brings the hardware component back.
+  - Recovery (`aris recover <slot>` on the planning PC; 2026-10-07) runs these steps, each
+    reported in a row:
+    1. Franka error recovery.
+    2. The hardware component inactive, then active.
+    3. The trajectory controller and both broadcasters active; the impedance controller
+       stays inactive.
+    4. The joint states must be fresh: their stamp advances over 1 s.
+    5. If they are not fresh within 10 s, serve restarts that arm's stack and checks again.
+
+    After that a park (`aris park`) flies without restarting anything. A joint reading older
+    than 2 s is no reading: rows say `"q": null` with "stale joint states (last 7.3 s ago)".
+  - Mode B: before switching the impedance controller in, the driver gives it the job's start
+    tolerance (0.03 rad). The stream then starts with a short join from where the arm holds
+    to the plan's start: a straight joint move over max(0.5 s, distance / 0.2 rad/s), with
+    zero force and a "join" row. More than the tolerance off: refused, with the distance.
+  - After a mode A job the trajectory controller stays active and holds.
   - A link drop (`communication_constraints_violation`) is recovered by itself, at most once
     per 2 minutes per arm (site.json `execution.auto_recover`).
   - Touch: onset at 3 N over 15 readings, cap 6 N, tare spread 1.5 N.

@@ -118,3 +118,21 @@ class Pacer:
                              self.s.f[sl], self.s.n[sl], k >= len(self.s)))
             self.sent = k
         return out
+
+
+def with_join(q_from, s: Samples, rate: float = RATE_HZ, speed: float = 0.2,
+              t_min: float = 0.5) -> tuple[Samples, float]:
+    """`s` preceded by a straight joint move from `q_from` (where the arm holds) to its first
+    sample: over max(t_min, the largest joint distance / speed) s, starting and ending at rest
+    (a smoothstep), with zero force.  -> (the samples, the join's duration)."""
+    q_from = np.asarray(q_from, float)
+    d = s.q[0] - q_from
+    T = max(t_min, float(np.abs(d).max()) / speed)
+    t = np.arange(int(np.ceil(T * rate))) / rate                 # up to, not including, T
+    u = t / T
+    q = q_from + np.outer(3 * u ** 2 - 2 * u ** 3, d)
+    qd = np.outer((6 * u - 6 * u ** 2) / T, d)
+    zeros = np.zeros((len(t), 3))
+    n = np.tile(s.n[0], (len(t), 1))
+    return Samples(np.concatenate([t, s.t + T]), np.vstack([q, s.q]), np.vstack([qd, s.qd]),
+                   np.vstack([zeros, s.f]), np.vstack([n, s.n])), T
