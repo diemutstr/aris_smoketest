@@ -16,8 +16,10 @@ def cmd_mark(a, http) -> int:
     code, r = http.post("/mark" + (f"?{q}" if q else ""))
     if code != 200:
         return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
-    say(f"job {r['id']}: the arms' lights and the pilot buttons from here on "
-        "(white: guide the pen onto the mark, then ✓; ✗ redo; ○ skip)")
+    say(f"job {r['id']}: at each mark, the arm stops 3 cm above it; then, at the arm:")
+    say("  pinch the enabling button, put the pen on the cross, let go: 2 s still registers it")
+    say("  pinching again before the 2 s are up starts the 2 s again (to correct the pen)")
+    say("  a brief pinch without moving skips that touch; the arm then moves on by itself")
     v = follow(http, r["id"], a.poll)
     for line in report_lines(v["report"]):
         say(line)

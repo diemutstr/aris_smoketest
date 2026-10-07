@@ -36,7 +36,6 @@ from aris.types import Refusal
 
 from aris.version import code_version, describe
 
-from aris_robot.handover import HandOver, Switch
 from aris_robot.runner import reading, run_job, where_of
 
 log = logging.getLogger("aris_robot.serve")
@@ -84,8 +83,7 @@ class Rows:
 
 
 class Stacks:
-    """One child process per arm, kept running; one can be paused (stopped and not restarted)
-    while the calibration driver owns that arm's FCI connection."""
+    """One child process per arm, kept running; `restart(arm)` stops one and starts it again."""
 
     def __init__(self, commands: dict, rows: Rows, log_dir: Path, first_pause: float = 1.0,
                  max_pause: float = 60.0, env: dict | None = None):
@@ -220,17 +218,14 @@ class Operator:
 
     def __init__(self, remote, config_dir, work_dir, drivers: dict, log_dir, stacks=None,
                  idle_s: float = 10.0, wait_s: float = 30.0, rows: Rows | None = None,
-                 robots: dict | None = None, make_calib=None):
+                 robots: dict | None = None):
         """`robots`: slot -> {"robot", "ip", "serial_found", "identity"}: who the site table
-        says hangs in each slot and whether that was verified (site.identity).
-        `make_calib(slot, rig, say)`: a connected calibration driver (calib.CalibArm), for the
-        mark jobs; None: mark jobs are refused."""
+        says hangs in each slot and whether that was verified (site.identity)."""
         self.remote, self.config, self.work = remote, Path(config_dir), Path(work_dir)
         self.drivers, self.stacks = drivers, stacks
         self.idle_s, self.wait_s = idle_s, wait_s
         self.rows = rows or Rows(remote, Path(log_dir))
         self.robots = robots or {}
-        self.make_calib = make_calib
         self.code = code_version()           # which code this PC runs, told to the server
         self.start_timeout_s = 10.0          # a job starts, or fails with a row, within this
         self.auto_recover: dict = {}         # site.json execution.auto_recover
@@ -306,18 +301,7 @@ class Operator:
             if hasattr(d, "retarget"):
                 d.retarget(rig)
         drivers = {a: d for a, d in self.drivers.items() if a in rig.arm_ids}
-        around = None
-        header = self.remote.header(job)
-        if isinstance(header, dict) and header.get("kind") == "mark":
-            if self.make_calib is None:
-                self.rows.say("run refused", job=job, reason="no_calibration_driver",
-                              why="this operator PC has no calibration driver (aris_robot[calib])",
-                              **self.where_fields())
-                return
-            drivers = {a: Switch(a, d) for a, d in drivers.items()}
-            around = HandOver(drivers, lambda a, say: self.make_calib(a, rig, say),
-                              self.stacks, self.rows.say).around
-        res = self._run_watched(job, rig, drivers, around)
+        res = self._run_watched(job, rig, drivers)
         if res is None:
             return
         if isinstance(res, Refusal):
@@ -331,7 +315,7 @@ class Operator:
             self.rows.say("run ended", job=job, status=res.status, why=res.why,
                           **self.where_fields())
 
-    def _run_watched(self, job, rig, drivers, around):
+    def _run_watched(self, job, rig, drivers):
         """run_job in a worker, watched until the job has started: no progress for
         `start_timeout_s` (a call into a restarted stack that never answers, ...) fails the
         job with a row naming the step, here and in the job's own log, instead of hanging.
@@ -348,7 +332,7 @@ class Operator:
         def work():
             try:
                 out.append(run_job(self.remote, job, rig, self.config, self.work, drivers,
-                                   robots=self.robots, around_phase=around, progress=progress,
+                                   robots=self.robots, progress=progress,
                                    code=self.code))
             except Exception as e:                   # said, not swallowed
                 out.append(Refusal("exception", f"{type(e).__name__}: {e}"))

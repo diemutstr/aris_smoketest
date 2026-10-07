@@ -416,12 +416,17 @@ nominal spots, are solved wherever they are. Anchoring on a mark would shift the
 steel, the fences and the drawing area by the mark's error against the real table (decided
 2026-10-05 after Pete's "expect 2–5 cm"). Per arm: one pivot (3–4 hand orientations at its first
 spot, which gives the pen tip) and a single touch at every other spot; two arms ≈ 10 touches,
-six ≈ 38. The protocol is `docs/figures/mark_protocol.png`: `aris mark` once; then the arm's
-light (blue: stay clear, white: guide) and the pilot buttons (✓ registered, ✗ redo, ○ skip) are
-the whole interface. The person's final position and orientation are the sample; the planned
-hover is only the approach. Calibration is flown by its own driver (libfranka through
-panda-py, with Desk for modes and buttons), with the arm's ROS stack stopped for the job — a
-mode switch never reaches a running controller.
+six ≈ 38. The protocol (decided 2026-10-07, after three days in which Desk's control token
+was never handed over): `aris mark` once; nothing else. The arm flies to the hover under the
+normal stack, then its trajectory controller is deactivated — idle under FCI, joint states
+still streaming, the pilot's enabling button hand-guides it as always. The person pinches, puts
+the pen on the cross, lets go; when the robot's mode has left Guiding and the joints have stood
+still for two seconds, that is the sample (✓). Pinching again before that restarts the clock
+(✗); a brief pinch without moving skips the touch (○). The controller re-activates and the
+flight to the next hover is the confirmation. No Desk, no login, no token, no mode switch, no
+light: the robot's own mode stream and its joints are the whole interface. The earlier design
+(a separate panda-py/Desk driver with the ROS stack paused, pilot buttons, lights) lives at
+commit 7d93a14.
 
 **Subsets.** `aris mark` does every controlled slot; `--group row2 | rows12 | rows23` or a list
 of slots does fewer. x, y and yaw only exist relative to the spots, so a spot's position must be

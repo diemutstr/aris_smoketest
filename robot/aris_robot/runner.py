@@ -21,7 +21,7 @@ and the arm holds.
 The arms follow every motion under joint position control (one tracking mode, 2026-10-07);
 a header asking for another (`tracking` other than "position") was planned for something
 this PC cannot fly, and is refused.  The collision thresholds are raised for the job and
-restored after (not for a mark job).  The "runner started" row carries the job's pen (its
+restored after.  The "runner started" row carries the job's pen (its
 `press_m` is for the record: the plan already runs that far below the paper; a header
 without a pen falls back to this PC's rig file) and, per slot, the robot the site table names
 and whether it was verified.
@@ -216,13 +216,11 @@ def _collision(drivers: dict, which: str) -> str:
 
 
 def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dict,
-            poll: float = 0.01, robots: dict | None = None, around_phase=None, progress=None,
+            poll: float = 0.01, robots: dict | None = None, progress=None,
             code: dict | None = None):
     """Runs the job to its end on `drivers` (slot -> Driver, the mounted arms).  Returns the
-    coordinator's JobRun, or a Refusal when it cannot start.  For every job but a mark job
-    the collision thresholds are the site's "job" ones while it runs, "normal" after.
-    `around_phase(phase)`: a context manager entered before the phase runs and left after it
-    (serve's calibration hand-over); its `__enter__` returns why the phase cannot run, or "".
+    coordinator's JobRun, or a Refusal when it cannot start.  For every job the collision
+    thresholds are the site's "job" ones while it runs, "normal" after.
     `progress(step)`: told each step before the job starts, and "started" once it has (serve
     watches it: a job never hangs silently before it starts).  `code`: this PC's code version
     (default: read now); a job planned by other code is refused before anything moves."""
@@ -248,23 +246,18 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     settings = _job_settings(header, rig, drivers, robots)
     if isinstance(settings, Refusal):
         return settings
-    # the collision thresholds go through the stacks; a mark job has its arm's stack
-    # down (the calibration driver flies it), so it does not
-    thresholds = header.get("kind") != "mark"
     progress("collision thresholds")
-    threshold_note = _collision(drivers, "job") if thresholds else ""
+    threshold_note = _collision(drivers, "job")
     if threshold_note:      # the arms keep their normal (lower) thresholds: noted, not refused
         settings["collision_thresholds_not_set"] = threshold_note
     try:
         return _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings,
-                    around_phase, progress)
+                    progress)
     finally:
-        if thresholds:
-            _collision(drivers, "normal")
+        _collision(drivers, "normal")
 
 
-def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, around_phase,
-         progress):
+def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, progress):
     progress("work folder")
     d.mkdir(parents=True, exist_ok=True)
     (d / "job.json").write_text(json.dumps(header, indent=1, sort_keys=True))
@@ -291,16 +284,7 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, ar
                 coord.log.write("refused", phase=phase.name, why=refused[-1])
                 stop()
                 return
-            if around_phase is None:
-                yield phase
-                continue
-            with around_phase(phase) as why:
-                if why:
-                    refused.append(f"{phase.name}: {why}")
-                    coord.log.write("refused", phase=phase.name, why=refused[-1])
-                    stop()
-                    return
-                yield phase                 # the coordinator runs it; we resume after it
+            yield phase
 
     mirror = Mirror(remote, job_id, job, drivers).start()
     events = EventForwarder(remote, job_id, job.log_path, stop).start()

@@ -26,9 +26,8 @@ differs from them.
 - Arms are named by slot: `1L 1R 2L 2R 3L 3R`. Today `2L` and `2R` are in use. If Diemut says
   "arm 71", translate to the slot (the table in `docs/FOR_THE_ARTIST.md`, section 0).
 - Do not invent commands, flags or file edits. Edit only the files the documents name
-  (`robot/site.json`, `site/aris_2026-10.json`, `robot/secrets.json`, the systemd unit).
-- Never commit or push; never change branches; never put a password anywhere but
-  `robot/secrets.json`.
+  (`robot/site.json`, `site/aris_2026-10.json`, the systemd unit).
+- Never commit or push; never change branches.
 - When a step's output differs from the document: stop, show Diemut the exact output, and have
   her send it to Pete with the job id (`aris status`) and the folder `out/jobs/<job id>/`.
 

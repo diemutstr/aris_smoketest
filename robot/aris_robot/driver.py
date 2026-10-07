@@ -11,6 +11,11 @@ One tracking mode: joint position control through the stock joint trajectory con
   draw(m)     lower, draw and lift: the same as `move`
   touch(m)    the calibration touch under the trajectory controller (touch.py): down until
               the force onset, the joints there, back to the hover
+  guide(m)    the mark's hand-guided touch, without Desk (2026-10-07): at the hover the
+              trajectory controller is deactivated (the hardware keeps reading, the broadcasters
+              keep publishing), the person guides the arm with the pilot's enabling button, and
+              the joints are the sample once she has let go and the arm stands still; then the
+              controller holds again, the pen goes straight up and back to the hover
   hold()      nothing to do: the trajectory controller holds where the last motion ended
   stop()      at once: the running goal is cancelled, the arm holds
   recover()   error recovery, the hardware component back, the controllers back, the joint
@@ -53,6 +58,7 @@ class RosArm:
         self.kin = T.Kinematics.of(rig, arm_id)
         self.fake_paper = T.FakePaper(self.kin, rig.paper(arm_id), fake_paper_m) if fake else None
         self.start_tol = float(rig.execution().start_tolerance)
+        self.guide_cfg = dict(site.guide)
         self.ros = ArmNode(site.arm(arm_id), site.joint_names())
         self.gripper = Gripper(GripperRos(self.ros), GripperSettings.from_site(site.gripper),
                                say=lambda event, **f: self.say(event, **f))
@@ -125,6 +131,73 @@ class RosArm:
                 return Result.ok(r.q_contact)
             return Result.failed(r.why, self.state().q)
 
+    def guide(self, motion) -> Result:
+        """done with q = the sample and why "check" (registered) or "circle" (skip: a brief
+        pinch that moved nothing), as the pilot buttons used to answer; failed when nobody
+        guided within the timeout (the arm then holds at the hover)."""
+        with self._busy:
+            refused = self._refuse(motion.q_start)
+            if refused:
+                return refused
+            why = self.ros.switch([], [TRAJECTORY])
+            if why:
+                return Result.failed(f"cannot hand the arm over: {why}", self.state().q)
+            self.say("guide: your turn", text=f"guide: your turn on {self.arm_id}")
+            try:
+                out = self._watch_guide(np.asarray(motion.q_start, float))
+            finally:
+                why = self.ros.switch([TRAJECTORY], [])      # holds where the arm is
+                if why:
+                    self.say("guide: the trajectory controller did not come back", why=why)
+                    self._recover()
+            if not out.done:
+                return out
+            back = self._back_to_hover(np.asarray(motion.q_end, float), out.q)
+            if back:
+                return Result.failed(f"sample read, then {back}", self.state().q)
+            return out
+
+    def _watch_guide(self, q_hover) -> Result:
+        g = self.guide_cfg
+        w = GuideWatch(q_hover, g, time.monotonic())
+        while True:
+            s = self.state()
+            mode, _ = self.ros.mode_and_errors()
+            verdict = w.update(time.monotonic(), s.q, mode)
+            if verdict in ("check", "circle"):
+                self.say("guide: registered" if verdict == "check" else "guide: skipped",
+                         episodes=w.episodes, q=[float(x) for x in w.sample])
+                return Result(True, verdict, w.sample)
+            if verdict == "timeout":
+                return Result.failed(f"nobody guided {self.arm_id} within "
+                                     f"{g.get('timeout_s', 180.0):g} s", s.q)
+            if self._halt.is_set():
+                return Result.failed("stopped", s.q)
+            time.sleep(0.02)
+
+    def _back_to_hover(self, q_hover, q) -> str:
+        """The pen straight up `lift_m` (or 2/3, 1/3 of it where the arm cannot reach), then a
+        straight joint move to the hover, so the queue's next motion starts where planned."""
+        from aris.kernel.retime import retime
+        from aris.types import JointPath, Refusal
+        lift = float(self.guide_cfg.get("lift_m", 0.03))
+        for h in (lift, 2 * lift / 3, lift / 3):
+            up = T.straight_on(self.kin.arm, self.kin.arm.limits, self.kin.rules, q,
+                               self.kin.normal, h, float(self.guide_cfg.get("lift_speed", 0.01)))
+            if not isinstance(up, Refusal):
+                break
+        if isinstance(up, Refusal):
+            return f"cannot lift straight up: {up.detail}"
+        r = self._follow(up)
+        if not r.done:
+            return f"the lift failed: {r.why}"
+        if float(np.abs(q_hover - up.q[-1]).max()) > 1e-9:
+            r = self._follow(retime(JointPath(np.array([up.q[-1], q_hover])),
+                                    self.kin.arm.limits, self.kin.rules))
+            if not r.done:
+                return f"the way back to the hover failed: {r.why}"
+        return ""
+
     def hold(self) -> None:
         return None
 
@@ -141,6 +214,9 @@ class RosArm:
         arm's ROS stack and the freshness is checked again."""
         if self._busy.locked():
             return Result.failed("still moving", self.state().q)
+        return self._recover()
+
+    def _recover(self) -> Result:
         mode, _ = self.ros.mode_and_errors()
         if mode == 5:                       # only the person at the arm can release a user stop
             return Result.failed("the arm is in user stop: release it at the arm first",
@@ -278,3 +354,57 @@ class _Position:
 
     def joints(self):
         return self.arm.state().q
+
+
+class GuideWatch:
+    """When the hand-guided touch is done.  Fed (time, joints, robot mode) as they come.
+
+    A guiding episode is the robot mode at Guiding (3: the enabling button pinched).  After at
+    least one, with the mode not Guiding and every joint within `still_rad` over `settle_s`,
+    the joints are the sample: "check", or "circle" when that last episode moved less than
+    `skip_rad` (a brief pinch, nothing moved: skip).  A new pinch restarts the clock (redo).
+    No robot mode (None): an episode is the joints having moved more than `moved_rad` from the
+    hover.  No episode within `timeout_s`: "timeout"."""
+
+    def __init__(self, q_hover, g: dict, t0: float):
+        self.q0, self.t0 = np.asarray(q_hover, float), t0
+        self.settle = float(g.get("settle_s", 2.0))
+        self.still = float(g.get("still_rad", 0.002))
+        self.skip = float(g.get("skip_rad", 0.02))
+        self.moved = float(g.get("moved_rad", 0.05))
+        self.timeout = float(g.get("timeout_s", 180.0))
+        self.episodes, self.guiding, self.ep_q, self.ep_move, self.last_move = 0, False, None, 0.0, None
+        self.since, self.ref, self.sample = None, None, None
+
+    def update(self, t: float, q, mode) -> str:
+        q = np.asarray(q, float)
+        if not np.all(np.isfinite(q)):
+            return "wait"
+        if mode is None:                                   # no robot mode: by the joints
+            ready, skip = float(np.abs(q - self.q0).max()) > self.moved, False
+            self.episodes = max(self.episodes, int(ready))
+        else:
+            guiding = int(mode) == 3
+            if guiding and not self.guiding:
+                self.episodes += 1
+                self.ep_q, self.ep_move = q, 0.0
+            if guiding:
+                self.ep_move = max(self.ep_move, float(np.abs(q - self.ep_q).max()))
+            elif self.guiding:
+                self.last_move = self.ep_move
+            self.guiding = guiding
+            ready = self.episodes > 0 and not guiding
+            skip = self.last_move is not None and self.last_move < self.skip
+        if not ready:
+            self.since = None                              # the clock restarts
+            if self.episodes == 0 and t - self.t0 > self.timeout:
+                return "timeout"
+            return "wait"
+        if self.since is None or float(np.abs(q - self.ref).max()) > self.still:
+            self.since, self.ref = t, q
+            return "wait"
+        if t - self.since >= self.settle:
+            self.sample = q
+            return "circle" if skip else "check"
+        return "wait"
+

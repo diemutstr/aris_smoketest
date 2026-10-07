@@ -100,66 +100,38 @@ at boot (`robot/aris-robot.service`, restart always) and:
   `out/operator/rows.jsonl` and `serve.log`. A command that fails is a row; the process goes
   on.
 
-## The mark calibration: its own driver (`calib.py`, `desk.py`, `handover.py`)
+## The mark calibration: the hand-guided touch (`RosArm.guide`)
 
-Pete, 2026-10-05: the most mature software for this, its own driver so that a mode switch
-never reaches a running ROS controller, and nobody looks at a computer during it.
+At the hover the trajectory controller is deactivated. The hardware keeps reading and the
+broadcasters keep publishing, so the person can guide the arm with the pilot's enabling
+button. The row is "guide: your turn on 2L". A `GuideWatch` reads the robot mode and the
+joints:
+- **Episode:** `robot_mode` == 3 (Guiding), from the field `robot_mode` of
+  `franka_msgs/FrankaRobotState` on `/arm_<slot>/franka_robot_state_broadcaster/robot_state`.
+  The joints come from `/arm_<slot>/franka/joint_states`.
+- **Sample:** after at least one episode, not guiding, every joint within 0.002 rad over
+  2 s. The result is why "check", or "circle" when that last episode moved less than 0.02 rad
+  (a skip). A new pinch restarts the clock. These are the answers the pilot buttons used to
+  give, so the executor and the server are unchanged.
+- **Timeout:** no episode within 180 s fails the motion.
+- **No robot mode** (fake hardware): an episode is the joints moving more than 0.05 rad from
+  the hover.
 
-- **`CalibArm`** implements the same verbs on libfranka through panda-py (optional extra
-  `calib`). `move` streams our cubic q(t), qd(t) at 1 kHz into panda-py's joint position
-  controller. It does not use `move_to_joint_position`, which times the motion itself; the
-  checker's verdict holds at our timing only. `draw` and `touch` are refused ("not this
-  driver"). `recover` is libfranka's error recovery, refused only in user stop.
-- **`guide`**: FCI off, Desk to programming (the light goes white), then wait for a pilot
-  button: ✓ check or ○ circle end it; ✗ cross means "I am redoing this seat", so the arm
-  stays with the person and the wait goes on (row "guide: button cross, waiting"). Then Desk
-  to execution and FCI on, and the connection is
-  made again. The joints are read until two reads 0.5 s apart agree within 1e-4 rad: that is
-  the sample. Then the pen goes straight up 3 cm (2 or 1 cm where it cannot reach), and a
-  straight joint move goes back to the hover (refused beyond 0.5 rad), so the queue's next
-  motion starts where it was planned. Done with q = the sample and why = the button; the
-  executor writes the "registered" row (q, button, mark). No button in 10 minutes: failed,
-  the arm in execution mode, holding.
-- **`Desk`** is a four-call interface: `mode`, `buttons`, `unlock`/`lock`, `fci`. `PandaDesk`
-  uses panda-py's Desk; `SimDesk` is scripted for the tests. The operating-mode request
-  (panda-py has none) goes through panda-py's own request helper to `robot/site.json`
-  `desk.mode_endpoint` (method, path, bodies; today a guess), and every Desk call is a row
-  "desk: <call>" with its HTTP status, so a wrong endpoint shows at once and is fixed in the
-  config. Credentials come from
-  `robot/secrets.json` (gitignored).
-- **The hand-over in serve**: a job whose header has `"kind": "mark"` runs with a `Switch`
-  per arm. Before an arm's phase, serve pauses that arm's stack: SIGINT to its process group,
-  waits until it has exited, and does not restart it. Only then does it connect the
-  calibration driver. After the phase it disconnects, resumes the stack, and waits until the
-  stack reports the joints. One FCI connection per robot at a time holds because serve is the
-  only process that starts either, does the two steps in that order, one job at a time, and
-  gives up the phase rather than connect when a stack does not exit. libfranka refuses a
-  second connection anyway.
-- **Rows**: "calibration driver: stack stopped / connected / disconnected / stack back",
-  "guide: handed over", "guide: button x", "guide: taken back" (or "guide: no button"), and
-  the executor's "registered".
+Then the controller is activated again (if that fails, the recover sequence runs). The pen
+goes straight up 3 cm and straight back to the hover, so the queue's next motion starts where
+it was planned.
 
-**Field report applied (2026-10-06).** No mark touch was registered in 15 jobs because of
-the Desk/FCI hand-over. The rules now:
-- **Desk control**, once per arm turn. If the browser or an old token holds it, the driver
-  waits up to 60 s for a circle press, with a row saying so. Control is always released at
-  the end of the turn and on every failure.
-- **FCI order**: control → FCI on → libfranka connects. Per guide: programming (FCI goes
-  off) → button → execution → FCI on → reconnect → 1.5 s settle → standstill.
-- **Mode switch**: `POST /desk/api/operating-mode/<mode>`, no body, `X-Control-Token`
-  header (site.json `desk.mode_endpoint`). The buttons are check, cross, circle, left,
-  right, up, down; `listen` is ended with `stop_listen`.
-- **No zeros**: an arm without a reading (FCI off, stack down) is `"q": null` with a reason
-  in every row and in `where` (`where_missing`). The calibration driver is the source of
-  joints for its slot during its turn.
-- **Mark jobs** set no collision thresholds.
-- **Tolerances**: the start tolerance comes from the header or rig (0.03 rad); goal 0.03 rad
-  and 3 s.
-- **Standstill and recovery**: after a move, |qd| ≤ 0.005 rad/s within 1.5 s. Recovery is
-  reflex first, then the hardware component inactive → active. A link drop is
-  auto-recovered once per 2 minutes per arm.
-- **Touch**: 3 N over 15 readings, cap 6 N; force sign −1 on the hung arms.
-- **Cores**: each stack is pinned to its own isolated core (`taskset -c rt_core`).
+The Desk/panda-py calibration driver was removed on 2026-10-07 after three days of token
+failures; it lives at 7d93a14.
+
+**From the arms (2026-10-06).**
+- **No zeros.** An arm without a reading (stack down, stale joints) is `"q": null` with a
+  reason in every row and in `where` (`where_missing`).
+- **Start tolerance.** It comes from the header or the rig (0.03 rad). The trajectory goal is
+  0.03 rad and 3 s.
+- **Settling.** After a move the arm must reach |qd| ≤ 0.005 rad/s within 1.5 s.
+- **Link drops.** A link drop is auto-recovered once per 2 minutes per arm.
+- **Force sign.** It is −1 on the hung arms.
 
 **Recovery (2026-10-07).**
 - `recover` is hardware component inactive → active → error recovery → the trajectory
@@ -253,16 +225,10 @@ paper stands in for the force estimate.
   - thresholds the robot will not take are noted in the first row, and the job runs;
   - the first row carries the pen with its press and the robots;
   - refused before anything moves: a mode other than position, and a robot mismatch.
-- **Calibration driver** (a fake panda-py FCI and `SimDesk`): a guide round trip with each
-  button. The sample is the person's pose, the Desk calls in order (FCI off, programming,
-  buttons, execution, FCI on), the connection made again, a 3 cm lift then the hover, and the
-  three guide rows. The standstill check waits out a settling arm and fails on a restless
-  one, which then holds. No button: failed, in execution mode, no move. Draw and touch
-  refused; move, recover, and the user-stop refusal. Through the executor: the "registered"
-  row with button, mark and q. Serve with a mark job on two arms: pause 2R → calibration →
-  resume 2R → pause 3R → … in that order and in time, every arm registered, back at its
-  park. A mark job without the calibration driver is refused. The stack keeper pauses a
-  running stack, keeps it down, and resumes it.
+- **Guide** (a fake person on the fake ROS node): it hands over, registers after a guiding
+  episode and 2 s still, takes the arm back, flies the lift and the next motion. A second
+  pinch restarts the clock; a brief pinch is a skip; nobody guiding fails after the timeout;
+  without a robot mode the joints tell.
 - **The pen** of the header is recorded in the first row, or the rig file's when the header
   has none, and the row says which.
 - **serve.** Against the stand-in server: report, two runs (a drawing-like job and a

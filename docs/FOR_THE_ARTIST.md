@@ -23,7 +23,6 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 | the sides (confirmed by Pete from the drawing, 2026-10-05): **row 3 is the end at your desk, row 1 the far end; the slots named L are on your RIGHT when you stand at your desk facing the table** | done |
 | the planning laptop's name and its address on the robot network | ______ |
 | the robot PC's login (the user that owns the ROS install) | ______ |
-| Desk login (username / password) for the two robots | ______ |
 
 ---
 
@@ -118,10 +117,6 @@ Three files to fill in, with a text editor:
 1. `robot/site.json`: set `server_url` to `http://<planning laptop address>:8420`.
 2. `site/aris_2026-10.json`: the two live rows are `2L` and `2R`. Each names a robot and its
    address. If Pete tells you a different address for either robot, change it here.
-3. `robot/secrets.json` (make this file; it is never copied anywhere): the Desk login.
-   ```
-   {"default": {"username": "DESK_USERNAME", "password": "DESK_PASSWORD"}}
-   ```
 
 Install the resident program so it starts at every boot:
 
@@ -221,24 +216,20 @@ Type, on the laptop:
 aris mark
 ```
 
-Then stand at the table. Everything from here is the arm's base light and the three buttons on
-the pilot (the control pad on the arm):
+Then stand at the table. Nothing else is needed — no Desk, no buttons, no light to watch:
 
-1. The arm flies to a mark and stops above it. Its light is **blue**: stay clear.
-2. The light turns **white**: your turn. Pinch the enabling buttons on the arm, move it so the
-   pen tip sits exactly on the crossing of the mark, and let go. The arm holds where you leave it. **Keep the arm's
-   tilt roughly as it arrived** — the software asked for that tilt on purpose; only move the
-   tip onto the mark.
-3. Press **✓ (check)** on the pilot. The arm takes itself back (blue), lifts the pen, and flies
-   to the next position — sometimes the same mark with a different tilt, sometimes the other mark.
-4. If the tip was not properly in the mark, press **✗ (cross)** instead: the arm stays with you
-   (white) for another try. If a mark is unreachable or damaged, press **○ (circle)** to skip it.
+1. The arm flies to a mark and stops a few centimetres above it, then goes soft: your turn.
+2. Pinch the enabling buttons on the arm, move it so the pen tip sits exactly on the crossing
+   of the mark, and **let go**. **Keep the arm's tilt roughly as it arrived** — the software asked
+   for that tilt on purpose; only move the tip onto the mark.
+3. Keep your hands off for two seconds. The arm takes that as "done", lifts the pen and flies
+   to the next position — sometimes the same mark with a different tilt, sometimes the other
+   mark. The flight is your confirmation.
+4. Not right yet? Pinch again and move it before the two seconds are up; the clock starts
+   over. A mark you cannot reach: pinch briefly without moving the arm, let go — that skips it.
 5. When an arm is done it parks itself and the other arm starts. **Both arms parked = done.**
-   Do not touch Desk in the browser during the calibration: the system holds the robot's
-   control for the whole arm, and the browser would take it back (that is what stopped the
-   first attempt).
-   An arm standing still above a mark with its light blue for more than a minute means that
-   arm failed: go to the laptop, where the reason is written.
+   An arm hanging above a mark for more than three minutes without anyone guiding it gives up
+   on that touch; the reason is on the laptop.
 
 Per arm: six touches at its first mark (upright and five tilts), one touch at the second
 mark. Fourteen touches in all. When it is done the laptop prints, for each arm, how far it
@@ -329,8 +320,8 @@ Do not skip ahead; every stage proves what the next one relies on.
 
 **Stage 0 — the first run, you and your Claude.** Pete is not there; he answers messages. The
 robot PC is set up by your Claude following `docs/RUNBOOK_OPERATOR_PC_CLAUDE.md` (hand it that
-file when it is logged in on the robot PC); you do the two things in it that need hands (press
-pilot buttons, pinch the enabling buttons) with the emergency stop in your other hand. Then,
+file when it is logged in on the robot PC); you do the one thing in it that needs hands (pinch
+the enabling buttons and guide an arm by hand) with the emergency stop in your other hand. Then,
 on the laptop, the first motions ever, one at a time, you at the stop and nobody near the
 table:
 1. `aris park` — watch the first arm move; it should be slow and smooth. If anything moves
@@ -366,8 +357,6 @@ crosses the seams between the rows. Same looks, same photos.
 
 - The first run under real ROS has not happened yet: build, fake hardware, identify, touch-off,
   air drawing, paper — in that order, with Pete present.
-- Day-one checks on the hardware that nothing here can test: the Desk mode request on this
-  firmware (`robot/site.json` `desk.mode_endpoint`), the pilot button names, whether the arm's
-  joints can be read during hand-guiding, the panda-py wheel's libfranka version against the
-  robots' system version.
+- The one hardware fact nothing here can test: with the trajectory controller deactivated,
+  the enabling button hand-guides the arm and the joint states keep streaming (runbook step 7).
 - Fill the table at the top.

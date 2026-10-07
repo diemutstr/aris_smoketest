@@ -7,12 +7,14 @@ first mark six hand orientations (the pivot: pen upright and five tilts of 30 de
 degrees apart; turning about the vertical alone leaves the pen length free), at
 every other mark one.  The whole sequence is planned and checked up front and queued at once:
 a free move to each hover (the pen 30 mm above the mark), the `guide` there, and home.  At a
-guide the driver hands the arm to the person, who seats the pen on the mark and presses a
-pilot button; the executor writes the "registered" row (joints, button, mark); the driver
-then lifts the pen 3 cm and returns to the hover itself, so a guide ends where it began.
-  ✓ check   the touch counts;
-  ✗ cross   never reaches the server: the driver waits for the next button;
-  ○ circle  the touch is marked skipped for the solver; the rest runs as planned.
+guide the driver lets the person move the arm by hand (under FCI, its controller switched
+off): she pinches the enabling button, puts the pen on the cross and lets go; after 2 s
+standing still the touch is registered.  Pinching again before the 2 s are up restarts the
+clock; a brief pinch without moving skips the touch.  The executor writes the "registered" row
+(joints, mark, and what the driver made of the gesture in `button`); the driver then lifts the
+pen 3 cm and returns to the hover itself, so a guide ends where it began.
+  "check"   registered (let go): the touch counts;
+  "circle"  skipped (brief pinch): marked skipped for the solver; the rest runs as planned.
 A guide that fails (the hand-over itself) fails the job; the arm holds where it is.  When the
 arm's phase has run, the solver looks at this arm's touches (the pivot's residuals): a touch
 it names as bad gets one small extra phase (to that hover, the guide, home).  At the end the
@@ -22,6 +24,9 @@ written and the rig reloads; when it fails, the report names the slot or touch a
 written.
 """
 from __future__ import annotations
+
+# what the driver's two answers mean at the arm, in the words the person uses
+GESTURE = {"check": "registered (let go)", "circle": "skipped (brief pinch)"}
 
 import threading
 import time
@@ -42,9 +47,9 @@ POLL = 0.05                      # s between looks at the event log
 class Book:
     """What the job has gathered."""
     touches: list = field(default_factory=list)    # {slot, mark, orientation, q, index,
-                                                   #  skipped, button}
+                                                   #  skipped, button: check|circle}
     notes: list = field(default_factory=list)
-    buttons: dict = field(default_factory=dict)    # button -> count
+    buttons: dict = field(default_factory=dict)    # "check" / "circle" -> count (GESTURE)
     redone: list = field(default_factory=list)
 
 
@@ -110,7 +115,8 @@ def run_arm(st, rec, job, slot, now, slots, book) -> str:
     for t in touches:
         book.buttons[t["button"]] = book.buttons.get(t["button"], 0) + 1
         if t["skipped"]:
-            book.notes.append(f"{slot}: {t['mark']} orientation {t['orientation']} skipped")
+            book.notes.append(f"{slot}: {t['mark']} orientation {t['orientation']} "
+                              f"{GESTURE['circle']}")
     book.touches += touches
     return ""
 

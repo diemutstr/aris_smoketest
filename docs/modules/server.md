@@ -253,7 +253,10 @@ own pen and joints. `aris calibrate 2R`.
 ## The mark job
 
 Steps 2 and 3 of the calibration (DESIGN.md section 6), as `docs/figures/mark_protocol.png`
-draws it: `aris mark` once, then the arms' lights and the pilot buttons.
+draws it: `aris mark` once, then the person's hands at the arms. At each mark the arm stops
+with the pen 3 cm above it; she pinches the enabling button, puts the pen on the cross and
+lets go: after 2 s standing still the touch is registered. Pinching again before the 2 s are
+up restarts the clock; a brief pinch without moving skips the touch.
 
 - **Who.** The slots named, or a group's (`--group all | row2 | rows12 | rows23`; default the
   group "all", or every controlled slot when the rig has no such group), in rig order, one arm
@@ -273,11 +276,11 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
   pen near the paper is cramped, then a `guide` there; then home. Every motion is checked
   (the guide stands at the hover, which the checker held as the move's end), the arm's whole
   phase is queued at once.
-- **The guide.** The driver hands the arm to the person (light white), who seats the pen on the
-  mark and presses a pilot button; the executor writes the "registered" row (joints, button,
-  mark); the driver lifts the pen 3 cm and returns to the hover itself, so the next move starts
-  there. ✓ check: the touch counts. ✗ cross: never reaches the server (the driver waits for the
-  next button). ○ circle: the touch is marked skipped for the solver; the rest runs. A guide
+- **The guide.** The driver lets the person move the arm by hand (under FCI, its controller
+  switched off) and reads her gesture; the executor writes the "registered" row (joints, mark,
+  and the driver's answer). "check", registered (let go): the touch counts. "circle", skipped
+  (brief pinch): the touch is marked skipped for the solver; the rest runs. The driver then
+  lifts the pen 3 cm and returns to the hover itself, so the next move starts there. A guide
   whose hand-over fails fails the job; the arm holds at its hover.
 - **After each arm.** The pivot's own fit (`aris.calib.marks.pivot`): a touch it names as off
   the common point gets one small extra phase ("mark 2L again": to that hover, the guide,
@@ -292,14 +295,14 @@ draws it: `aris mark` once, then the arms' lights and the pilot buttons.
   the report's why names the slot, mark or touch and **nothing is written**. The report gives
   per slot the move and yaw against the job's start, the distance from rig.json's nominal axis,
   the tip change, the pivot's residuals and the slot's RMS; per mark its position, state,
-  residual and who touched it; per pair of arms their disagreement; the buttons, skips and
-  redone touches.
+  residual and who touched it; per pair of arms their disagreement; how many touches were
+  registered and skipped, and the redone touches.
 
 **In simulation** the person is simulated (`aris/server/simtruth.py`): in a "true" world
 (`aris serve --sim-truth <config dir>`, or `--sim-base-error 3,2`: every base 3 mm and 2 mrad
 off in x, y, yaw, the quantities the marks find), they seat the true pen tip on the true mark in
 the hover's hand orientation (turned a little and with another elbow where it must be), 0.3 mm
-off, and press ✓ (tests script ✗, ○ and a failed hand-over); `--sim-mark-error 3.5` tapes every
+off, and let go (tests script skips, a correction and a failed hand-over); `--sim-mark-error 3.5` tapes every
 true mark 3.5 cm off its nominal place. The report prints each mark's solved position and its
 offset from nominal.
 
@@ -427,9 +430,9 @@ queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
 
 The mark job (`tests/test_server_mark.py`, simulated person, real executor, queues and solver):
 on the two-arm rig with every base 3 mm and 2 mrad off and both marks 3.5 cm off nominal, 14
-touches (a ✗ handled inside the driver), the files written, the seam (2R seen from 2L) within
+touches (a correction handled inside the driver), the files written, the seam (2R seen from 2L) within
 0.15 mm and 0.06 mrad of the truth, each mark found within 1.5 mm of where it was taped (34
-and 36 mm from nominal), the rig reloaded with base and pen applied; a ○ on 2R's second mark:
+and 36 mm from nominal), the rig reloaded with base and pen applied; a skip on 2R's second mark:
 the solve refuses ("needs a partner"), nothing written, both arms home; a failed hand-over: the
 job fails, the arm holds at its hover; a touch named bad: one extra phase; `--group rows12` on
 the six-slot rig: 32 touches, four slots applied, 3L untouched. 6 tests, 32 s.

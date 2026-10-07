@@ -12,8 +12,8 @@ emergency stop in her other hand; you tell her exactly what to do and wait.
 
 - **Nothing you do may move an arm.** The only things that move arms are `aris …` commands typed
   on the planning laptop by a person. You never run `ros2 control`, `ros2 topic pub`, libfranka,
-  panda-py motion calls, or Desk actions that move or unlock an arm. The two read-only checks
-  in step 8 are the only times Desk is used, Diemut does them, and she holds the emergency stop.
+  panda-py motion calls, or Desk actions that move or unlock an arm. Desk in the browser is
+  for unlocking the arms and switching FCI on, done by Diemut, as before.
 - The old repositories and workspaces on this machine — `~/RTff`, `~/motion_ws`,
   `~/motion_ws_runner`, `~/aris_orchestrator`, `~/ika_arm31`, `~/impedance_helpers`,
   `~/impedance_ws`, anything named `Aris_Kindt`, `rtff`, `pathway`, `ladder`, `posdraw` — are
@@ -21,10 +21,9 @@ emergency stop in her other hand; you tell her exactly what to do and wait.
   not edit them. Any memory or earlier context you have about them does not apply. The one
   exception is step 3, which checks that a vendor patch they installed is present.
 - Work only inside `~/aris-clean/aris`. Edit only the files this runbook names:
-  `robot/site.json`, `site/aris_2026-10.json`, `robot/secrets.json` (new), and the copied
-  systemd unit under `/etc/systemd/system/`.
-- Never commit, push, or change git branches. Never put a password anywhere but
-  `robot/secrets.json`.
+  `robot/site.json`, `site/aris_2026-10.json`, and the copied systemd unit under
+  `/etc/systemd/system/`.
+- Never commit, push, or change git branches.
 - If a step's output differs from what is written here, that is a finding, not a problem to
   solve: report it.
 
@@ -88,7 +87,7 @@ source ~/aris-clean/aris/robot/ros2_ws/install/setup.bash; . ~/aris-clean/aris/.
 
 ## Step 6 — the site files
 
-Three files. Change only what is named.
+Two files. Change only what is named.
 
 1. `robot/site.json`: set `"server_url"` to `http://<planning laptop address>:8420` (Pete gives
    the address). Leave everything else.
@@ -103,79 +102,30 @@ Three files. Change only what is named.
    side of the table — Pete says which side) and which in 2R **cannot be known from this PC**:
    report what answers at each address and let Pete confirm the assignment; change the two
    rows only if he says so. Set `"sure": true` on a row only when Pete has confirmed it.
-3. Create `robot/secrets.json` with the Desk login Pete gives you:
-   ```
-   {"default": {"username": "USERNAME", "password": "PASSWORD"}}
-   ```
-   Then `ls -la robot/secrets.json && git status --short robot/secrets.json` — the second
-   command must print nothing (the file is ignored by git). If it is listed, stop and report.
 
-## Step 7 — panda-py, the libfranka version
+## Step 7 — the one hardware fact to verify (Diemut at the e-stop, nothing moves by itself)
 
-The calibration driver talks to the robots through `panda-py`, whose wheel is tied to one
-libfranka version, which must match the robots' system version.
+The calibration has Diemut hand-guide an arm while our stack keeps reading its joints. That
+works when the arm is idle under FCI with no controller active. Check it on ONE arm, with
+serve stopped and that arm's stack started by hand (see the README for the launch line), Desk:
+unlocked, FCI on:
 
-1. Ask Diemut to read the system version shown in Desk under Settings → System for the two
-   robots (read-only, in the browser).
-2. Franka's compatibility table (https://frankaemika.github.io/docs/compatibility.html) gives
-   the libfranka version for that system version. Report both numbers.
-3. `pip install -e "robot[calib]"` installs the pinned `panda-python`. Then:
-   ```
-   python -c "import panda_py; print(panda_py.__version__)"
-   pip show panda-python | grep -i -E "version|summary"
-   ```
-   If the pinned wheel's libfranka (in the release notes of that version on
-   https://github.com/JeanElsner/panda-py/releases) is not the one from step 7.2, install the
-   release wheel whose file name carries the right libfranka version:
-   `pip install <downloaded .whl>`. Report which wheel is installed. Do not connect to a robot
-   in this step.
-
-## Step 8 — two read-only checks that need a robot (Diemut at the e-stop)
-
-These are the two facts the design could not know without hardware. They move nothing. Do them
-on ONE robot (the 2R one), Diemut at the emergency stop, the arm standing still, brakes as they
-are.
-
-**8a. The Desk operating-mode request.** Diemut, in the browser on this PC: open Desk for that
-robot, open the developer tools (F12 → Network), switch the robot from execution to programming
-mode with Desk's own button (and back). You read the request Desk sent off the Network tab:
-method, path, request body. Write them into
-`robot/site.json` under `desk.mode_endpoint` in the shape that is already there (it is a
-guess today). Report the request verbatim.
-
-**8b. The pilot buttons and the joints during guiding.** With the venv active and panda-py
-installed:
 ```
-python - <<'EOF'
-import json, time
-import panda_py
-from aris_robot.desk import PandaDesk            # the repository's Desk client
-ip = "192.168.50.14"                               # the robot Pete chose
-creds = json.load(open("robot/secrets.json"))["default"]
-endpoint = json.load(open("robot/site.json"))["desk"]["mode_endpoint"]
-desk = PandaDesk(ip, creds["username"], creds["password"], endpoint, say=lambda e, **f: print("desk:", e, f))
-print("press each pilot button once (check, cross, circle, then the arrows); 60 s")
-for ev in desk.buttons(timeout=60):
-    print("button event:", ev)
-EOF
+ros2 control switch_controllers --deactivate fr3_arm_controller
+ros2 topic echo /joint_states --field position
 ```
-Diemut presses the buttons when you say so. Report every event line verbatim: the names Desk
-uses for ✓, ✗ and ○ are what the calibration listens for (the code expects "check", "cross",
-"circle"; if Desk's names differ, that is the finding — report them, do not rename anything).
-Note: `take_control` may ask for the physical confirmation Desk sometimes requires (a button on
-the robot's base within 30 s); Diemut does that. Then, with Pete pinching the enabling buttons (the arm in guiding), run:
-```
-python - <<'EOF'
-import panda_py
-r = panda_py.Panda("192.168.50.14")
-for i in range(5):
-    print(r.q)          # the joints, read-only
-EOF
-```
-(Diemut pinches the enabling buttons while this runs and lets go afterwards.) Report whether
-the joints print while the arm is being guided (and the exact error if not).
-This decides whether a pivot can be one continuous guided motion or needs the button cycle;
-both are built.
+
+Diemut pinches the enabling buttons on that arm and moves it a little, then lets go. Expected:
+the numbers follow her hand while she guides and stand still when she lets go. Report the
+first and last lines you saw. If the numbers freeze during guiding, stop and report: the
+calibration design depends on this. Then `ros2 control switch_controllers --activate
+fr3_arm_controller` and stop the stack.
+
+## Step 8 — removed
+
+Desk is not used by this system any more (no login, no control token, no mode switching).
+`robot/secrets.json` is not needed. Unlocking the arms and switching FCI on stay manual, in
+the browser, as before.
 
 ## Step 9 — fake hardware, end to end, nothing real moves
 

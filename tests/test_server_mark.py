@@ -127,7 +127,7 @@ def test_a_skipped_mark_leaves_an_arm_unsolved_and_nothing_written(tmp_path):
     rep = _job(c)["report"]
     assert rep["state"] == "failed" and "the solve did not pass" in rep["why"], rep["why"]
     assert len(rep["notes"]) == 1 and rep["notes"][0].startswith("2R: ")
-    assert rep["notes"][0].endswith("orientation 0 skipped") and rep["buttons"]["circle"] == 1
+    assert rep["notes"][0].endswith("orientation 0 skipped (brief pinch)") and rep["buttons"]["circle"] == 1
     assert not list((st.config_dir / "calibration").glob("*.json"))
     for a, d in st.drivers.items():                   # every arm went home all the same
         assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-9

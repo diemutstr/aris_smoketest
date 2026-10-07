@@ -23,6 +23,22 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-07, late — calibration without Desk
+
+What changed: `aris mark` no longer touches Desk at all — no login, no control token, no
+programming/execution switch, no pilot buttons, no light. The arm flies to the hover, its
+controller is switched off (the arm is idle under FCI, as after a launch), Diemut pinches the
+enabling button, puts the pen on the cross and lets go; two seconds still = registered, the arm
+takes over and flies on. Pinch again before that to redo; a brief pinch without moving skips.
+`robot/secrets.json` and the panda-py install are not needed any more. Section 6 of her
+document; the design in `docs/DESIGN.md` §6.
+
+What to do: install (no `colcon build` needed beyond the gripper one below). Before the first
+`aris mark`, the one-minute check in `docs/RUNBOOK_OPERATOR_PC_CLAUDE.md` step 7: deactivate
+the controller on one arm and watch `/joint_states` follow Diemut's hand. If it does, `aris
+mark` on each row. If the numbers freeze while she guides, report that — nothing else to try
+that night.
+
 ## 2026-10-07, night — the gripper and the page with the buttons
 
 What changed:

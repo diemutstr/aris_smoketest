@@ -196,67 +196,27 @@ an emergency on this PC, `aris-robot grip 2L close` does the same with the stack
   "the jaws did not move (still 35.9 mm) — blocked, or the travel calibration is lost: home
   the gripper".
 
-## 6. Calibration on the operator PC
+## 6. The mark calibration
 
 The mark calibration (`aris mark` on the planning PC, DESIGN 6) has a person seat the pen on
-taped spots. Its arms are flown by a second driver (`aris_robot/calib.py`) on libfranka
-directly, through panda-py, with Franka Desk for the modes and the pilot buttons. For each
-arm's turn serve stops that arm's ROS stack, so a mode switch never reaches a running ROS
-controller. When the arm's turn is over, the stack is started again; the other arms keep
-theirs, parked.
+taped spots. It runs on each arm's normal stack, with nothing to install and no Desk (decided
+2026-10-07). At each spot the arm flies to its hover. serve then switches its trajectory
+controller off: the hardware keeps reading, and the arm is idle under FCI. The row says
+"guide: your turn on 2L".
 
-**Install** (once, in the same venv). The panda-py wheel is built against one libfranka
-version, and it must match the robots. In Desk, Settings → System shows the robot's system
-version; Franka's compatibility table names the libfranka for it. On site (2026-10-06): FR3
-system 5.9 → libfranka 0.21.x → the release wheel `panda_python-1.1.1+libfranka.0.21.3`
-(for Python 3.12) from https://github.com/JeanElsner/panda-py/releases, not PyPI's default
-build:
+**What the person does**: nothing at a computer.
+1. Pinch the enabling buttons, seat the pen tip on the spot, let go.
+2. When the arm has stood still for 2 s after the pinch, its joints are the sample.
+- To redo: pinch again before the 2 s are up; the clock restarts.
+- To skip the spot: pinch briefly without moving anything (less than 0.02 rad).
+- Nobody guiding within 180 s fails that touch.
 
-```
-pip install panda_python-1.1.1+libfranka.0.21.3-cp312-cp312-manylinux_2_17_x86_64.whl
-pip install -e "robot[calib]"           # the pin panda-python==1.1.1 accepts that wheel
-```
+After the sample the trajectory controller holds the arm again. It lifts the pen straight
+up 3 cm and goes back to its hover. The settings are site.json `guide`.
 
-Then restart serve. Without panda-py, serve refuses mark jobs with a row saying so.
-
-**Desk control.** Only one holder can control Desk at a time. A browser with Desk open, or a
-token left by an earlier attempt, holds it. At the start of an arm's turn the calibration
-driver takes control. If someone else holds it, a row says "press circle on the pilot", and
-the driver waits 60 s for that press. It keeps control for the whole turn and always releases
-it at the end of the turn, including after a failure. Then FCI is switched on, and only then
-does libfranka connect. Close Desk in the browser once FCI is on.
-
-**The secrets file**: `robot/secrets.json` (gitignored, never committed), Desk's login per
-robot, or one entry for all:
-
-```
-{"default": {"username": "...", "password": "..."},
- "fr3-71":  {"username": "...", "password": "..."}}
-```
-
-**What the person does**: nothing at a computer. When an arm reaches a spot it holds, and
-its light turns white. Pinch the enabling buttons, seat the pen tip on the spot, let go (the
-arm holds), and press a pilot button: ✓ registered, ○ skip this spot. ✗ means "I want to redo this": the
-arm stays with you (light white), so seat it again and press ✓ or ○. The arm takes itself
-back (light blue). Once it stands still, it reads its joints, lifts the pen straight up a few
-centimetres, and returns to its hover. No button within 10 minutes: that arm stops there, and
-the job says why on the planning PC.
-
-Found on the arms (2026-10-06):
-- The mode switch is `POST /desk/api/operating-mode/programming` (or `/execution`), with an
-  empty body, the header `X-Control-Token`, and a 200 answer. This is `robot/site.json`
-  `desk.mode_endpoint`. Every Desk call is a row with its HTTP status, so a change shows at
-  once.
-- The pilot buttons are check, cross, circle, left, right, up and down.
-- Leaving execution mode or releasing control switches FCI off.
-
-While an arm is handed over, or its stack is down, it has no reading. Rows say `"q": null`
-with the reason, and never zeros. A mark job sets no collision thresholds, because its arm's
-stack is down.
-
-**Not checked without a robot** (only on the fakes here): the whole turn on this firmware
-with panda-py 1.1.1: take control, FCI on, connect, guide, release; `listen` and
-`stop_listen`; that the joints read the same standing still after the hand-back.
+The robot mode (Guiding while the buttons are pinched) is read from the robot state topic.
+On fake hardware there is no robot mode, and the joints tell instead: moved more than
+0.05 rad from the hover, then still for 2 s.
 
 **Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
 it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,

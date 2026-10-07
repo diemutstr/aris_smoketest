@@ -47,15 +47,6 @@
     "3L": {"mounted": false, "force_sign": 1.0},
     "3R": {"mounted": false, "force_sign": 1.0}
   },
-  "desk": {
-    "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper with Desk's control token.",
-    "mode_endpoint": {
-      "method": "post",
-      "path": "/desk/api/operating-mode/{mode}",
-      "token_header": "X-Control-Token",
-      "note": "found on the hardware 2026-10-06 (FR3 system 5.9): POST /desk/api/operating-mode/programming or /execution, empty body, header X-Control-Token: <the control token>, 200 OK. Every Desk call is a row with its HTTP status; if Desk changes, copy the request from the browser's developer tools here."
-    }
-  },
   "execution": {
     "source": "what worked on the arms, 2026-10-06 (field report). The start tolerance is the job header's or rig.json execution.start_tolerance_rad (0.03), not here.",
     "rest_qd_rad_per_s": 0.005,
@@ -84,5 +75,16 @@
     "open_noop_m": 0.055,
     "min_move_m": 0.0005,
     "check_note": "open when wider than open_noop_m is a no-op; after every command the width is read back, and jaws that moved less than min_move_m fail (libfranka reports success for a grasp that moved nothing)"
+  },
+  "guide": {
+    "source": "the mark's hand-guided touch without Desk (decided 2026-10-07 after three days of Desk token failures): the trajectory controller is deactivated at the hover, the person guides with the pilot's enabling button",
+    "settle_s": 2.0,
+    "still_rad": 0.002,
+    "skip_rad": 0.02,
+    "moved_rad": 0.05,
+    "timeout_s": 180.0,
+    "lift_m": 0.03,
+    "lift_speed": 0.01,
+    "note": "registered: after at least one guiding episode, not guiding, every joint within still_rad over settle_s; an episode that moved less than skip_rad means skip; moved_rad is the fallback without a robot mode; timeout_s without any episode fails the motion"
   }
 }

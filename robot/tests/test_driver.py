@@ -164,3 +164,99 @@ def test_recover_runs_every_step_and_restarts_a_stale_stack(monkeypatch, rig, si
                           "recover: controllers"]
     assert said[0]["ok"] is False and "recover: restarting the stack" in events
     assert events[-1] == "recover: joint states fresh"
+
+
+class Person:
+    """Plays a person at the arm, in a thread, once the trajectory controller is let go:
+    `script` is a list of (seconds, mode, joint offset from the hover)."""
+
+    def __init__(self, node, q_hover, script):
+        import threading
+        self.node, self.q0, self.script = node, np.asarray(q_hover, float), script
+        self.thread = threading.Thread(target=self._play, daemon=True)
+
+    def _play(self):
+        for dt, mode, off in self.script:
+            time.sleep(dt)
+            with self.node._lock:
+                self.node.mode = mode
+                self.node.q_d = self.q0 + off
+
+    def start(self, activate, deactivate):
+        if "fr3_arm_controller" in deactivate and not self.thread.is_alive():
+            self.thread.start()
+
+
+SEAT = np.array([0, 0.03, 0, -0.04, 0, 0.02, 0])      # where she puts the pen: 40 mrad away
+
+
+def _guide_arm(monkeypatch, rig, site, script, settle=0.3, timeout=1.0, mode_known=True):
+    hover = rig.park_q("2L")
+    arm, node = _arm(monkeypatch, rig, site, hover)
+    arm.guide_cfg = dict(arm.guide_cfg, settle_s=settle, timeout_s=timeout)
+    said = []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    if not mode_known:                  # fake hardware: no robot state broadcaster
+        node.mode_and_errors = lambda: (None, [])
+        arm.fake = True
+    person = Person(node, hover, script)
+    node.on_switch = person.start
+    m = Motion("guide", __import__("aris.types", fromlist=["Trajectory"]).Trajectory(
+        np.array([0.0]), hover[None], np.zeros((1, 7))), piece=Piece("A", 0, 0))
+    return arm, node, m, said, hover
+
+
+def test_a_guide_hands_over_registers_takes_back_and_flies_on(monkeypatch, rig, site):
+    script = [(0.1, 3, np.zeros(7)), (0.1, 3, SEAT / 2), (0.1, 3, SEAT), (0.1, 1, SEAT)]
+    arm, node, m, said, hover = _guide_arm(monkeypatch, rig, site, script)
+    r = arm.guide(m)
+    assert r.done and r.why == "check", r.why
+    assert np.allclose(r.q, hover + SEAT)                     # the person's pose is the sample
+    assert node.switches[0] == ([], ["fr3_arm_controller"])  # let go at the hover
+    assert node.switches[1] == (["fr3_arm_controller"], [])  # holds again
+    assert "fr3_arm_controller" in node.active
+    events = [x["event"] for x in said]
+    assert events[0] == "guide: your turn" and said[0]["text"] == "guide: your turn on 2L"
+    reg = next(x for x in said if x["event"] == "guide: registered")
+    assert reg["episodes"] == 1
+    lift, back = node.goals                                   # straight up, then the hover
+    assert np.allclose(node.q_d, hover)
+    (nxt,) = _chain(rig, "2L", ("free",))                     # the next motion flies
+    assert arm.move(nxt.traj).done
+
+
+def test_a_second_pinch_restarts_the_clock(monkeypatch, rig, site):
+    """Let go, then pinch again before the 0.3 s are up (the old ✗): the sample is where she
+    leaves it the second time."""
+    second = SEAT + np.array([0, 0, 0.03, 0, 0, 0, 0])
+    script = [(0.1, 3, SEAT), (0.05, 1, SEAT), (0.15, 3, SEAT), (0.1, 3, second),
+              (0.1, 1, second)]
+    arm, node, m, said, hover = _guide_arm(monkeypatch, rig, site, script)
+    t0 = time.monotonic()
+    r = arm.guide(m)
+    assert r.done and r.why == "check" and np.allclose(r.q, hover + second)
+    assert next(x for x in said if x["event"] == "guide: registered")["episodes"] == 2
+    assert time.monotonic() - t0 >= 0.5 + 0.3
+
+
+def test_a_brief_pinch_without_moving_is_a_skip(monkeypatch, rig, site):
+    script = [(0.1, 3, np.zeros(7)), (0.1, 3, np.full(7, 0.005)), (0.05, 1, np.full(7, 0.005))]
+    arm, node, m, said, hover = _guide_arm(monkeypatch, rig, site, script)
+    r = arm.guide(m)
+    assert r.done and r.why == "circle"
+    assert any(x["event"] == "guide: skipped" for x in said)
+
+
+def test_nobody_guides_and_the_motion_fails(monkeypatch, rig, site):
+    arm, node, m, said, hover = _guide_arm(monkeypatch, rig, site, [], timeout=0.4)
+    r = arm.guide(m)
+    assert not r.done and r.why == "nobody guided 2L within 0.4 s"
+    assert "fr3_arm_controller" in node.active and np.allclose(node.q_d, hover)
+    assert node.goals == []                                   # no lift: it never moved
+
+
+def test_without_a_robot_mode_the_joints_tell(monkeypatch, rig, site):
+    script = [(0.1, None, SEAT / 2), (0.1, None, SEAT * 1.5)]
+    arm, node, m, said, hover = _guide_arm(monkeypatch, rig, site, script, mode_known=False)
+    r = arm.guide(m)
+    assert r.done and r.why == "check" and np.allclose(r.q, hover + SEAT * 1.5)

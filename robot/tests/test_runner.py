@@ -310,7 +310,7 @@ def test_a_job_raises_the_thresholds_and_restores_them(rig, tmp_path, tracking):
     assert first["pen"]["press_m"] == rig.pen()["press_m"]
 
 
-def test_a_mark_job_sets_no_thresholds_and_the_header_sets_the_start_tolerance(rig, tmp_path):
+def test_the_header_sets_the_start_tolerance(rig, tmp_path):
     server_dir = tmp_path / "server"
     server_dir.mkdir()
     header = dict(_header(rig), kind="mark", execution=dict(start_tolerance_rad=0.04))
@@ -321,7 +321,7 @@ def test_a_mark_job_sets_no_thresholds_and_the_header_sets_the_start_tolerance(r
         _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
         res = run_job(Remote(srv.url), "mk", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
-    assert arm.collision == []                       # the stack is down for a mark job
+    assert arm.collision == ["job", "normal"]        # a mark job too: the stack stays up
     assert app.state.received["mk"][0]["start_tolerance"] == 0.04
 
 

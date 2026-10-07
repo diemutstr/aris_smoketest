@@ -68,8 +68,10 @@ def report_lines(rep: dict) -> list[str]:
         if rep.get("air_mm") else []
     out.append(f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else ""))
     if rep.get("kind") == "mark":
+        from aris.server.mark import GESTURE
         out.append(f"marks        {rep.get('touches', 0)} touches by {', '.join(rep.get('slots', []))}"
-                   f"; buttons {rep.get('buttons', {})}")
+                   + "".join(f"; {n} {GESTURE.get(k, k)}"
+                             for k, n in sorted(rep.get("buttons", {}).items())))
         for n in rep.get("notes", []) + [f"redone: {x}" for x in rep.get("redone", [])]:
             out.append(f"  {n}")
         for sl, e in rep.get("per_slot", {}).items():

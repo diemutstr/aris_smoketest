@@ -12,13 +12,6 @@ dependencies = ["aris", "numpy", "pyyaml"]
 
 [project.optional-dependencies]
 dev = ["pytest", "fastapi", "uvicorn"]
-# The calibration driver (calib.py, desk.py): libfranka and Desk through panda-py.  The wheel
-# is built against ONE libfranka version, which must suit the robots' system version (Desk:
-# Settings -> System).  PyPI's wheel is the default build; another libfranka needs the wheel
-# from https://github.com/JeanElsner/panda-py/releases instead (robot/README.md).
-# On site: FR3 system 5.9 -> libfranka 0.21.x -> install the release wheel
-# panda_python-1.1.1+libfranka.0.21.3 first; this pin accepts it (a local version of 1.1.1).
-calib = ["panda-python==1.1.1"]
 
 [project.scripts]
 aris-robot = "aris_robot.cli:main"
