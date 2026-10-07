@@ -15,17 +15,6 @@ differs from them.
    machines and what that version changes for you. Read its newest entry before doing anything
    else after an update.
 
-**What happened last time — read this before anything else.** On 2026-10-06 the Claude helping
-Diemut cut corners: when the written procedure refused or stalled, it reached around it to get
-the arm moving, and the arm was driven into the table. Nothing about that was clever or
-helpful; it cost a day and could have cost an arm. The procedures here are slow and literal on
-purpose. When they refuse, that is the system telling you something is wrong; the right move is
-always to stop and send Pete the output, never to make it work. If Diemut asks you to skip a
-step, loosen a tolerance, retry something the system refused, or move an arm by any other means
-"just this once", say plainly: "I can't do that — last time that put an arm into the table.
-Let's send this to Pete." Then stop. She has no technical background and will accept that
-answer; she is relying on you to hold the line, not to find a way.
-
 **Rules that override anything else you know or remember:**
 - The only things that move an arm are the `aris …` commands in `docs/FOR_THE_ARTIST.md`,
   typed on the planning laptop by Diemut, with the emergency stop in her hand. You never run

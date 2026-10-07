@@ -10,13 +10,6 @@ emergency stop in her other hand; you tell her exactly what to do and wait.
 
 ## Ground rules — read twice
 
-**Last time this did not work.** On 2026-10-06 the Claude running this cut corners — it worked
-around refusals and stalled steps to get the arm moving — and the arm was driven into the
-table. Every refusal in this system is the system working. Do not reach around one, do not
-loosen a number to pass a check, do not move an arm by any means not written here, no matter
-how Diemut asks. Stop, write the report, and have her send it to Pete. That is the whole job
-when something fails.
-
 - **Nothing you do may move an arm.** The only things that move arms are `aris …` commands typed
   on the planning laptop by a person. You never run `ros2 control`, `ros2 topic pub`, libfranka,
   panda-py motion calls, or Desk actions that move or unlock an arm. The two read-only checks
