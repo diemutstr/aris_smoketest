@@ -195,6 +195,21 @@ So A and B are about 0.80 m apart, straddling the centre, each roughly midway be
 live arms. Label them A and B. (The drawing area is a strip 1.72 m across and 0.90 m along,
 centred on the table; the marks do not set it, the arms' mountings do.)
 
+**For the back row (arms 1L = robot 2 and 1R = robot 31), two more marks, also on the centre
+line** (`docs/figures/marks_six_slots.png` shows all of them; measured from the FAR short edge,
+the end away from your desk):
+
+- **Mark R1a**: on the centre line, 0.48 m from the far short edge.
+- **Mark R1b**: on the centre line, 1.28 m from the far short edge.
+
+`aris mark` on the back row's server uses R1a and R1b the way the middle row uses A and B. Two
+more marks, **S12L** and **S12R**, tie the back row and the middle row together; they are needed
+only when both rows are calibrated in one go on one server (`aris mark --group rows12`), which is
+what makes the two rows' drawings line up on one sheet. Draw them now so they are there when
+that day comes: both 1.48 m from the far short edge, each 0.30 m off the centre line — S12L
+toward the long edge on the L arms' side (your right when you sit at your desk), S12R toward
+the other long edge.
+
 ## 6. Calibration (about 15 minutes, no computer after the first line)
 
 What it does: each arm in turn comes to a mark; you guide its pen tip into the mark; the
