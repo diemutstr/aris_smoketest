@@ -11,6 +11,9 @@ differs from them.
    laptop.
 2. `docs/RUNBOOK_OPERATOR_PC_CLAUDE.md` — only when you are logged in on the robot PC (the Dell
    next to the arms); it is your step-by-step script there.
+3. `docs/SITE_UPDATES.md` — **whenever Pete sends a new version**: how to install it on both
+   machines and what that version changes for you. Read its newest entry before doing anything
+   else after an update.
 
 **What happened last time — read this before anything else.** On 2026-10-06 the Claude helping
 Diemut cut corners: when the written procedure refused or stalled, it reached around it to get

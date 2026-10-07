@@ -311,6 +311,12 @@ message on the screen and wait for his answer.
 | calibration says "wrong slot or wrong robot?" | the robots' addresses in `site/aris_2026-10.json` are swapped; send Pete the output |
 | anything else | send Pete: the exact output, the job id, and the folder `out/jobs/<job id>/` from the laptop |
 
+## 8b. When Pete sends a new version
+
+`docs/SITE_UPDATES.md` has the steps (the same every time) and, at the top, what the new
+version changes and what you must do. Your Claude installs it on both machines; `aris arms` must
+then say `operator PC code: same`. Nothing runs until both machines have the same version.
+
 ## 9. The order of experiments
 
 Do not skip ahead; every stage proves what the next one relies on.
