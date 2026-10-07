@@ -52,6 +52,7 @@ class Station:
     # why a drawing cannot be planned on this rig ("" when it can): no drawing area, or one the
     # maps do not cover.  Only drawing jobs are refused; park, calibrate and marks still run.
     area_problem: str = ""
+    code: dict | None = None           # this server's aris.version.code_version(), at start
 
     @property
     def drawing_centre(self) -> tuple:
@@ -240,6 +241,8 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
             st.area_problem = area_mismatch(st.maps_area, fa, cfg.grid_step, st.drawing_centre)
             st.drawing_area = fa
     st.surface = paper_mod.load(config_dir)
+    from aris.version import code_version
+    st.code = code_version()
     return st
 
 

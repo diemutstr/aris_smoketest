@@ -16,6 +16,7 @@ from aris.execute import Job
 from aris.execute.queue import digest
 from aris.kernel.retime import retime
 from aris.rig import Rig
+from conftest import CODE
 from aris.types import JointPath, Motion, Phase
 from aris_robot.remote import Remote
 from aris_robot.serve import Operator, Rows, Stacks
@@ -36,7 +37,8 @@ class Passed:
 
 def _header(rig):
     calib = {a: (m.T_table_base, m.tip_hand, m.calibration) for a, m in rig.mounts.items()}
-    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen())
+    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen(),
+                code=CODE)
 
 
 def _free(rig, a, q0, q1):
@@ -119,6 +121,7 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
     assert app.state.acked == ["c1", "c2", "c3", "c4", "c5"]
     start = rows[0]
     assert start["event"] == "operator started"
+    assert start["code"] == CODE and start["code_text"]           # which code this PC runs
     assert start["robots"]["2R"]["robot"] == "fr3-71"
     assert start["robots"]["2R"]["identity"] == "unverified"
     assert set(start["where"]) == {"2L", "2R"} and np.allclose(start["where"]["2L"], p31)
@@ -146,7 +149,7 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
 def test_a_job_the_operator_cannot_run_is_reported_not_fatal(tmp_path):
     jobs = tmp_path / "jobs"
     jobs.mkdir()
-    Job.create(jobs / "x", dict(rig_digest="another rig"))
+    Job.create(jobs / "x", dict(rig_digest="another rig", code=CODE))
     app = create_app(jobs)
     rig = Rig.load(CONFIG)
     drivers = {"2L": SimTouchArm(rig, "2L", rig.park_q("2L"), speed=math.inf)}

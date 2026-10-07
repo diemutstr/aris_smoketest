@@ -33,6 +33,11 @@ call per job is cleaner than a launch parameter: the thresholds belong to the jo
 launch has no such parameter. If the robot will not take them, the first row says so and the
 job runs at the normal thresholds.
 
+**Same code on both machines.** serve sends its `aris.version.code_version()` with every
+long-poll and acknowledgement and in its first row. The runner refuses a job whose header's
+`code.digest` differs from its own, or that has no `code` ("planned by unknown"), before
+anything moves.
+
 **Where the arms stand.** The server plans from what the runner reports; it cannot see the
 arms. The first row of a run, "runner started", carries `where`, the 7 joints of every
 mounted arm, read before anything moves, and the job id. Every row about one arm (motion

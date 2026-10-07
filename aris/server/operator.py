@@ -22,6 +22,7 @@ does not lose it.  Nothing here is persistent: a restarted server has an empty c
 from __future__ import annotations
 
 import threading
+import json
 import time
 
 
@@ -30,6 +31,19 @@ class Channel:
         self._cond = threading.Condition()
         self._commands: list[dict] = []
         self._next_id = 0
+        self.code: dict | None = None     # the operator PC's aris.version, as it last sent it
+        self.code_at: float | None = None
+
+    def note_code(self, code) -> None:
+        """The operator PC's code version, sent with every poll and acknowledgement."""
+        if isinstance(code, str):
+            try:
+                code = json.loads(code)
+            except ValueError:
+                return
+        if isinstance(code, dict) and code.get("digest"):
+            with self._cond:
+                self.code, self.code_at = dict(code), time.time()
 
     def push(self, command: str, **fields) -> dict:
         with self._cond:
@@ -120,7 +134,8 @@ def add_routes(app, st, store) -> None:
         return JSONResponse(status_code=code, content=dict(refused=r.reason, detail=r.detail))
 
     @app.get("/operator/next")
-    async def next_command(wait: float = 30.0):
+    async def next_command(wait: float = 30.0, code: str | None = None):
+        st.operator.note_code(code)
         deadline = time.monotonic() + min(max(wait, 0.0), 300.0)
         while True:
             cmd = st.operator.peek()
@@ -133,6 +148,7 @@ def add_routes(app, st, store) -> None:
     @app.post("/operator/ack")
     def ack(body: dict = Body(...)):
         # (annotations here are strings, so only builtins: a Request would not resolve)
+        st.operator.note_code(body.get("code"))
         return dict(acknowledged=st.operator.ack(int(body.get("id", -1))))
 
     @app.post("/operator/rows")

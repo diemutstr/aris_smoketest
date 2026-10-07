@@ -221,7 +221,7 @@ def test_the_operator_pc_pulls_its_work(tmp_path):
         op.quit.set()
         t.join(timeout=10)
         seen = http.get("/operator")[1]
-        arms_view = http.get("/arms")[1]
+        arms_view = http.get("/arms")[1]["arms"]
     assert v["state"] == "done", v["why"]
     events = [r["event"] for r in seen["last_rows"]]
     assert "operator started" in events and "recovered" in events and "run ended" in events

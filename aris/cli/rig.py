@@ -8,9 +8,10 @@ def cmd_arms(a, http) -> int:
     """Each slot: its robot, its joints (or why there is no reading), at its park, when."""
     if _assume(http) is None:
         return verdict(False, "the server does not answer")
-    code, arms = http.get("/arms")
+    code, got = http.get("/arms")
     if code != 200:
-        return verdict(False, f"{arms}")
+        return verdict(False, f"{got}")
+    arms, version = got["arms"], got["code"]
     say(f"{'slot':<5} {'robot':<12} {'joints (rad)':<58} {'park':<5} reported")
     unknown = []
     for slot, r in arms.items():
@@ -24,6 +25,9 @@ def cmd_arms(a, http) -> int:
         flags = ", ".join(r.get("flags", [])) if "flags" in r else ""
         say(f"{slot:<5} {str(r.get('robot') or '-'):<12} {joints:<58} {park:<5} "
             f"{when or flags}")
+    say(version["line"])
+    if version["same"] is False:
+        return verdict(False, "the operator PC runs other code than this server")
     return verdict(not unknown, "every slot has a reading" if not unknown else
                    f"no reading for {', '.join(unknown)}")
 

@@ -61,7 +61,7 @@ def rig_view(st) -> dict:
                            if f.get("slot")},                  # the slots' files, not paper.json
         drawing_area_from_maps_m=list(st.maps_area),
         paper_surface=paper_mod.describe(st.surface),
-        drawing_area_problem=st.area_problem or None,
+        drawing_area_problem=st.area_problem or None, code=st.code,
         **st.assumptions()))
 
 
@@ -156,7 +156,11 @@ def create_app(st) -> FastAPI:
 
     @app.get("/arms")
     def arms():
-        return arms_view(st)
+        same, line = runner.code_line(st)
+        return dict(arms=arms_view(st),
+                    code=dict(same=same, line=line, server=st.code,
+                              operator_pc=st.operator.code if st.remote else None,
+                              operator_pc_reported_at=st.operator.code_at))
 
     remote.add_routes(app, st, store)
     operator.add_routes(app, st, store)

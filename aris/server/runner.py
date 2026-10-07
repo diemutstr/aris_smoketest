@@ -59,13 +59,14 @@ def job_header(st, rec, extra) -> dict:
     # The job describes itself: the pen that is in (its entry of rig.json's pens table, with
     # its name and press) and the person's note (the material, ...).  The
     # operator PC applies the header's values.
-    h.update(pen=st.pen(), note=rec.note, kind=rec.kind, name=rec.name,
+    h.update(code=st.code, operator_pc_code=st.operator.code if st.remote else None,
+             pen=st.pen(), note=rec.note, kind=rec.kind, name=rec.name,
              uncalibrated=st.uncalibrated, driver=st.driver_kind, speed=str(st.speed), **extra)
     return h
 
 
 def finish_job(rec: JobRecord, job_dir, rep: dict, state: str, why: str) -> None:
-    rep = dict(rep, id=rec.id, total_s=time.time() - rec.t_received)
+    rep = dict(rep, id=rec.id, total_s=time.time() - rec.t_received, code=rec.code)
     (job_dir / "report.json").write_text(json.dumps(rep, indent=1, default=_plain))
     rec.report = json.loads(json.dumps(rep, default=_plain))
     rec.set_state(state, why, drawn_m=rep.get("drawn_m"), left_m=rep.get("left_m"))
@@ -118,6 +119,27 @@ def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
 # --------------------------------------------------------------------------- the job frame
 
 
+def code_line(st) -> tuple[bool | None, str]:
+    """(same?, the line `aris arms` prints) for the operator PC's code against the server's;
+    None when the operator PC has not said (or with the simulated arms, which run here)."""
+    from aris.version import describe, same
+    if not st.remote:
+        return None, f"code {describe(st.code)} (the arms are simulated here)"
+    op = st.operator.code
+    if op is None:
+        return None, "operator PC code: not reported yet"
+    if same(st.code, op):
+        return True, f"operator PC code: same ({describe(st.code)})"
+    return False, (f"operator PC code: DIFFERENT — server {describe(st.code)}, operator PC "
+                   f"{describe(op)} — update both machines to the same commit")
+
+
+def code_mismatch(st) -> str:
+    """Why a job must not start: the operator PC runs other code than this server ("")."""
+    ok, line = code_line(st)
+    return line if ok is False else ""
+
+
 def start(st, store: JobStore, kind: str, name: str, work, prepare=None, created=None,
           need_positions: bool = False) -> JobRecord | Refusal:
     """Every job the same way: refuse (another job runs; with the robot and
@@ -130,9 +152,13 @@ def start(st, store: JobStore, kind: str, name: str, work, prepare=None, created
         where = reported_where(st, need_all=True)
         if isinstance(where, Refusal):
             return where
+    why = code_mismatch(st)
+    if why:
+        return Refusal("wrong_code", why)
     rec = store.admit(kind, name)
     if isinstance(rec, Refusal):
         return rec
+    rec.code = dict(server=st.code, operator_pc=st.operator.code if st.remote else None)
     extra = prepare(rec) if prepare is not None else {}
     job = Job.create(rec.dir, job_header(st, rec, extra))
     rec.set_state("received", received=rec.t_received)

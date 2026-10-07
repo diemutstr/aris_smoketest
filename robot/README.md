@@ -152,6 +152,11 @@ What it does, on its own:
 - says everything as rows to the server and to `out/operator/rows.jsonl`; its own log is
   `out/operator/serve.log`. It needs no terminal.
 
+serve tells the server which code it runs (`aris.version`: commit and source digest) with
+every request, and says so in its first row. A job planned by different code is refused before
+anything moves ("the job was planned by e7741e5, this PC runs 515bbad+local changes"): update
+both machines to the same commit.
+
 The config directory must hold the same rig file as the server's. Add
 `--config config/two_arms` before `serve` in the `ExecStart` line when the server runs with
 that one.

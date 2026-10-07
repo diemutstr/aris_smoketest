@@ -97,7 +97,7 @@ def test_the_robot_server_refuses_to_plan_from_no_reading_and_aris_arms(tmp_path
     assert cli.main(["arms"], http=ClientHttp(c)) == 1
     out = capsys.readouterr().out
     assert "no joint states for 2R" in out and "FAIL: no reading for 2R" in out
-    arms = c.get("/arms").json()
+    arms = c.get("/arms").json()["arms"]
     assert arms["2L"]["at_park"] is True and arms["2R"]["q"] is None
     assert arms["2R"]["reading"].startswith("no joint states")
 
@@ -367,3 +367,44 @@ def test_mounted_rig_for_one_arm_gives_a_working_config(tmp_path):
                       jobs_dir=tmp_path / "jobs", workers=4)
     assert hasattr(st, "rig") and st.area_problem == "", st
     assert min(st.drawing_area) > 0.3 and st.rig.arm_ids == ("1R",)
+
+
+# --------------------------------------------------------------------------- code versions
+
+
+def test_the_operator_pcs_code_against_the_servers(tmp_path, capsys):
+    from aris.version import code_version
+    st = open_station(TWO, driver="robot", uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    c = TestClient(create_app(st))
+    assert c.get("/rig").json()["code"] == st.code == code_version()
+    st.positions.from_row(dict(event="where", time=time.time(), where={
+        a: list(st.rig.park_q(a)) for a in st.rig.arm_ids}), "op")
+    # the operator PC polls with the same code: `aris arms` says so, a job starts and both
+    # versions are in its header and report
+    assert c.get("/operator/next", params=dict(wait=0, code=json.dumps(st.code))).status_code \
+        in (200, 204)
+    assert cli.main(["arms"], http=ClientHttp(c)) == 0
+    assert "operator PC code: same (" in capsys.readouterr().out
+    r = c.post("/park")
+    assert r.status_code == 200, r.json()
+    jid = r.json()["id"]
+    head = json.loads((st.jobs_dir / jid / "job.json").read_text())
+    assert head["code"] == st.code and head["operator_pc_code"] == st.code
+    c.post(f"/jobs/{jid}/stop")
+    t0 = time.time()
+    while (v := c.get(f"/jobs/{jid}").json())["report"] is None:
+        assert time.time() - t0 < 60
+        time.sleep(0.05)
+    assert v["report"]["code"] == dict(server=st.code, operator_pc=st.code)
+    # an acknowledgement with other code: `aris arms` FAILs and every job is refused
+    other = dict(commit="515bbad", dirty=True, digest="0" * 24)
+    cmd = st.operator.push("report")
+    c.post("/operator/ack", json=dict(id=cmd["id"], code=other))
+    assert cli.main(["arms"], http=ClientHttp(c)) == 1
+    out = capsys.readouterr().out
+    assert "operator PC code: DIFFERENT — server" in out and "515bbad+local changes" in out
+    assert "update both machines to the same commit" in out
+    r = c.post("/park").json()
+    assert r["refused"] == "wrong_code" and "DIFFERENT" in r["detail"]

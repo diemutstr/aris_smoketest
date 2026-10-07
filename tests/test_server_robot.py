@@ -228,7 +228,7 @@ def test_stop_then_park_from_the_reported_positions_then_draw_again(station, tmp
         _post(f"{srv.url}/jobs/{jid}/stop")
         t.join(timeout=60)
         assert _wait(srv.url, jid)["state"] == "stopped"
-        seen = _get_json(f"{srv.url}/arms")
+        seen = _get_json(f"{srv.url}/arms")["arms"]
         assert set(seen) == {str(a) for a in rig.arm_ids}
         away = [a for a, v in seen.items() if not v["at_park"]]
         assert away and all(v["source"] == "operator PC" for v in seen.values())
@@ -246,7 +246,7 @@ def test_stop_then_park_from_the_reported_positions_then_draw_again(station, tmp
             sorted(away)
         for a, arm in arms.items():
             assert np.max(np.abs(arm.state().q - rig.park_q(a))) <= 1e-9
-        assert all(x["at_park"] for x in _get_json(f"{srv.url}/arms").values())
+        assert all(x["at_park"] for x in _get_json(f"{srv.url}/arms")["arms"].values())
         jid2 = _post(f"{srv.url}/jobs", SMALL.read_bytes())["id"]   # accepted again
         assert _get_json(f"{srv.url}/jobs/{jid2}")["state"] in ("fitted", "planning", "drawing")
         _post(f"{srv.url}/jobs/{jid2}/stop")

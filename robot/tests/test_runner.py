@@ -17,6 +17,7 @@ from aris.execute.drivers.sim import SimArm
 from aris.execute.queue import digest
 from aris.kernel.retime import retime
 from aris.rig import Rig
+from conftest import CODE
 from aris.types import JointPath, Motion, Phase, Piece, Refusal
 from aris_robot.remote import Remote
 from aris_robot.runner import run_job
@@ -72,7 +73,8 @@ def _motions(rig, arm_id):
 
 def _header(rig):
     calib = {a: (m.T_table_base, m.tip_hand, m.calibration) for a, m in rig.mounts.items()}
-    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen())
+    return dict(rig_digest=digest(rig), calibration_digest=digest(calib), pen=rig.pen(),
+                code=CODE)
 
 
 def _writer(rig, job, active, motions, pause=0.02):
@@ -164,7 +166,7 @@ def test_a_park_job_runs_like_any_other(rig, tmp_path):
     piece, no tips, no rig digests in its header); both arms end at their parks."""
     server_dir = tmp_path / "server"
     server_dir.mkdir()
-    job = Job.create(server_dir / "p1", dict(kind="park"))
+    job = Job.create(server_dir / "p1", dict(kind="park", code=CODE))
     app = create_app(server_dir)
     start = {a: rig.park_q(a) + 0.03 * np.array([1, -1, 1, 1, -1, 1, 1.0]) for a in ("2L", "2R")}
     arms = {a: SimArm(a, q, speed=50.0) for a, q in start.items()}
@@ -358,7 +360,7 @@ def test_thresholds_the_robot_refuses_are_noted_not_a_refusal(rig, tmp_path):
 def test_a_job_planned_for_another_rig_is_refused(rig, tmp_path):
     server_dir = tmp_path / "server"
     server_dir.mkdir()
-    Job.create(server_dir / "j4", dict(rig_digest="not this rig"))
+    Job.create(server_dir / "j4", dict(rig_digest="not this rig", code=CODE))
     with Served(create_app(server_dir)) as srv:
         res = run_job(Remote(srv.url), "j4", rig, CONFIG, tmp_path / "robot", {})
         assert isinstance(res, Refusal) and res.reason == "wrong_rig"
@@ -366,3 +368,28 @@ def test_a_job_planned_for_another_rig_is_refused(rig, tmp_path):
         assert isinstance(missing, Refusal) and missing.reason == "server"
     down = run_job(Remote(srv.url, timeout=0.5), "j4", rig, CONFIG, tmp_path / "robot", {})
     assert isinstance(down, Refusal) and down.reason == "unreachable"
+
+
+def test_a_job_planned_by_other_code_is_refused_before_anything_moves(rig, tmp_path):
+    from aris.version import describe
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    other = dict(commit="e7741e5", dirty=False, digest="0" * 16)
+    mine = dict(commit="515bbad", dirty=True, digest="1" * 16)
+    Job.create(server_dir / "o", dict(_header(rig), code=other))
+    old = _header(rig)
+    old.pop("code")
+    Job.create(server_dir / "u", old)
+    Job.create(server_dir / "s", dict(_header(rig), code=mine))
+    arm = Recording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
+    with Served(create_app(server_dir)) as srv:
+        r = Remote(srv.url)
+        res = run_job(r, "o", rig, CONFIG, tmp_path / "w", {"2L": arm}, code=mine)
+        assert isinstance(res, Refusal) and res.reason == "wrong_code"
+        assert res.detail == ("the job was planned by e7741e5, this PC runs 515bbad+local "
+                              "changes: update both machines to the same commit")
+        res = run_job(r, "u", rig, CONFIG, tmp_path / "w", {"2L": arm}, code=mine)
+        assert res.reason == "wrong_code" and "planned by unknown" in res.detail
+        # the same code passes this check (the job then waits for its phases: stopped here)
+        assert describe(mine) == "515bbad+local changes"
+    assert arm.calls == []

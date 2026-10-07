@@ -38,6 +38,7 @@ import numpy as np
 from pathlib import Path
 
 from aris.execute import Coordinator, EventLog, Job
+from aris.version import code_version, describe, same
 from aris.execute.queue import Queue, digest
 from aris.types import Refusal
 
@@ -173,19 +174,26 @@ def _collision(drivers: dict, which: str) -> str:
 
 
 def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dict,
-            poll: float = 0.01, robots: dict | None = None, around_phase=None, progress=None):
+            poll: float = 0.01, robots: dict | None = None, around_phase=None, progress=None,
+            code: dict | None = None):
     """Runs the job to its end on `drivers` (slot -> Driver, the mounted arms).  Returns the
     coordinator's JobRun, or a Refusal when it cannot start.  For every job but a mark job
     the collision thresholds are the site's "job" ones while it runs, "normal" after.
     `around_phase(phase)`: a context manager entered before the phase runs and left after it
     (serve's calibration hand-over); its `__enter__` returns why the phase cannot run, or "".
     `progress(step)`: told each step before the job starts, and "started" once it has (serve
-    watches it: a job never hangs silently before it starts)."""
+    watches it: a job never hangs silently before it starts).  `code`: this PC's code version
+    (default: read now); a job planned by other code is refused before anything moves."""
     progress = progress or (lambda step: None)
     progress("job header")
     header = remote.header(job_id)
     if isinstance(header, Refusal):
         return header
+    mine = code if code is not None else code_version()
+    if not same(header.get("code"), mine):
+        return Refusal("wrong_code", f"the job was planned by {describe(header.get('code'))}, "
+                                     f"this PC runs {describe(mine)}: update both machines to "
+                                     f"the same commit")
     why = check_header(header, rig)
     if why:
         return Refusal("wrong_rig", why)

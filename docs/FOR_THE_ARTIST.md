@@ -285,7 +285,7 @@ was not (and why). Other commands, any time:
 
 | command | what it does |
 |---|---|
-| `aris arms` | every arm: where it stands, whether it answers (if it says "no reading", that arm is not talking — Desk: unlocked, FCI on) |
+| `aris arms` | every arm: where it stands, whether it answers (if it says "no reading", that arm is not talking — Desk: unlocked, FCI on); and whether the robot PC runs the same code as the laptop (if it says DIFFERENT, update both machines before anything else — jobs are refused until they match) |
 | `aris status` | the current or last job |
 | `aris stop` | every arm stops at once and holds; the job is finished |
 | `aris park` | every arm back to its park |

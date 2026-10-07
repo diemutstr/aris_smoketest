@@ -32,6 +32,7 @@ class JobRecord:
     note: str = ""                     # the person's note (material, ...): header and report
     rest_of: str | None = None         # the job whose leftovers this drawing is
     air_mm: float = 0.0                # an air run: the drawing surface this far above the paper
+    code: dict | None = None           # {"server": ..., "operator_pc": ...} aris.version dicts
     state: str = "received"
     why: str = ""
     lines: list = field(default_factory=list)            # the fitted drawing

@@ -160,7 +160,7 @@ def test_rig_and_arms_endpoints(station):
     assert r["drawing_area_m"] == [1.56, 3.56]
     assert np.max(np.abs(np.subtract(r["drawing_area_from_maps_m"], [1.56, 3.56]))) <= 0.05
     assert r["driver"] == "sim" and r["speed"] == "inf"
-    arms = c.get("/arms").json()
+    arms = c.get("/arms").json()["arms"]
     assert all(v["at_park"] and v["ok"] for v in arms.values())
     assert c.get("/jobs/nothing").status_code == 404
 

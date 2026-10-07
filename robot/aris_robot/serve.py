@@ -34,6 +34,8 @@ import numpy as np
 from aris.rig import Rig
 from aris.types import Refusal
 
+from aris.version import code_version, describe
+
 from aris_robot.handover import HandOver, Switch
 from aris_robot.runner import reading, run_job, where_of
 
@@ -229,6 +231,7 @@ class Operator:
         self.rows = rows or Rows(remote, Path(log_dir))
         self.robots = robots or {}
         self.make_calib = make_calib
+        self.code = code_version()           # which code this PC runs, told to the server
         self.start_timeout_s = 10.0          # a job starts, or fails with a row, within this
         self.auto_recover: dict = {}         # site.json execution.auto_recover
         self._recovered: dict = {}
@@ -245,14 +248,15 @@ class Operator:
 
     def serve(self) -> None:
         """Until `quit` is set."""
-        self.rows.say("operator started", **self.where_fields(), arms=sorted(self.drivers),
+        self.rows.say("operator started", code=self.code, code_text=describe(self.code),
+                      **self.where_fields(), arms=sorted(self.drivers),
                       robots=self.robots,
                       stacks=None if self.stacks is None else self.stacks.state)
         idle = threading.Thread(target=self._idle, daemon=True)
         idle.start()
         down = False
         while not self.quit.is_set():
-            cmd = self.remote.next_command(self.wait_s)
+            cmd = self.remote.next_command(self.wait_s, code=self.code)
             if isinstance(cmd, Refusal):
                 if not down:
                     log.warning("the server does not answer: %s", cmd.detail)
@@ -263,7 +267,7 @@ class Operator:
                 self.rows.say("server reachable again")
                 down = False
             if cmd is not None:
-                self.remote.ack(cmd.get("id"))
+                self.remote.ack(cmd.get("id"), code=self.code)
                 self.handle(cmd)
         self.rows.say("operator stopping", **self.where_fields())
 
@@ -335,7 +339,8 @@ class Operator:
         def work():
             try:
                 out.append(run_job(self.remote, job, rig, self.config, self.work, drivers,
-                                   robots=self.robots, around_phase=around, progress=progress))
+                                   robots=self.robots, around_phase=around, progress=progress,
+                                   code=self.code))
             except Exception as e:                   # said, not swallowed
                 out.append(Refusal("exception", f"{type(e).__name__}: {e}"))
 

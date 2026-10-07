@@ -436,7 +436,8 @@ hovering (set down, then lifted).
 
 ## Refusals (reviewed 2026-10-07)
 
-Kept, each for a real hazard or something that cannot work: no fresh joint reading / never
+Kept, each for a real hazard or something that cannot work: other code on the operator PC
+(`wrong_code`); no fresh joint reading / never
 reported (planning from an unknown position); not parked outside the first phase (the plan
 assumes them parked); an arm fault or not ready (a person must look); uncalibrated without
 `--uncalibrated` (wrong geometry); a motion the checker refused; a job from another server run
@@ -453,3 +454,17 @@ Removed: the shrink-below-half limit (scaled however far, the report says how mu
 (clamped); stopping a finished job (nothing to do, 200); pens down on row partners (they rise
 one arm per phase); the stale-rig start refusal (now refuses drawings only, and says when the
 maps are empty).
+
+## Code versions
+
+Rig and calibration digests say both machines plan on the same rig; `aris.version` says they
+run the same code. The server takes its own `code_version()` at start (`/rig` `code`; every
+job header `code`). The operator PC sends its `code` (`{"commit", "dirty", "digest"}`) with
+every `/operator/next` poll (query `code=<json>`) and `/operator/ack` (body `code`); the
+server keeps the latest (`st.operator.code`) and writes it into each header as
+`operator_pc_code`. `/arms` answers `{"arms": {slot: ...}, "code": {same, line, server,
+operator_pc, operator_pc_reported_at}}`; `aris arms` prints the line — "operator PC code: same
+(e7741e5)" or "operator PC code: DIFFERENT — server e7741e5, operator PC 515bbad+local changes
+— update both machines to the same commit" — and ends FAIL when they differ. Every job is
+then refused at its start (`wrong_code`); an operator PC that has not reported its code yet is
+not refused. Each job's report records both (`code: {server, operator_pc}`).

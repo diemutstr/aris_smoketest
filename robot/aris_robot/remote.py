@@ -19,12 +19,13 @@ copy of the parts it runs, byte for byte, by following files as they grow:
 
 The resident process (`aris-robot serve`, serve.py) also uses:
 
-  GET  /operator/next?wait=S                   long-poll, held up to S seconds: the next
+  GET  /operator/next?wait=S&code=<json>       long-poll, held up to S seconds: the next
                                                command, {"id": c, "command": "run", "job": j}
                                                | {"id": c, "command": "recover", "arm": "2R"}
                                                | {"id": c, "command": "report"}; 204 (or {})
                                                when there is none
-  POST /operator/ack                           {"id": c}: the command is taken
+  POST /operator/ack                           {"id": c, "code": {...}}: the command is taken
+                                               (`code`: this PC's aris.version.code_version())
   POST /operator/rows                          {"source": "robot", "rows": [...]}: what the
                                                operator PC says outside a job (started,
                                                where, report, recovered, stack died, a run
@@ -84,10 +85,12 @@ class Remote:
         except (urllib.error.URLError, OSError, ValueError) as e:
             return Refusal("unreachable", f"{self.base}: {e}")
 
-    def next_command(self, wait: float = 30.0) -> dict | None | Refusal:
-        """The server's next command for this PC, waiting up to `wait` s; None: nothing."""
+    def next_command(self, wait: float = 30.0, code: dict | None = None) -> dict | None | Refusal:
+        """The server's next command for this PC, waiting up to `wait` s; None: nothing.
+        `code`: this PC's code version (aris.version), sent as `code=<json>`."""
+        query = dict(wait=wait) if code is None else dict(wait=wait, code=json.dumps(code))
         try:
-            with urllib.request.urlopen(self.url("operator", "next", wait=wait),
+            with urllib.request.urlopen(self.url("operator", "next", **query),
                                         timeout=wait + self.timeout) as r:
                 data = r.read()
                 if r.status == 204 or not data.strip():
@@ -99,8 +102,9 @@ class Remote:
         except (urllib.error.URLError, OSError, ValueError) as e:
             return Refusal("unreachable", f"{self.base}: {e}")
 
-    def ack(self, cmd_id) -> dict | Refusal:
-        return self._post(dict(id=cmd_id), "operator", "ack")
+    def ack(self, cmd_id, code: dict | None = None) -> dict | Refusal:
+        body = dict(id=cmd_id) if code is None else dict(id=cmd_id, code=code)
+        return self._post(body, "operator", "ack")
 
     def post_rows(self, rows: list[dict]) -> dict | Refusal:
         return self._post(dict(source="robot", rows=rows), "operator", "rows")
