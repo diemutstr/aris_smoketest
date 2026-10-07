@@ -64,10 +64,12 @@ def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, s
 
     standing = {p: np.asarray(q, float) for p, q in (standing or {}).items()}
     if surface_z is not None:            # the press is what puts the surface where it is
-        rig = replace(rig, press=rig.paper_z - float(surface_z))
+        rig = replace(rig, press=rig.paper_z - float(surface_z), paper_map=None)
     opts = dict(asdict(tolerances or rig.tolerances), standing=standing)
     others = dict.fromkeys((*phase.parked, *standing))
     notes = rig.notes + sum((rig.mounts[s].notes for s in (slot, *others)), ())
+    if motion.kind in ("draw", "lower", "lift"):
+        notes += (f"drawing surface: {_surface(rig)}",)
     if motion.kind == "touch":
         return _touch(rig, slot, motion, phase, q_before, notes, opts)
     ms, worst, at = _one(rig, slot, motion, phase, q_before, opts)
@@ -83,7 +85,8 @@ def _one(rig, slot, motion, phase, q_before, o, surface_title=ON_SURFACE):
     # The pen's floor is the drawing surface, which lies the press below the real paper plane
     # the scene measures against.
     scene = build_scene(rig, slot, phase.walls, phase.parked, drawing, standing=o["standing"],
-                        pen_floor=PEN_FLOOR - rig.press if setting else None)
+                        pen_floor=PEN_FLOOR - rig.press - (rig.paper_z - rig.paper_low)
+                        if setting else None)
     ms = [measure("well formed", 1.0, 1.0, "min", "", ranked=False)]
     ms += _ends(traj, q_before)                                      # items 1-2
     r1, r4 = timing.rates(traj.t, traj.q, traj.qd, 1000.0, sub=4)
@@ -109,7 +112,7 @@ def _touch(rig, slot, motion, phase, q_before, notes, o):
     climb as a lift, both against the paper itself (no press: the touch looks for the paper,
     it does not draw).  The extra depth the arm may go on for is not part of the planned path
     and is not checked.  One row per measurement, from the half where it is tighter."""
-    paper = replace(rig, press=0.0)
+    paper = replace(rig, press=0.0, paper_map=None)   # planned to the nominal plane
     tr, k = motion.traj, _bottom(motion.traj)
     down = Trajectory(tr.t[:k + 1], tr.q[:k + 1], tr.qd[:k + 1])
     up = Trajectory(tr.t[k:], tr.q[k:], tr.qd[k:])
@@ -204,23 +207,24 @@ def _limits(model, r1, r4, rate_tol):
 def _on_surface(scene, rig, traj, kind, tol, title=ON_SURFACE):
     """A lower ends, a lift starts, with the tip on the drawing surface (paper less press)."""
     q = traj.q[-1:] if kind == "lower" else traj.q[:1]
-    z = tip(scene.model, q, scene.T_table_base)[0, 2]
-    return measure(title, abs(z - rig.surface_z), tol, "max", "m",
+    x, y, z = tip(scene.model, q, scene.T_table_base)[0]
+    return measure(title, abs(z - float(rig.surface_at(x, y))), tol, "max", "m",
                    f"tip {(z - rig.paper_z) * 1e3:+.2f} mm from the paper at the "
                    f"{'end' if kind == 'lower' else 'start'}; surface {_surface(rig)}")
 
 
 def _surface(rig):
-    if rig.press == 0.0:
-        return "the paper itself (no press)"
     if rig.press < 0.0:
-        return f"{-rig.press * 1e3:.1f} mm above the paper (surface_z given)"
-    return f"{rig.press * 1e3:.1f} mm below the paper (press of pen {rig.pen})"
+        return f"{-rig.press * 1e3:.1f} mm above the plane of the paper (surface_z given)"
+    paper = rig.surface_about
+    if rig.press == 0.0:
+        return f"{paper}, no press"
+    return f"{paper}, less {rig.press * 1e3:.1f} mm (press of pen {rig.pen})"
 
 
 def _pen(scene, rig, traj, tip_base, r1, tip_height_tol, line_tol, back_tol, speed_tol,
          stop_speed):
-    p = pen_report(scene.model, scene.T_table_base, rig.surface_z, traj, tip_base, r1.t, r1.q)
+    p = pen_report(scene.model, scene.T_table_base, rig.surface_at, traj, tip_base, r1.t, r1.q)
     return [
         measure("tip on paper", p.height, tip_height_tol, "max", "m",
                 f"largest |tip - drawing surface|, {_surface(rig)}"),

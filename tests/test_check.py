@@ -800,6 +800,39 @@ def test_air_run_surface_z():
     _fails(check(CONFIG, "2L", draw, ph, draw.q_start, surface_z=float("nan")), "well formed")
 
 
+def test_paper_height_map(tmp_path):
+    """calibration/paper.json (the thin-plate spline the calibration writes): the checker's own
+    reading agrees with the writer's, the drawing surface follows it, and the verdict names it.
+    A line drawn on a 1.5 mm bump passes with the map and fails 'tip on paper' by the bump
+    height on the flat plane."""
+    from aris.calib.paper import fit, write_paper
+    bump = lambda x, y: 0.0015 * np.exp(-((x + 0.56) ** 2 + (y - 0.175) ** 2) / (2 * 0.05 ** 2))
+    gx, gy = np.meshgrid(np.linspace(-0.75, -0.35, 9), np.linspace(-0.05, 0.40, 10))
+    touches = np.column_stack([gx.ravel(), gy.ravel(), bump(gx.ravel(), gy.ravel())])
+    surf = fit(touches, MINE.paper_z, "2026-10-07", ("2L",))
+    cfg = _config_copy(tmp_path)
+    write_paper(surf, cfg)
+    mine = read_rig(cfg)
+    rng = np.random.default_rng(4)
+    x, y = rng.uniform(-1.0, 0.1, 2000), rng.uniform(-0.3, 0.7, 2000)     # inside, taper, beyond
+    agree = np.abs(mine.paper_map.z(x, y) - surf.z(x, y)).max()
+    pts = line_table((-0.62, 0.05), (-0.50, 0.30))
+    pts[:, 2] = surf.z(pts[:, 0], pts[:, 1]) - PRESS
+    m = draw_motion("2L", pts)
+    on_map = check(cfg, "2L", m, phase_of("2L"), m.q_start)
+    flat = check(CONFIG, "2L", m, phase_of("2L"), m.q_start)
+    height = float((pts[:, 2] + PRESS).max())
+    print(f"\nreader vs writer, 2000 points: {agree:.1e} m; bump on the line {height * 1e3:.2f} mm; "
+          f"on the map {on_map.get('tip on paper').value * 1e3:.3f} mm, on the plane "
+          f"{flat.get('tip on paper').value * 1e3:.3f} mm\n{[n for n in on_map.notes if 'surface' in n]}")
+    assert agree < 1e-12
+    assert on_map.passed, on_map.failed
+    assert any("paper height map paper.json" in n for n in on_map.notes)
+    assert any("flat paper" in n for n in flat.notes)
+    _fails(flat, "tip on paper")
+    assert abs(flat.get("tip on paper").value - height) < 5e-4
+
+
 def test_press_is_where_the_tip_draws(good_draw, tmp_path):
     """The drawing's points lie the press below the paper: a drawing motion whose tip runs the
     pen's press below the paper (3.5 mm when written, 2.1 mm since) passes 'tip on paper' with

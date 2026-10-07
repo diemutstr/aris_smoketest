@@ -151,6 +151,16 @@ consecutive samples, then a ball per capsule, then the exact distance.
   capsule keeps its direction: it lies on the line through the tip along the pen axis and its
   surface ends exactly at the tip (the same rule as the planners' `with_tip`; a test compares
   the capsule ends with the planners' rig on the same calibration files).
+- The paper height map (`config/calibration/paper.json`, written by the calibration): a
+  thin-plate spline stored as centres, weights and three affine numbers, fading to the plane over
+  `taper_m` outside the touches' hull. `paper.py` evaluates it with numpy alone from the formula
+  the file states (agrees with the writer to 1e-12 m). Where there is one, the drawing surface is
+  the map less the press, read at the tip's x, y: `tip on paper` (draw) and `tip on surface`
+  (lower end, lift start) answer to it, and the pen-depth floor of a lower or lift is lowered by
+  how far the map's lowest touch lies below the plane. The links, the tool, the lifted pen and a
+  touch still answer to the plane. No file (or a "flat" one): the plane. Every draw, lower and
+  lift verdict says in its notes which surface was used. `surface_z` (the air run) replaces the
+  map too.
 - The hanger follows the calibrated axis: the arm is bolted to its plate, so a slot's struts,
   plate and clamp move across the table with the calibrated base position (x and y; the heights
   are the frame's). They are shifted, not turned: the boxes stay axis aligned, and a few
@@ -170,7 +180,7 @@ so it follows a calibrated tip.
 
 `motion.py` (the call), `phase.py` (`check_phase_end`), `sweep.py` (clearance along the motion), `scene.py` (obstacles and their
 distances), `model.py` (kinematics), `geometry.py` (distances), `timing.py` (the flown curve and
-the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig reader),
+the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig reader), `paper.py` (paper height map),
 `verdict.py` (the answer), `fr3.json` (the data copy).
 
 ## Measured (tests/test_check.py)
@@ -189,6 +199,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | measured with a press of 3.5 mm (the tests read the press from rig.json): lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
 | a touch down to the paper and back, press 3.5 mm / the same touch planned to the drawing surface | passes / fails `tip on paper` (3.5 mm) and pen depth |
 | air run: a line drawn 30 mm above the paper and the lower onto it, with `surface_z` = paper + 30 mm / without | pass (tip 0.03 mm and 0.00 mm off) / fail their tip rows (33.5 mm) |
+| a line drawn on a 1.5 mm bump of a paper height map (90 touches), with the map / on the plane | passes (tip 0.015 mm off) / fails `tip on paper` by the bump on the line (1.40 mm) |
 | a drawn line on the drawing surface (3.5 mm below the paper), checked with the press of 3.5 mm and with a press of 0 | passes (tip 0.01 mm from the surface) / fails `tip on paper` (3.51 mm); the tool and link clearances are the same in both |
 | the two calibration parts on slot 2R: base only, pen part for another pen, pen part only (base failed), both | each part applied exactly when it should; the notes name what stayed nominal and why; capsule ends against the planners' rig on the same files 5e-16 m |
 | hanger of a calibrated slot (base moved 8 mm, -6 mm) | its struts, plate and clamp move by the same x and y, as in the planners' rig; nobody else's steel moves; link 1 to its own strut 61.9 to 60.4 mm |

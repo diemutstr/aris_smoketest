@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from aris.check.paper import PaperMap, read_paper
+
 
 @dataclass(frozen=True)
 class Tolerances:
@@ -68,6 +70,24 @@ class RigData:
     fences: tuple = ()             # (name, point, unit normal), table frame: planes every arm
                                    # stays on the normal's side of, in every phase (rig.json)
     tolerances: Tolerances = Tolerances()   # rig.json `checker`
+    paper_map: PaperMap | None = None       # calibration/paper.json; None: the flat paper
+
+    def surface_at(self, x, y) -> np.ndarray:
+        """Where the drawing's points lie at table (x, y): the paper (its height map where
+        there is one, else the plane) less the press."""
+        if self.paper_map is None:
+            return np.full(np.shape(x), self.surface_z)
+        return self.paper_map.z(x, y) - self.press
+
+    @property
+    def surface_about(self) -> str:
+        return (self.paper_map.about if self.paper_map is not None else
+                "the flat paper (no paper height map)")
+
+    @property
+    def paper_low(self) -> float:
+        """The lowest the paper is anywhere (the plane, or the map's lowest touch)."""
+        return self.paper_z if self.paper_map is None else self.paper_map.low
 
     @property
     def surface_z(self) -> float:
@@ -129,11 +149,13 @@ def read_rig(config_dir) -> RigData:
     for f in cfg.get("fences", {}).get("planes", ()):
         n = np.asarray(f["normal"], float)
         fences.append((str(f["name"]), np.asarray(f["point_m"], float), n / np.linalg.norm(n)))
+    paper_z = float(cfg["table"]["paper_surface_z_m"])
     return RigData(mounts, tuple(names), tuple(owner),
                    tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
-                   float(cfg["table"]["paper_surface_z_m"]), float(speed), press, pen_name,
+                   paper_z, float(speed), press, pen_name,
                    float(pen["tip_length_nominal_m"]), float(pen["capsule_radius_m"]),
-                   tuple(notes), tuple(fences), _tolerances(cfg))
+                   tuple(notes), tuple(fences), _tolerances(cfg),
+                   read_paper(config_dir / "calibration" / "paper.json", paper_z))
 
 
 def _current_pen(cfg):
