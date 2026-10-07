@@ -184,7 +184,7 @@
   "drawing": {
     "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now). The speed on the paper and the press belong to the pen: pens.table.<pen>.speed_m_per_s and press_m (2026-10-02).",
     "landing_speed_m_per_s": 0.003,
-    "landing_speed_note": "the pen tip's speed on a lower as it meets the paper: Diemut's landing rate on the hardware (10 mm/s); a fast landing against the soft normal spring spikes the force (orchestrator, 2026-10-01)",
+    "landing_speed_note": "the pen tip's speed over the last millimetres of a lower, as it meets the paper: 3 mm/s was needed on the hardware (site, 2026-10-06; a rigid pen landing fast trips the reflex). The descent above that is flown at the normal speed.",
     "min_piece_m": 0.010,
     "speed_fraction": 0.30,
     "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
@@ -195,7 +195,7 @@
     "current": "graphite_4h",
     "table": {
       "graphite_4h": {
-        "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule). Force numbers (mode B only): Diemut's hardware tests, control-stack briefing 2026-09-09 sections 9 and 10, moved here from robot/site.json 2026-10-01. A gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N.",
+        "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule).",
         "press_m": 0.0021,
         "press_measured_note": "0.0021 is what drew on 2L/2R (site, 2026-10-06); 0.0035 before",
         "press_note": "the drawing surface lies this far below the measured paper: with position control the pen is pressed into the paper by planning it there",
@@ -203,38 +203,15 @@
         "speed_note": "speed of the tip along a line on the paper",
         "tip_length_nominal_m": 0.020,
         "tip_length_note": "how far the graphite stands past the cap's outer face, along the bore; the tool model is built for 0.020. A different length moves the tip along the pen axis. A passing pen part of the slot's calibration replaces it with the measured tip.",
-        "capsule_radius_m": 0.005,
-        "force_band_n": [0.7, 1.0],
-        "force_band_note": "mode B: intensity 0..1 maps linearly onto this band; tone is force (about 0.04 N per step of 9)",
-        "force_levels": 9,
-        "force_cap_n": 3.5,
-        "force_ramp_m": 0.002,
-        "force_ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
-        "lift_ramp_s": 0.2,
-        "servo_ki_per_s": 1.0,
-        "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
-        "servo_trim_max_n": 1.0
+        "capsule_radius_m": 0.005
       },
       "gel_g2": {
-        "source": "gel pen G2 in the lateral holder (site, 2026-10-06). A gel pen skids when pushed and draws when pulled: drag_only tells the planner to draw it only pulled. Length and capsule as the graphite until measured; force block copied from graphite_4h (a gel pen used 0.6-1.0 N and a cap of 2.0-2.6 N in Diemut's tests).",
+        "source": "gel pen G2 in the lateral holder (site, 2026-10-06). A gel pen skids when pushed and draws when pulled: drag_only tells the planner to draw it only pulled. Length and capsule as the graphite until measured.",
         "press_m": 0.0025,
         "speed_m_per_s": 0.015,
         "tip_length_nominal_m": 0.02,
         "capsule_radius_m": 0.005,
-        "drag_only": true,
-        "force_band_n": [
-          0.7,
-          1.0
-        ],
-        "force_band_note": "mode B: intensity 0..1 maps linearly onto this band; tone is force (about 0.04 N per step of 9)",
-        "force_levels": 9,
-        "force_cap_n": 3.5,
-        "force_ramp_m": 0.002,
-        "force_ramp_note": "the force grows from zero to the setpoint over the first 2 mm of a drawing motion (Diemut's slide-in)",
-        "lift_ramp_s": 0.2,
-        "servo_ki_per_s": 1.0,
-        "servo_ki_note": "the force servo trims the fed-forward force toward the setpoint from the force estimate with a 1 s time constant; 0 turns it off",
-        "servo_trim_max_n": 1.0
+        "drag_only": true
       }
     }
   },

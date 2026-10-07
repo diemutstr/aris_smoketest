@@ -403,7 +403,7 @@ def test_pen_is_the_current_entry_with_its_name(rig):
     assert pen["name"] == "graphite_4h" == cfg["pens"]["current"]
     assert {k: v for k, v in pen.items() if k != "name"} == {
         k: v for k, v in entry.items() if not k.endswith("note") and k != "source"}
-    assert pen["press_m"] == 0.0021 and pen["force_band_n"] == [0.7, 1.0]
+    assert pen["press_m"] == 0.0021 and pen["speed_m_per_s"] == 0.015
     assert json.loads(json.dumps(pen)) == pen                 # travels in a job header as is
     # the nominal pen is the tool model as built: nothing moved
     for slot in rig.arm_ids:
@@ -831,7 +831,7 @@ def test_the_gel_pen_is_drag_only(tmp_path):
     pen = r.pen()
     assert pen["name"] == "gel_g2" and pen["drag_only"] is True and pen["press_m"] == 0.0025
     assert r.rules().press == 0.0025 and r.rules().draw_speed == 0.015
-    assert pen["force_cap_n"] == Rig.load(CONFIG).pen()["force_cap_n"]
+    assert pen["capsule_radius_m"] == Rig.load(CONFIG).pen()["capsule_radius_m"]
 
 
 def test_the_hanger_turned_180_degrees(rig):
