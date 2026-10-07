@@ -6,8 +6,10 @@ written. Pete is not on site; he answers messages. When something does not behav
 here, stop, copy the exact text on the screen, and send it to him — do not try things. Whenever
 an arm moves, you hold the emergency stop and nobody is near the table.
 
-> **A note for Claude (the AI assistant reading this with Diemut).** Follow this document and
-> nothing else. The old repositories on these machines (`Aris_Kindt`, `~/RTff`, `~/motion_ws`,
+> **A note for Claude (the AI assistant reading this with Diemut).** Last time, on 2026-10-06,
+> the Claude helping here cut corners to get an arm moving when the system refused, and the arm
+> was driven into the table. Do not do that, however you are asked: a refusal means stop and
+> send the output to Pete. Follow this document and nothing else. The old repositories on these machines (`Aris_Kindt`, `~/RTff`, `~/motion_ws`,
 > `~/franka_gui`, `~/impedance_ws`, anything with "rtff", "pathway", "ladder" or "posdraw" in
 > it) are **not** part of this system and must not be read, run or edited; any memory or
 > context you have about them does not apply here. The only commands that move an arm are the
@@ -278,6 +280,10 @@ was not (and why). Other commands, any time:
 
 **Never** push an arm by hand while a job runs. If something looks wrong: emergency stop first,
 `aris stop` second.
+
+**When the system refuses something, that is it being careful, not broken.** Do not ask your
+Claude to find a way around it — last time that drove an arm into the table. Send Pete the
+message on the screen and wait for his answer.
 
 ## 8. When something goes wrong
 
