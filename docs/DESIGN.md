@@ -251,19 +251,26 @@ the −y end, L at −x). `config/rig.json` describes slots; one table in `site/
 the table names. The old prime-number ids live on only in that table. Nothing in the planning
 code knows a robot.
 
-**Tracking, mode A.** The word "unknown" was drawn on 2026-10-01 under plain joint position
-control: certified joint trajectories through the stock trajectory controller, at most 15 mm/s
-on the paper, every touchdown from standstill, and a purely geometric press — the plan runs
-3.5 mm below the measured paper (2 mm 4H graphite). That is the default. The impedance
-controller with the pen force (4b) is mode B, kept behind a flag until A draws well.
+**Tracking.** The word "unknown" was drawn on 2026-10-01 under plain joint position control:
+certified joint trajectories through the stock trajectory controller, at most 15 mm/s on the
+paper, every touchdown from standstill, and a purely geometric press — the plan runs `press`
+below the measured paper (2.1 mm for 2 mm 4H graphite, measured on site 2026-10-06). It is the
+only mode (4b).
+
+**The paper height map (2026-10-07).** A fixed press on paper that varies by millimetres gives
+no ink in places and a reflex in others (a gel pen's window is about 1 mm). Every touch of the
+plane jobs goes into one height field for the table (`config/calibration/paper.json`, a
+thin-plate spline, flat beyond the touched hull); the system planner puts the drawing on
+`surface(x, y) − press` and the checker judges the tip against the same file. Following 30 cm
+bumps to a quarter millimetre needs touches about 5 cm apart.
 
 **The drawing surface.** The press is a property of the surface the drawing's points lie on:
 the system planner gives the points `z = paper − press` and the planners below put the tip where
 the points are; the real paper stays the plane the holder and links must clear; the checker's
 "tip on paper" rule reads the same press. No planner knows that pens exist.
 
-**Pens are rig data.** `rig.json` has a `pens` table (name, nominal length and lean, capsule,
-press, speed on paper, force band and cap for mode B) and one line naming the pen that is in.
+**Pens are rig data.** `rig.json` has a `pens` table (name, nominal length, capsule, press,
+speed on paper, whether it draws only pulled) and one line naming the pen that is in.
 The job header names it; the report records it; the drawing file stays pen-agnostic.
 
 **Calibration in two parts, two clocks.** Per slot, one file with a `base` part (x, y, z, roll,
@@ -306,23 +313,17 @@ runs `robot/`: it fetches the queue records from the server as they are written,
 executors and the coordinator next to the arm drivers, and posts events back. A lost link stops
 nothing that is already queued; an arm whose queue runs dry holds.
 
-## 4b. How the arm follows a motion (decided with Pete, 2026-09-30)
+## 4b. How the arm follows a motion (decided 2026-09-30; settled 2026-10-07)
 
-The arm follows the certified joint trajectory itself, with compliance around it, and the pen
-force is added as a force, not as a depth. A joint impedance controller holds every joint to
-q(t), qd(t) with a moderate joint stiffness and adds J^T F, about 1 N along the pen axis while
-drawing and zero otherwise. Free moves go through the same controller with zero force, or the
-position controller. Why: what is flown stays within millimetres of what was checked (all seven
-joints track the plan; no arm shape chosen by the controller); the press is a force wherever the
-paper actually is (Diemut's tuning showed the depth was the fragile part: one millimetre changed
-the pressure by a factor of two); a paper height error becomes a small force, not a torn sheet, PROVIDED the
-controller is made soft along the paper normal (plain joint impedance at the gains that give
-200 N/m in the softest direction is 360 to 1 970 N/m along the normal, measured on 672 drawing
-poses: 1 mm would be the whole force band; so the controller replaces the stiffness along the
-normal by a soft spring, 100 N/m, measured exact at all 672 poses with the paper-plane
-stiffness unchanged, so 1 mm is 0.1 N; and the force servo closes the loop, 1 s); the landing is the planned "lower" motion with the force ramping from
-zero as the pen arrives. The force servo, the tare and the touch logic of the current executor
-stay, reduced to a force setpoint. A plane that moved is a re-plan, not a controller problem.
+The arm follows the certified joint trajectory under plain joint position control (the stock
+trajectory controller), and the press is geometric: the drawing surface lies `press` below the
+measured paper, re-measured by touch. That is what drew Diemut's installation for years (position
+control, z by touch, re-measured every 45 minutes) and every line since 2026-10-01. The
+alternative designed here on 2026-09-30 — a joint impedance controller soft along the pen with
+the press as a force — was built as "mode B", never ran on the hardware, and was removed on
+2026-10-07 to keep one way of doing things (it lives at commit cb6e958). What position control
+cannot do is follow paper it has not measured: a rigid pen on paper that varies by millimetres
+needs the paper height map (4c) measured densely enough, or compliance in the pen holder.
 
 ## 6. Calibration
 
