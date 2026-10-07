@@ -9,6 +9,7 @@
     aris calibrate <slot>                            touch the paper on a grid: the base part
     aris touchoff <slot>                             one touch: the pen part
     aris recover <slot>                              release an arm after a fault
+    aris grip <slot> home|open|close [--width M]     the slot's gripper
     aris mark [slots | --group g]                    the marks: guide the pens, x/y/yaw and tip
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
@@ -25,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 
-from aris.cli.calibration import cmd_calibrate, cmd_mark, cmd_recover, cmd_touchoff
+from aris.cli.calibration import cmd_calibrate, cmd_grip, cmd_mark, cmd_recover, cmd_touchoff
 from aris.cli.common import (CONFIG, DEFAULT_SERVER, Http, _summary, assumptions_line, follow,
                              job_passed, report_lines, say, verdict)
 from aris.cli.jobs import (cmd_check, cmd_draw, cmd_import, cmd_park, cmd_plan, cmd_status,
@@ -69,6 +70,9 @@ def parser() -> argparse.ArgumentParser:
                    help="the simulated arms' true rig for the mark job (another config folder)")
     s.add_argument("--sim-base-error", default=None, metavar="MM,MRAD",
                    help="the simulated arms' true bases: every base moved by this much")
+    s.add_argument("--site", default=None, metavar="FILE",
+                   help="the site table (which robot hangs in which slot), for robot names "
+                   "in the rig, the arms and the GUI, e.g. site/aris_2026-10.json")
     s.add_argument("--sim-mark-error", type=float, default=None, metavar="CM",
                    help="the simulated marks: every one taped this far from its nominal place")
     s.add_argument("--sim-paper", default=None,
@@ -100,12 +104,17 @@ def parser() -> argparse.ArgumentParser:
                        ("park", "park all arms"), ("rig", "the rig the server runs"),
                        ("arms", "each slot: robot, joints or no reading, at park, when")):
         sub.add_parser(name, help=what)
+    s = sub.add_parser("grip", help="the slot's gripper: home, open or close")
+    s.add_argument("slot", help="the slot, e.g. 2L")
+    s.add_argument("verb", choices=("home", "open", "close"))
+    s.add_argument("--width", type=float, default=None, metavar="M",
+                   help="close: to this width (metres)")
     s = sub.add_parser("mark", help="calibrate x, y and yaw by guiding the pens onto the marks")
     s.add_argument("slots", nargs="*", help="the slots (default: the group)")
     s.add_argument("--group", default=None, help="all, row2, rows12, rows23 (default: all)")
     for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "arms",
                                        "calibrate",
-                                       "touchoff", "recover", "mark")):
+                                       "touchoff", "recover", "mark", "grip")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -124,7 +133,8 @@ def parser() -> argparse.ArgumentParser:
 COMMANDS = {"import": cmd_import, "arms": cmd_arms, "serve": cmd_serve, "draw": cmd_draw,
             "status": cmd_status, "stop": cmd_stop, "park": cmd_park, "rig": cmd_rig,
             "plan": cmd_plan, "check": cmd_check, "calibrate": cmd_calibrate,
-            "recover": cmd_recover, "touchoff": cmd_touchoff, "mark": cmd_mark}
+            "recover": cmd_recover, "touchoff": cmd_touchoff, "mark": cmd_mark,
+            "grip": cmd_grip}
 
 
 def main(argv=None, http=None) -> int:

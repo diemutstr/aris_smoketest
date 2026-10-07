@@ -23,6 +23,20 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-07, night — the gripper and the page with the buttons
+
+What changed:
+- **The gripper is back.** Our stack now starts the gripper node for each arm (**ROS packages
+  changed: `colcon build` on the robot PC**). `aris grip 2L close|open|home` and the page's
+  HOME / OPEN / CLOSE buttons use Diemut's old working settings (grasp at 70 N, open to 70 mm)
+  and check that the jaws really moved; if they did not, it says so and asks for HOME.
+- **A page with buttons**, in the browser on the laptop: `http://localhost:8420/gui` — arms,
+  grippers, STOP, PARK, pick or upload a drawing (SVG too) and DRAW, CALIBRATE / TOUCH-OFF /
+  MARK, the live job and its report. Section 6b of `docs/FOR_THE_ARTIST.md`.
+
+What to do: install as above **with `colcon build`**, restart `aris-robot`, start `aris serve`,
+open the page, press HOME on an arm whose jaws look wrong, then CLOSE on the pen holder.
+
 ## 2026-10-07, commit bf84cc6 — the machines bring the arms up themselves
 
 What changed:

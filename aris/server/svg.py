@@ -57,7 +57,7 @@ def to_drawing(path, width_m: float, at=(0.0, 0.0), flat_m: float = FLAT_M) -> d
     wide along the table's x, centred on `at` (table frame, metres)."""
     import svgelements as se
     if not width_m > 0.0:
-        return Refusal("width", f"--width {width_m} m is not a width")
+        return Refusal("width", f"an SVG needs its width on the table, in metres (not {width_m})")
     try:
         svg = se.SVG.parse(str(path), reify=True)
     except Exception as e:                    # a file svgelements cannot read

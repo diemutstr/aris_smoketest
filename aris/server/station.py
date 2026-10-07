@@ -7,6 +7,8 @@ driver asked for is not built.  Uncalibrated, every job report says so.
 """
 from __future__ import annotations
 
+import json
+
 import os
 import threading
 import time
@@ -53,6 +55,8 @@ class Station:
     # maps do not cover.  Only drawing jobs are refused; park, calibrate and marks still run.
     area_problem: str = ""
     code: dict | None = None           # this server's aris.version.code_version(), at start
+    grippers: dict = field(default_factory=dict)   # simulated grippers: slot -> width (m)
+    robots: dict = field(default_factory=dict)     # slot -> robot name, from the site table
 
     @property
     def drawing_centre(self) -> tuple:
@@ -159,6 +163,15 @@ class Positions:
         return p["q"].copy(), ""
 
 
+def site_robots(path) -> dict | Refusal:
+    """{slot: robot} from a site table (`{"slots": {slot: {"robot": ...}}}`)."""
+    try:
+        d = json.loads(Path(path).read_text())
+        return {str(s): str(v["robot"]) for s, v in d["slots"].items() if v.get("robot")}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        return Refusal("site", f"the site table {path} does not read: {e}")
+
+
 def fake_paper(rig, a: str, spec=None) -> tuple:
     """The simulated arms' paper in arm a's base frame: (normal toward the arm, offset), the
     nominal paper moved by dz and tilted by roll (about table x) and pitch (about table y)
@@ -185,7 +198,7 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
                  with_arms: bool = True, with_area: bool = True,
                  sim_paper=None, sim_truth=None,
                  sim_base_error=None, sim_buttons=None,
-                 sim_mark_error=None) -> Station | Refusal:
+                 sim_mark_error=None, site=None) -> Station | Refusal:
     """`drivers`: arm id -> Driver to use instead of starting them (tests).  `with_arms`
     False: no drivers at all (plan and check only).  `sim_paper`: (dz m, roll deg, pitch deg),
     the simulated arms' paper against the nominal one (default: the nominal paper).
@@ -193,7 +206,8 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
     checking does not).  The mark job's simulated person (simtruth.py) works in a "true" world:
     `sim_truth` another config directory, or `sim_base_error` (mm, mrad) every base moved and
     `sim_mark_error` (cm) every mark;
-    `sim_buttons` {slot: [button, ...]} scripts the pilot buttons."""
+    `sim_buttons` {slot: [button, ...]} scripts the pilot buttons.  `site`: the site table
+    (which robot hangs in which slot, e.g. site/aris_2026-10.json), for showing robot names."""
     config_dir = Path(config_dir)
     try:
         rig = Rig.load(config_dir)
@@ -241,6 +255,11 @@ def open_station(config_dir, driver: str = "sim", speed: float = 1.0,
             st.area_problem = area_mismatch(st.maps_area, fa, cfg.grid_step, st.drawing_centre)
             st.drawing_area = fa
     st.surface = paper_mod.load(config_dir)
+    if site is not None:
+        got = site_robots(site)
+        if isinstance(got, Refusal):
+            return got
+        st.robots = got
     from aris.version import code_version
     st.code = code_version()
     return st

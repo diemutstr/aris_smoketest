@@ -12,20 +12,24 @@
     GET  /arms              each arm's configuration and its driver's state
     and the operator PC's four (remote.py): header, phases, queues, events
     POST /calibrate/{arm}, the operator channel, recover, calibration files (operator.py)
+    POST /grip/{slot}, POST/GET /drawings, GET /jobs/{id}/report, GET /gui (and /)
+    The full table: aris/server/API.md.
 
 One job at a time: a second job while one runs is refused (409).
 """
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from aris.calib import files as calib_files
 from aris.server import paper as paper_mod
-from aris.server import drawing, operator, remote, runner
+from aris.server import drawing, drawings, grip, operator, remote, runner
 from aris.server import park as park_job
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
@@ -54,7 +58,9 @@ def rig_view(st) -> dict:
     rig = st.rig
     return plain(dict(
         arms={str(a): dict(T_table_base=rig.T_table_base(a), park_q=rig.park_q(a),
-                           calibration=rig.calibration_status(a)) for a in rig.arm_ids},
+                           calibration=rig.calibration_status(a), robot=st.robots.get(a))
+              for a in rig.arm_ids},
+        mark_groups={str(k): list(v) for k, v in rig.mark_groups.items()},
         drawing_area_m=list(st.drawing_area), drawing_area_centre_m=list(st.drawing_centre),
         canvas_m=rig.canvas_size, pen_in=st.pen(),
         calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)
@@ -73,7 +79,7 @@ def arms_view(st) -> dict:
             p = seen.get(a)
             q, why = st.positions.known(a, now)
             out[str(a)] = dict(
-                robot=None if p is None else p.get("robot"), q=q,
+                robot=(p or {}).get("robot") or st.robots.get(a), q=q,
                 reading="fresh" if q is not None else (why or "never reported"),
                 at_park=None if q is None else bool(
                     np.max(np.abs(q - st.rig.park_q(a))) <= st.rig.execution().start_tolerance),
@@ -84,7 +90,7 @@ def arms_view(st) -> dict:
     out = {}
     for a, d in st.drivers.items():
         s = d.state()
-        out[str(a)] = dict(q=s.q, qd=s.qd, ok=s.ok, flags=list(s.flags),
+        out[str(a)] = dict(robot=st.robots.get(a), q=s.q, qd=s.qd, ok=s.ok, flags=list(s.flags),
                            at_park=bool(st.rig.at_park(a, s.q)))
     return plain(out)
 
@@ -102,13 +108,21 @@ def create_app(st) -> FastAPI:
 
     @app.post("/jobs")
     async def submit(request: Request, name: str = "drawing.json", note: str = "",
-                     rest_of: str = "", air_mm: float = 0.0):
+                     rest_of: str = "", air_mm: float = 0.0, drawing_id: str = Query("",
+                                                                         alias="drawing")):
         if rest_of:                      # the leftovers of a finished job, as a new drawing
             rec = runner.submit_rest(st, store, rest_of, note, air_mm)
             if isinstance(rec, Refusal):
                 return _refused(409, rec)
             return plain(dict(id=rec.id, state=rec.state, why=rec.why))
-        lines = drawing.parse(await request.body())
+        if drawing_id:                   # an uploaded drawing (POST /drawings)
+            body = drawings.read(st, drawing_id)
+            if isinstance(body, Refusal):
+                return _refused(404, body)
+            name = name if name != "drawing.json" else drawing_id
+        else:
+            body = await request.body()
+        lines = drawing.parse(body)
         if isinstance(lines, Refusal):
             return _refused(400, lines)
         rec = runner.submit_draw(st, store, lines, name, note, air_mm=air_mm)
@@ -129,6 +143,57 @@ def create_app(st) -> FastAPI:
                 raise HTTPException(404, f"no job {jid}")
             return plain(dict(id=jid, state=old.get("state"), report=old))
         return plain(view(rec))
+
+    @app.get("/jobs/{jid}/report")
+    def job_report(jid: str):
+        rec = store.get(jid)
+        rep = rec.report if rec is not None else store.from_disk(jid)
+        if rep is None:
+            raise HTTPException(404, f"no report for job {jid} (unknown, or not finished)")
+        return plain(rep)
+
+    @app.post("/grip/{slot}")
+    async def grip_slot(slot: str, request: Request):
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except ValueError as e:
+            return _refused(400, Refusal("not_json", str(e)))
+        if not isinstance(body, dict):
+            return _refused(400, Refusal("not_json", "the body is a JSON object"))
+        rec = grip.submit_grip(st, store, slot, str(body.get("verb", "")), body)
+        if isinstance(rec, Refusal):
+            return _refused(409, rec)
+        return plain(dict(id=rec.id, state=rec.state))
+
+    @app.post("/drawings")
+    async def upload(file: UploadFile, width: float | None = Form(None),
+                     at: str | None = Form(None)):
+        xy = None if not at else tuple(float(v) for v in at.replace(" ", ",").split(",") if v)
+        got = drawings.store(st, file.filename or "drawing.json", await file.read(), width, xy)
+        if isinstance(got, Refusal):
+            return _refused(400, got)
+        return plain(got)
+
+    @app.get("/drawings")
+    def stored_drawings():
+        return plain(drawings.listing(st))
+
+    @app.get("/")
+    def root():
+        return RedirectResponse("/gui/")
+
+    gui = Path(__file__).resolve().parent / "gui"
+
+    @app.get("/gui")
+    def gui_root():
+        return RedirectResponse("/gui/")
+
+    @app.get("/gui/{path:path}")
+    def gui_file(path: str = ""):
+        f = (gui / (path or "index.html")).resolve()
+        if gui.resolve() not in f.parents or not f.is_file():
+            raise HTTPException(404, f"no GUI file {path or 'index.html'}")
+        return FileResponse(f)
 
     @app.get("/jobs/{jid}/events")
     def events(jid: str):

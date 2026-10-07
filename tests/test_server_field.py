@@ -408,3 +408,95 @@ def test_the_operator_pcs_code_against_the_servers(tmp_path, capsys):
     assert "update both machines to the same commit" in out
     r = c.post("/park").json()
     assert r["refused"] == "wrong_code" and "DIFFERENT" in r["detail"]
+
+
+# --------------------------------------------------------------------------- grip, uploads, gui
+
+
+def _wait_report(c, jid, limit=60):
+    t0 = time.time()
+    while (v := c.get(f"/jobs/{jid}").json())["report"] is None:
+        assert time.time() - t0 < limit
+        time.sleep(0.05)
+    return v
+
+
+def test_grip_on_the_simulated_arms(tmp_path, capsys):
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    c = TestClient(create_app(st))
+    assert cli.main(["grip", "2L", "close", "--width", "0.02", "--poll", "0.02"],
+                    http=ClientHttp(c)) == 0
+    assert "gripper      2L close: width 80.0 mm -> 20.0 mm, grasped" in capsys.readouterr().out
+    jid = c.get("/jobs").json()[-1]["id"]
+    head = json.loads((st.jobs_dir / jid / "job.json").read_text())
+    assert head["kind"] == "grip" and head["slot"] == "2L" and head["verb"] == "close"
+    assert head["params"] == {"width_m": 0.02}
+    rep = c.get(f"/jobs/{jid}/report").json()
+    assert rep["width_before_m"] == 0.08 and rep["width_after_m"] == 0.02
+    assert c.post("/grip/2L", json=dict(verb="squeeze")).json()["refused"] == "verb"
+    assert c.post("/grip/9X", json=dict(verb="open")).json()["refused"] == "no_slot"
+    assert c.get("/jobs/nope/report").status_code == 404
+
+
+def test_grip_with_the_robot_waits_for_the_operator_pc(tmp_path):
+    st = open_station(TWO, driver="robot", uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    c = TestClient(create_app(st))
+    r = c.post("/grip/2R", json=dict(verb="open")).json()
+    assert r["refused"] == "no_joint_states"                   # never reported: stack down?
+    st.positions.from_row(dict(event="where", time=time.time(), where={
+        a: list(st.rig.park_q(a)) for a in st.rig.arm_ids}), "op")
+    jid = c.post("/grip/2R", json=dict(verb="open")).json()["id"]
+    assert c.get("/operator").json()["pending"][-1]["kind"] == "grip"
+    phases = [json.loads(x) for x in c.get(f"/jobs/{jid}/phases").text.splitlines() if x]
+    assert all(x.get("end") for x in phases)                   # no phases, only the end
+    assert c.post("/grip/2L", json=dict(verb="open")).json()["refused"] == "busy"
+    c.post(f"/jobs/{jid}/events", json=dict(rows=[
+        dict(seq=0, event="grip started", arm="2R", verb="open", width_m=0.01),
+        dict(seq=1, event="grip done", arm="2R", verb="open", width_before_m=0.01,
+             width_after_m=0.079, grasped=False, nothing_to_do=False, why=""),
+        dict(seq=2, event="job done", why="")]))
+    v = _wait_report(c, jid)
+    assert v["state"] == "done", v["why"]
+    assert v["report"]["width_before_m"] == 0.01 and v["report"]["width_after_m"] == 0.079
+
+
+def test_uploaded_drawings_and_the_gui_route(tmp_path):
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=None,
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    c = TestClient(create_app(st))
+    r = c.post("/drawings", files=dict(file=("pic.svg", SVG.encode(), "image/svg+xml")),
+               data=dict(width="0.3", at="-0.3,0.1")).json()
+    assert r["id"].startswith("pic-") and r["lines"] == 3 and r["kind"] == "svg"
+    small = json.dumps(dict(units="mm", lines=[dict(id="a", points=[[-300, 100],
+                                                                     [-200, 150]])]))
+    r2 = c.post("/drawings", files=dict(file=("small.json", small.encode(), "application/json")))
+    assert r2.status_code == 200 and r2.json()["lines"] == 1
+    nowidth = c.post("/drawings", files=dict(file=("pic.svg", SVG.encode(), "image/svg+xml")))
+    assert nowidth.status_code == 400
+    assert nowidth.json()["detail"] == "an SVG needs its width on the table, in metres"
+    bad = c.post("/drawings", files=dict(file=("x.png", b"..", "image/png")))
+    assert bad.status_code == 400 and bad.json()["refused"] == "format"
+    assert [m["id"] for m in c.get("/drawings").json()] == [r["id"], r2.json()["id"]]
+    assert c.get("/rig").json()["mark_groups"] == {k: list(v)
+                                                    for k, v in st.rig.mark_groups.items()}
+    assert (tmp_path / "drawings" / f"{r['id']}.json").exists()
+    jid = c.post(f"/jobs?drawing={r2.json()['id']}").json()["id"]
+    v = _wait_report(c, jid)
+    assert v["report"]["drawing"]["lines"] == 1 and v["name"] == r2.json()["id"]
+    assert c.post("/jobs?drawing=nothing-00000000").status_code == 404
+    assert c.get("/", follow_redirects=False).headers["location"] == "/gui/"
+    assert c.get("/gui/").status_code in (200, 404)            # 200 once the GUI is written
+
+
+def test_robot_names_from_the_site_table(tmp_path):
+    st = open_station(TWO, uncalibrated=True, cache_dir=None, jobs_dir=tmp_path / "jobs",
+                      workers=2, with_area=False, site=ROOT / "site" / "aris_2026-10.json")
+    c = TestClient(create_app(st))
+    assert c.get("/rig").json()["arms"]["2L"]["robot"] == "fr3-97"
+    assert c.get("/arms").json()["arms"]["2R"]["robot"] == "fr3-71"
+    r = open_station(TWO, uncalibrated=True, with_arms=False, with_area=False,
+                     site=tmp_path / "missing.json")
+    assert isinstance(r, Refusal) and r.reason == "site"

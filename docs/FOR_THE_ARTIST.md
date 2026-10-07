@@ -257,10 +257,21 @@ aris touchoff 2R
 
 That measures the pen's length exactly; without it the pen presses too hard or not at all.
 
+## 6b. Your buttons: the page in the browser
+
+Everything below can also be done from one page with big buttons. On the laptop, while
+`aris serve` runs, open **http://localhost:8420/gui** in the browser (from another computer on
+the same network: `http://<the laptop's address>:8420/gui`). One card per arm with its light and
+HOME / OPEN / CLOSE for the gripper (CLOSE is how the pen holder is held: 70 N, as before) and
+RECOVER; STOP and PARK; pick or upload a drawing (a .json, or an .svg with its width in metres)
+and DRAW; CALIBRATE, TOUCH-OFF and MARK. Every answer from the system appears word for word in
+the line at the top, so if something is refused you read why right there.
+
 ## 7. Drawing
 
 A drawing is a file of lines, in millimetres, measured from the centre of the table (x across,
-y along). You get it from Pete or make it with his converter; the format is:
+y along), or an SVG with its width on the table (`aris draw picture.svg --width 1.70`, or the
+upload on the page). The JSON format is:
 
 ```
 {"units": "mm", "frame": "table",
@@ -285,6 +296,7 @@ was not (and why). Other commands, any time:
 
 | command | what it does |
 |---|---|
+| `aris grip 2L close` / `open` / `home` | the gripper of that arm (CLOSE holds the pen holder; HOME when the jaws seem stuck or show a wrong width) |
 | `aris arms` | every arm: where it stands, whether it answers (if it says "no reading", that arm is not talking — Desk: unlocked, FCI on); and whether the robot PC runs the same code as the laptop (if it says DIFFERENT, update both machines before anything else — jobs are refused until they match) |
 | `aris status` | the current or last job |
 | `aris stop` | every arm stops at once and holds; the job is finished |

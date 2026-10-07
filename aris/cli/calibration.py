@@ -1,7 +1,8 @@
 """The calibration jobs: calibrate (the plane), touchoff (the pen), mark (x, y, yaw and tip),
-and recover."""
+and recover; and the gripper (grip)."""
 from __future__ import annotations
 
+import json
 import urllib.parse
 
 from aris.cli.common import _assume, follow, report_lines, say, verdict
@@ -22,6 +23,20 @@ def cmd_mark(a, http) -> int:
         say(line)
     return verdict(v["state"] == "done", f"mark {' '.join(v['report'].get('slots', []))}: "
                    f"{v['state']}")
+
+
+def cmd_grip(a, http) -> int:
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    body = dict(verb=a.verb, **({} if a.width is None else dict(width_m=a.width)))
+    code, r = http.post(f"/grip/{a.slot}", json.dumps(body).encode())
+    if code != 200:
+        return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
+    say(f"job {r['id']}")
+    v = follow(http, r["id"], a.poll)
+    for line in report_lines(v["report"]):
+        say(line)
+    return verdict(v["state"] == "done", f"grip {a.slot} {a.verb}: {v['state']}")
 
 
 def cmd_touchoff(a, http) -> int:

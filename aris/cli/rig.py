@@ -69,7 +69,8 @@ def _station(a, with_arms: bool):
                         sim_truth=getattr(a, "sim_truth", None),
                         sim_base_error=None if not getattr(a, "sim_base_error", None) else
                         tuple(float(x) for x in a.sim_base_error.split(",")),
-                        sim_mark_error=getattr(a, "sim_mark_error", None))
+                        sim_mark_error=getattr(a, "sim_mark_error", None),
+                        site=getattr(a, "site", None))
 
 
 def _sim_paper(text):

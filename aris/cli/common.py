@@ -107,6 +107,12 @@ def report_lines(rep: dict) -> list[str]:
                        f"height {f['height_change_mm']} mm")
         if rep.get("written"):
             out.append(f"written      {rep['written']}")
+    if rep.get("kind") == "grip":
+        w = lambda x: "-" if x is None else f"{1e3 * float(x):.1f} mm"
+        out.append(f"gripper      {rep.get('slot')} {rep.get('verb')}: width "
+                   f"{w(rep.get('width_before_m'))} -> {w(rep.get('width_after_m'))}"
+                   + ("" if rep.get("grasped") is None else
+                      f", {'grasped' if rep['grasped'] else 'nothing grasped'}"))
     if rep.get("kind") == "park":
         for a, r in rep.get("arms", {}).items():
             out.append(f"arm {a:<8} {r['result']}")

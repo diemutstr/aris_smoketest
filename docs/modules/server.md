@@ -74,30 +74,44 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 
 ## Endpoints
 
-| endpoint | what it does |
-|---|---|
-| `POST /jobs?name=...&note=...` | the drawing file (JSON) as the body; answers the job id; 409 if a job runs, 400 if the file is bad |
-| `POST /jobs?rest_of=<id>` | a new drawing of what that finished (done, stopped, or failed: a link drop mid-job) job left over; 409 while it runs or when nothing is left |
-| `GET /jobs` | every job of this server run |
-| `GET /jobs/{id}` | state; the fitted drawing (bounding box before and after, scale); per phase and arm: motions queued, done, the current motion, what the planner handed back so far, checker refusals; at the end the report |
-| `GET /jobs/{id}/events` | the event log |
-| `POST /jobs/{id}/stop` | stop (409 if already finished) |
-| `POST /park` | park all arms |
-| `GET /rig` | slots (pose, park configuration, calibration state of both parts, and each file's parts with their dates), the drawing area and its centre, the pen that is in, the rig and calibration digests, the paper height map (points, height range, date), driver and speed |
-| `GET /arms` | each arm's joints, speeds, whether it can move, its driver's flags, whether it is at its park; with `--driver robot`, per controlled slot: the robot it named, the joints the operator PC last reported or `null` with why (`reading`: fresh, no joint states, too old, never reported), at its park (`null` without a reading), when (its clock), how long ago the server heard it, and the job |
-| `GET /jobs/{id}/header` | the operator PC: the job's header (`job.json`), with the rig and calibration digests it checks against its own |
-| `GET /jobs/{id}/phases?offset=B` | the operator PC: the phase list from byte B on, held open while it grows, closed after its end line |
-| `GET /jobs/{id}/queues/{phase}/{slot}?offset=B` | the operator PC: that queue file from byte B on, byte for byte, held open while it grows, closed after its end marker; 404 until it exists |
-| `POST /jobs/{id}/events` | the operator PC: `{source, rows: [{seq, ...}]}`; each row appended to the job's log once, in seq order; answers `{accepted, next_seq, stop}` (stop: the job was stopped here) |
-| `POST /calibrate/{slot}` | the calibrate job for one slot (below): the file's `base` part; 409 if a job runs |
-| `POST /mark?slots=2L,2R&group=rows12` | the mark job (below), for the slots named or a group (default: the group "all", else every controlled slot) |
-| `POST /touchoff/{slot}` | the touch-off job (below): the file's `pen` part |
-| `GET /operator/next?wait=30` | the operator PC: the oldest command it has not acknowledged, or 204 after the wait: `run` a job, `recover` an arm, `report` |
-| `POST /operator/ack` | the operator PC: `{"id": n}`, the command was taken (it is given again until then) |
-| `POST /operator/rows` | the operator PC: `{source, rows}`, what it says outside any job (started, where, report, recovered, stack died, ...); kept in `operator.jsonl` beside the jobs; every `where` or `q` updates the arm positions |
-| `GET /operator`, `POST /operator/report` | the commands waiting, when the operator PC was last heard, its stacks, its last rows; ask it to report |
-| `POST /arms/{slot}/recover` | release an arm after a fault, once a person has looked: the simulated arm at once; with `--driver robot`, a `recover` command for the operator PC |
-| `GET /calibration`, `GET /calibration/{slot}` | `{"arms": [...], "files": [...]}`: the slots that have a calibration file under the server's config, each file with a digest and its parts' pass flags and dates; one file as it is (404 if none) |
+Also in `aris/server/API.md` (the same table, for the GUI).
+
+| method and path | body / query | returns |
+|---|---|---|
+| `GET /` , `GET /gui` | — | redirect to `/gui/` |
+| `GET /gui/{file}` | — | the GUI's static files from `aris/server/gui/` (`index.html` for `/gui/`); 404 if missing |
+| `GET /rig` | — | `{arms: {slot: {T_table_base, park_q, calibration, robot (from the site table given to `aris serve --site`, else null)}}, mark_groups: {name: [slots]}, drawing_area_m, drawing_area_centre_m, drawing_area_from_maps_m, drawing_area_problem (null or why drawing is refused), canvas_m, pen_in, calibration_files, paper_surface {exists, points, z_min_m, z_max_m, date}, code {commit, dirty, digest}, rig_digest, calibration_digest, calibration, uncalibrated, driver, speed, note}` |
+| `GET /arms` | — | `{arms: {slot: ...}, code: {same (true/false/null), line, server, operator_pc, operator_pc_reported_at}}`; per slot with simulated arms `{robot, q, qd, ok, flags, at_park}`, with the robot `{robot (as the operator PC names it, else the site table's), q (null: no reading), reading ("fresh" or why not), at_park (null without reading), reported_at, age_s, source, job}` |
+| `GET /jobs` | — | every job of this server run: `[{id, kind, name, state, why, ...}]` |
+| `POST /jobs` | body: the drawing JSON; query `name`, `note`, `air_mm`; or `drawing=<id>` (an uploaded drawing, no body); or `rest_of=<job id>` (no body) | `{id, state, why}`; 400 bad file, 404 unknown drawing id, 409 refused (`{refused, detail}`) |
+| `GET /jobs/{id}` | — | `{id, kind, name, state, why, received, elapsed_s, first_motion_s, arms: [{phase, arm, queued, done, current, status, handed_back_m, refused}], drawing?, report}` (report null until finished) |
+| `GET /jobs/{id}/report` | — | the finished job's report (`report.json`); 404 while running or unknown |
+| `GET /jobs/{id}/events` | — | the job's event rows `[{event, time, arm?, ...}]` |
+| `POST /jobs/{id}/stop` | — | `{id, stopping: true}` (a finished job: nothing to do, also 200) |
+| `POST /park` | — | `{id, state}` of the park job; 409 refused |
+| `POST /arms/{slot}/recover` | — | simulated: `{recovered, why}`; robot: `{queued: command}` |
+| `POST /calibrate/{slot}` | — | `{id, state}` of the plane job; 409 refused |
+| `POST /touchoff/{slot}` | — | `{id, state}` of the touch-off job; 409 refused |
+| `POST /mark` | query `slots=2L,2R` and/or `group=rows12` (neither: group "all", else every slot) | `{id, state}` of the mark job; 409 refused |
+| `POST /grip/{slot}` | JSON `{verb: "home"\|"open"\|"close", width_m?, speed_m_per_s?, force_n?, epsilon_inner_m?, epsilon_outer_m?}` | `{id, state}` of the grip job; its report: `{slot, verb, params, width_before_m, width_after_m, grasped, nothing_to_do}`; 409 refused (no reading, a job running, bad verb, unknown slot) |
+| `POST /drawings` | multipart: `file` (.json or .svg), `width` (m, needed for .svg: else 400 "an SVG needs its width on the table, in metres"), `at` ("x,y" m, .svg; default the area's centre) | `{id, name, kind, stored_at, lines, points, bbox_m, width_m, at_m}`; stored under `out/drawings/`; 400 refused |
+| `GET /drawings` | — | every stored drawing's `{id, name, kind, lines, points, ...}`, oldest first |
+| `GET /calibration` | — | `{arms, files: [...], status: {slot: ...}}` |
+| `GET /calibration/{slot}` | — | that slot's calibration file; 404 if none |
+| `GET /operator` | — | `{pending: [commands], last_seen, stacks, last_rows, ...}` |
+| `POST /operator/report` | — | asks the operator PC to report; the command queued |
+| `GET /jobs/{id}/header` | — | operator PC: the job header (`job.json`) |
+| `GET /jobs/{id}/phases?offset=B` | — | operator PC: the phase list (ndjson) from byte B, held open until its end line |
+| `GET /jobs/{id}/queues/{phase}/{slot}?offset=B` | — | operator PC: the queue file from byte B, held open until its end marker |
+| `POST /jobs/{id}/events` | `{source, rows: [{seq, event, ...}]}` | operator PC: `{accepted, next_seq, stop}` |
+| `GET /operator/next?wait=30&code=<json>` | — | operator PC: the oldest unacknowledged command (`run`, `recover`, `report`) or 204 |
+| `POST /operator/ack` | `{id, code?}` | operator PC: `{acknowledged}` |
+| `POST /operator/rows` | `{source, rows}` | operator PC: `{accepted}` (rows outside any job; positions updated) |
+
+Every refusal is `{"refused": reason, "detail": text}` with status 400 (bad input) or 409 (cannot
+run now). Job kinds: `draw`, `park`, `calibrate`, `touchoff`, `mark`, `grip`. Job states:
+`received`, `fitted` (drawings), `planning`, `drawing` or `moving`, then `done`, `failed` or
+`stopped`.
 
 ## The command
 
@@ -106,6 +120,7 @@ stand. If any other arm is away from its park, the drawing job fails with "park 
 | `aris serve [--host --port --driver sim\|robot --speed --sim-paper dz_mm,roll,pitch --uncalibrated --cache --jobs --config]` | start the server (default `127.0.0.1:8420`); `--sim-paper` gives the simulated arms a paper that is not where the rig says |
 | `aris draw <drawing> [--note ...] [--server URL]` | submit, print a progress line whenever something changes, then the report; exit code 0 on PASS |
 | `aris draw <drawing> --air 30` | an air run, the validation every first drawing on the hardware starts with: the whole job planned and checked with the drawing surface 30 mm above the paper (the planner gets a press of −30 mm, the checker `surface_z` = paper + 30 mm), so every draw is flown in the air; the header says `air_mm`, the report starts with AIR RUN; `aris plan --air` too. |
+| `aris grip <slot> home\|open\|close [--width M]` | the slot's gripper (a `grip` job); the report shows the width before and after |
 | `aris arms` | a table: slot, robot, joints or "no reading", at park, reported when; FAIL when a slot has no reading |
 | `aris draw --rest-of <job id>` | draw what that stopped, failed or finished job left over (a job that failed before anything was accounted: the whole drawing): its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
