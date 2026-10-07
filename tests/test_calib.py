@@ -683,3 +683,79 @@ def test_empty_and_lonely_inputs_are_refusals(tmp_path):
     assert not r.passed and r.why.startswith("2L alone needs marks solved before")
     r = solve_marks(rn, tq, known={"A": np.zeros(2)})        # one known mark is not enough
     assert not r.passed and r.why.startswith("2L alone needs marks solved before")
+
+
+# ================================================================== the paper surface
+
+from aris.calib import paper as PAPER  # noqa: E402
+
+
+def _bumps(x, y):
+    """A known bumpy paper: +-2 mm, 30 cm wavelength."""
+    return 0.002 * np.sin(2 * np.pi * x / 0.3) * np.cos(2 * np.pi * y / 0.3)
+
+
+def _grid(axis_x, half=0.3, n=13):
+    g = np.linspace(-half, half, n)
+    return np.array([[axis_x + a, b] for a in g for b in g])
+
+
+def _plane_file(cfg, slot, pts, date="2026-10-07"):
+    _write(cfg / "calibration" / f"{slot}.json", {"slot": slot, "base": {
+        "passed": True, "method": "plane", "date": date, "why": "",
+        "T_table_base": np.eye(4).tolist(), "height_map_table_m": pts.tolist()}})
+
+
+def test_paper_surface_from_two_grids(tmp_path, capsys):
+    cfg = fresh("config/two_arms", tmp_path)
+    rng = np.random.default_rng(3)
+    for slot, ax in (("2L", -0.305), ("2R", 0.305)):
+        xy = _grid(ax)
+        z = _bumps(xy[:, 0], xy[:, 1]) + 0.05e-3 * rng.standard_normal(len(xy))
+        _plane_file(cfg, slot, np.column_stack([xy, z]))
+    s = PAPER.build_surface(cfg)
+    assert s.n_points == 2 * 169 and s.slots == ("2L", "2R") and s.date == "2026-10-07"
+    X, Y = np.meshgrid(np.linspace(-0.6, 0.6, 121), np.linspace(-0.3, 0.3, 61))
+    inside = PAPER._outside(s.hull, X, Y) == 0
+    err = np.abs(s.z(X, Y) - _bumps(X, Y))[inside]
+    with capsys.disabled():
+        print(f"\n  paper surface, 5 cm grids, 0.05 mm touch noise: max {err.max() * 1e3:.3f} mm,"
+              f" RMS {np.sqrt(np.mean(err ** 2)) * 1e3:.3f} mm, fit residual "
+              f"{s.residual_mm:.3f} mm")
+    assert err.max() < 0.3e-3
+    far = s.z(np.array([0.0, 1.0, -0.9]), np.array([0.45, 0.0, 1.5]))   # beyond hull + 10 cm
+    assert np.all(far == 0.0)
+    assert s.range[0] < -0.0018 and s.range[1] > 0.0018
+    # round trip, and the file evaluated with numpy alone from its own formula
+    PAPER.write_paper(s, cfg, date="2026-10-07")
+    s2 = PAPER.surface(cfg)
+    assert np.allclose(s2.z(X, Y), s.z(X, Y), atol=1e-9)
+    d = json.loads((cfg / "calibration" / "paper.json").read_text())
+    c, w, a = np.array(d["centres_m"]), np.array(d["weights"]), np.array(d["affine"])
+    x, y = 0.123, -0.045                                     # inside the hull: t = 1
+    r = np.hypot(x - c[:, 0], y - c[:, 1])
+    z = d["paper_z_m"] + a[0] + a[1] * x + a[2] * y + np.sum(w * r * r * np.log(r))
+    assert abs(z - float(s.z(x, y))) < 1e-9 and d["kind"] == "thin_plate_spline"
+
+
+def test_paper_surface_fallbacks_and_marks(tmp_path):
+    cfg = fresh("config/two_arms", tmp_path)
+    s = PAPER.build_surface(cfg)                            # no calibration files at all
+    assert s.n_points == 0 and np.all(s.z(np.zeros(3), np.zeros(3)) == 0.0)
+    assert PAPER.surface(cfg).n_points == 0                 # no paper.json: the flat paper
+    PAPER.write_paper(s, cfg)
+    assert json.loads((cfg / "calibration" / "paper.json").read_text())["kind"] == "flat"
+    # a marks base part: the plane job's touches move with the pose the marks job found
+    xy = _grid(-0.305, 0.2, 5)
+    P = np.column_stack([xy, np.zeros(len(xy))])
+    T_then, T_now = np.eye(4), np.eye(4)
+    T_now[:3, 3] = [0.01, -0.02, 0.0]
+    _write(cfg / "calibration" / "2L.json", {"slot": "2L", "base": {
+        "passed": True, "method": "marks", "T_table_base": T_now.tolist(),
+        "plane": {"passed": True, "method": "plane", "date": "2026-10-06",
+                  "T_table_base": T_then.tolist(), "height_map_table_m": P.tolist()}}})
+    s = PAPER.build_surface(cfg)
+    assert np.allclose(s.points[:, :2], xy + [0.01, -0.02])
+    # a failed base part gives nothing
+    _write(cfg / "calibration" / "2L.json", {"slot": "2L", "base": {"passed": False}})
+    assert PAPER.build_surface(cfg).n_points == 0

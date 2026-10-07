@@ -173,6 +173,49 @@ it constrains nothing.
 reference point. The protocol runs a touch-off after the mark job, which sets the pen length
 against the paper again. The marks base part keeps the plane job's numbers under `plane`.
 
+## The paper surface (the height map)
+
+On site, a fixed 2.1 mm press gave no ink in places and reflex trips in others, because the
+paper varies by ±1.8 mm. `aris/calib/paper.py` turns the plane jobs' touches into one surface
+over the table.
+
+- **In.** Every slot's plane-job touches, as each `base` part already stores them:
+  `height_map_table_m` holds x, y and the measured z in the table frame. For a marks base part
+  they are taken from its `plane` entry and moved from the pose of that time to the pose the
+  marks job found. Failed base parts give nothing.
+- **Fit.** One method with one setting: a thin-plate spline with a small smoothing term
+  (`SMOOTHING` = 1e-4 m², added to the kernel's diagonal). Why a thin-plate spline:
+  - It is the least-bending surface through scattered points and needs no grid.
+  - It behaves the same for 8 touches under one arm and 300 under two.
+  - It is evaluated with numpy alone from its centres, weights and three affine numbers, so the
+    checker reads the same file with its own reader.
+  - The smoothing lets the fit miss each touch by 0.01–0.02 mm instead of bending through it,
+    and keeps the system solvable when two touches nearly coincide. 1e-3 would already flatten
+    30 cm bumps by 0.1 mm.
+- **Out.** `Surface.z(x, y)` (vectorised) is the paper height. Inside the touches' convex hull
+  it is the spline; outside, the bump fades linearly to the flat paper (z = paper_z) over
+  10 cm; beyond that it is flat. With no touches it is flat. `range`, `n_points`, `date` (the
+  newest plane job) and `residual_mm` (fit minus touches, RMS).
+- **File.** `write_paper(surface, config_dir)` writes `calibration/paper.json`: kind, centres,
+  weights, affine, hull, taper, the points, date and residual. It also carries the evaluation
+  formula in words (`evaluate`). `surface(config_dir)` reads it back, or gives the flat paper
+  when there is no file. The server rebuilds it after every plane job
+  (`build_surface` → `write_paper`). The system planner puts the drawing on
+  `surface.z(x, y) − press`.
+
+**How dense the touches must be.** A 30 cm bump of ±2 mm (the test surface) needs touches about
+every 5 cm to be followed within 0.3 mm. Measured inside the hull of two slots' grids:
+
+| touch spacing | worst error | RMS error |
+|---|---|---|
+| 10 cm | 0.95 mm | 0.37 mm |
+| 7.5 cm | 0.31 mm | 0.14 mm |
+| 5 cm | 0.13 mm | 0.03 mm |
+
+Today's plane job (8–12 touches per arm, about 10–20 cm apart) cannot see bumps that
+short; it sees the slow ones. A gap between two slots' grids that is wider than half a
+wavelength is guessed, not measured.
+
 ## What it cannot do
 
 - The plane job cannot see x, y or the turn about the vertical: a flat paper looks the same
@@ -273,5 +316,9 @@ after (b) with its marks known):
 | (c) | 0.1 mm, 0.05 mrad | 0.25 mm | 0.50 mrad | 0.12 mm | 0.12 mm | 0.30 mm |
 | (d) | 0.1 mm, 0.05 mrad | 0.19 mm | 0.46 mrad | 0.07 mm | 0.06 mm | — |
 
-Tests: `tests/test_calib.py`, 27 tests. 26 quick ones in about 5 s; the noise table is
+**Paper surface.** Two slots' 13 × 13 grids, 5 cm apart, on the ±2 mm / 30 cm surface with
+0.05 mm of touch noise: worst error inside the hull 0.25 mm, RMS 0.05 mm, fit residual 0.01 mm.
+Beyond the hull plus 10 cm the surface is exactly flat.
+
+Tests: `tests/test_calib.py`, 29 tests. 28 quick ones in about 5 s; the noise table is
 `slow` and takes about 10 s.
