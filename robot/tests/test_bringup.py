@@ -34,7 +34,9 @@ def written(tmp_path_factory):
 
 def test_every_arm_gets_its_address_domain_and_hanging_base(written):
     rig, site, files, _ = written
-    assert sorted(json.loads(f.read_text())["arm"] for f in files) == sorted(rig.arm_ids)
+    driven = sorted(a for a in rig.arm_ids if not site.arm(a).never)   # 3L, 3R: never driven
+    assert sorted(json.loads(f.read_text())["arm"] for f in files) == driven
+    assert "3L" not in driven
     for f in files:
         a = json.loads(f.read_text())
         sa = site.arm(a["arm"])
@@ -54,18 +56,14 @@ def test_rpy_round_trips_on_random_rotations():
     assert np.allclose(_R(*bringup.rpy(_R(0.3, math.pi / 2, 0.0))), _R(0.3, math.pi / 2, 0.0))
 
 
-def test_the_controllers_carry_the_arms_own_pen_tip(written):
+def test_the_trajectory_controller_is_the_only_one(written):
     rig, site, _, out = written
-    for a in rig.arm_ids:
+    for a in (a for a in rig.arm_ids if not site.arm(a).never):
         d = yaml.safe_load((out / f"arm_{a}_controllers.yaml").read_text())
-        imp = d["/**/aris_joint_impedance_controller"]["ros__parameters"]
-        tip_flange = np.array(imp["tip_offset_flange"])
-        arm = rig.arm(a)
-        q = rig.park_q(a)
-        R, p = arm._frames(q[None])                       # flange is frame 8
-        tip = p[0, 8] + R[0, 8] @ tip_flange
-        assert np.allclose(tip, arm.tip(q[None])[0], atol=1e-12)
-        assert imp["use_model"] is True and imp["arm_id"] == "fr3"
+        assert not any("impedance" in k for k in d)
+        assert set(d["/**/controller_manager"]["ros__parameters"]) == {
+            "update_rate", "fr3_arm_controller", "joint_state_broadcaster",
+            "franka_robot_state_broadcaster"}
         jtc = d["/**/fr3_arm_controller"]["ros__parameters"]
         assert jtc["joints"] == [f"fr3_joint{i}" for i in range(1, 8)]
         assert jtc["command_interfaces"] == ["effort"] and jtc["interpolation_method"] == "splines"
@@ -73,13 +71,12 @@ def test_the_controllers_carry_the_arms_own_pen_tip(written):
         assert all(j in jtc["constraints"] for j in jtc["joints"])
 
 
-def test_fake_hardware_uses_positions_and_no_model(tmp_path):
+def test_fake_hardware_uses_positions(tmp_path):
     rig, site = Rig.load(CONFIG), site_mod.load(ROBOT / "site.json")
     bringup.write(rig, site, tmp_path, fake=True)
     d = yaml.safe_load((tmp_path / "arm_2L_controllers.yaml").read_text())
     assert d["/**/fr3_arm_controller"]["ros__parameters"]["command_interfaces"] == ["position"]
     assert "gains" not in d["/**/fr3_arm_controller"]["ros__parameters"]
-    assert d["/**/aris_joint_impedance_controller"]["ros__parameters"]["use_model"] is False
     assert json.loads((tmp_path / "arm_2L.json").read_text())["use_fake_hardware"] is True
 
 

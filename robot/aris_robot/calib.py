@@ -4,9 +4,9 @@ first), so a mode switch never reaches a running ROS controller (DESIGN 6, 2026-
 
   state()      the robot state: joints, speeds, mode, errors
   move(traj)   our timed joint trajectory at its own timing: q(t), qd(t) of the planner's cubic
-               streamed at 1 kHz into panda-py's joint position controller (a joint impedance
-               around the reference).  Not `move_to_joint_position`: that plans its own timing,
-               and the checker's verdict holds at ours only
+               streamed at 1 kHz into panda-py's joint position controller.  Not
+               `move_to_joint_position`: that plans its own timing, and the checker's
+               verdict holds at ours only
   guide(m)     the mark: libfranka disconnected, Desk to programming (light white; FCI
                goes off with it); wait for ✓ (check) or ○ (circle), while ✗ (cross) means
                "I am redoing this seat" and the wait goes on (a row says so); Desk to
@@ -39,10 +39,9 @@ from typing import Protocol
 import numpy as np
 
 from aris.execute.drivers import ArmState, Result
-from aris.kernel.retime import retime
+from aris.kernel.retime import retime, sample
 from aris.types import JointPath, Refusal
 
-from aris_robot import stream as S
 from aris_robot.desk import BUTTONS
 from aris_robot.touch import Kinematics, straight_on
 
@@ -163,7 +162,7 @@ class CalibArm:
         if self.fci is None:
             return Result.failed("no FCI connection", self._q())
         _, _, mode, _ = self.fci.state()
-        if mode in (3, 5):
+        if mode == 5:                       # only the person at the arm can release a user stop
             return Result.failed(f"the arm is in {MODES[mode]}: release it at the arm first",
                                  self._q())
         why = self.fci.recover()
@@ -298,7 +297,7 @@ class PandaFci:
                     if halt.is_set():
                         return "stopped"
                     t = min(ctx.num_ticks / self.rate, duration)
-                    q, qd = S.cubic(traj.t, traj.q, traj.qd, [t0 + t])
+                    q, qd, _ = sample(traj, [t0 + t])
                     ctrl.set_control(q[0], qd[0])
                     if t >= duration:
                         break

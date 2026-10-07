@@ -248,56 +248,46 @@ def test_the_copy_survives_a_link_that_keeps_dropping(rig, tmp_path):
         job.queue("phase 1", "2L").path.read_bytes()
 
 
-class PenRecording(Recording):
-    def set_pen(self, pen):
-        self.pen = pen
-
-
 @pytest.mark.parametrize("in_header", [True, False])
-def test_the_job_headers_pen_rules_are_applied(rig, tmp_path, in_header):
-    """The header's `pen` (the server's rig file) rules the job; an old header without it
-    runs with this PC's rig file."""
+def test_the_job_headers_pen_is_recorded(rig, tmp_path, in_header):
+    """The header's `pen` is recorded in the first row (its press is the plan's); an old
+    header without it falls back to this PC's rig file, and the row says so."""
     server_dir = tmp_path / "server"
     server_dir.mkdir()
     header = _header(rig)
-    gel = dict(rig.pen(), force_band_n=[0.6, 1.0], force_cap_n=2.2)
+    other = dict(rig.pen(), press_m=0.002)
     if in_header:
-        header["pen"] = gel
+        header["pen"] = other
     else:
         header.pop("pen")
     job = Job.create(server_dir / "pen", header)
     app = create_app(server_dir)
-    arm = PenRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
+    arm = Recording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
     with Served(app) as srv:
         _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
         res = run_job(Remote(srv.url), "pen", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
-    want = gel if in_header else rig.pen()
-    assert arm.pen == want
     first = app.state.received["pen"][0]
-    assert first["pen"] == want
+    assert first["pen"] == (other if in_header else rig.pen())
     assert first["pen_from"] == ("job header" if in_header else "rig file")
 
 
 class ModeRecording(Recording):
-    """Records the job settings and the collision-threshold calls the runner makes."""
+    """Records the collision-threshold calls the runner makes."""
 
     def __init__(self, driver, collision_fails=False):
         super().__init__(driver)
-        self.jobs, self.collision, self.fails = [], [], collision_fails
-
-    def set_job(self, pen, tracking):
-        self.jobs.append((pen, tracking))
+        self.collision, self.fails = [], collision_fails
 
     def set_collision(self, which):
         self.collision.append(which)
         return "refused by the robot" if self.fails and which == "job" else ""
 
 
-@pytest.mark.parametrize("tracking", [None, "position", "impedance"])
-def test_the_tracking_mode_of_the_header_is_applied(rig, tmp_path, tracking):
-    """Mode A (position, the default when the header says nothing) raises the collision
-    thresholds for the job and restores them after; mode B (impedance) leaves them alone."""
+@pytest.mark.parametrize("tracking", [None, "position"])
+def test_a_job_raises_the_thresholds_and_restores_them(rig, tmp_path, tracking):
+    """Joint position control, the one mode (said or not): the collision thresholds are the
+    site's "job" ones while the job runs and "normal" after."""
     server_dir = tmp_path / "server"
     server_dir.mkdir()
     header = _header(rig)
@@ -312,11 +302,9 @@ def test_the_tracking_mode_of_the_header_is_applied(rig, tmp_path, tracking):
         res = run_job(Remote(srv.url), "m", rig, CONFIG, tmp_path / "robot", {"2L": arm},
                       robots=robots)
     assert res.status == "done", res.why
-    mode = tracking or "position"
-    assert arm.jobs == [(rig.pen(), mode)]
-    assert arm.collision == (["job", "normal"] if mode == "position" else [])
+    assert arm.collision == ["job", "normal"]
     first = app.state.received["m"][0]
-    assert first["tracking"] == mode and first["robots"] == robots
+    assert first["tracking"] == "position" and first["robots"] == robots
     assert first["pen"]["press_m"] == rig.pen()["press_m"]
 
 
@@ -338,7 +326,7 @@ def test_a_mark_job_sets_no_thresholds_and_the_header_sets_the_start_tolerance(r
 def test_refusals_before_anything_moves(rig, tmp_path):
     server_dir = tmp_path / "server"
     server_dir.mkdir()
-    Job.create(server_dir / "bad", dict(_header(rig), tracking="fast"))
+    Job.create(server_dir / "bad", dict(_header(rig), tracking="impedance"))
     Job.create(server_dir / "ok", _header(rig))
     arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf), collision_fails=True)
     with Served(create_app(server_dir)) as srv:
@@ -348,10 +336,23 @@ def test_refusals_before_anything_moves(rig, tmp_path):
         wrong = run_job(r, "ok", rig, CONFIG, tmp_path / "b", {"2L": arm},
                         robots={"2L": dict(robot="fr3-31", identity="mismatch: found fr3-13")})
         assert isinstance(wrong, Refusal) and wrong.reason == "wrong_robot"
-        thr = run_job(r, "ok", rig, CONFIG, tmp_path / "c", {"2L": arm})
-        assert isinstance(thr, Refusal) and thr.reason == "collision_thresholds"
-        assert arm.collision == ["job", "normal"]                # restored after the refusal
     assert arm.calls == []                                     # nothing moved
+
+
+def test_thresholds_the_robot_refuses_are_noted_not_a_refusal(rig, tmp_path):
+    """The arms keep their normal (lower) thresholds; the job runs and says so."""
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    job = Job.create(server_dir / "t", _header(rig))
+    app = create_app(server_dir)
+    arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf), collision_fails=True)
+    with Served(app) as srv:
+        _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
+        res = run_job(Remote(srv.url), "t", rig, CONFIG, tmp_path / "r", {"2L": arm})
+    assert res.status == "done", res.why
+    first = app.state.received["t"][0]
+    assert "refused by the robot" in first["collision_thresholds_not_set"]
+    assert arm.collision == ["job", "normal"]
 
 
 def test_a_job_planned_for_another_rig_is_refused(rig, tmp_path):

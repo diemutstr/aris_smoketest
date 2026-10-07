@@ -46,17 +46,17 @@ def test_contact_within_the_plan_reads_where_the_paper_is(rig, setup, height):
     r, pos, kin, paper = _run(rig, setup, height)
     assert r.done, r.why
     assert r.air_zero == pytest.approx(2.3, abs=0.05)
-    # 1 N at 5000 N/m is 0.2 mm in; the reading is taken at the onset
-    assert -0.0004 < -_height_of(kin, paper, r.q_contact) < 0.0004
+    # 3 N at 5000 N/m is 0.6 mm in; the reading is taken at the onset
+    assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / 5000.0) < 0.00025
     assert np.abs(pos.q - setup[0]).max() <= 1e-9                  # back at the hover
-    assert r.depth_past_end <= max(0.0, -height) + 0.0005        # 1 N lies 0.2 mm in
+    assert r.depth_past_end <= max(0.0, -height) + 0.0008        # 3 N lies 0.6 mm in
 
 
 def test_contact_past_the_planned_end_goes_on_straight_and_slowly(rig, setup):
     r, pos, kin, paper = _run(rig, setup, -0.012)                  # paper 12 mm low
     assert r.done, r.why
-    assert r.depth_past_end == pytest.approx(0.012, abs=0.0005)
-    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0004
+    assert r.depth_past_end == pytest.approx(0.0126, abs=0.0005)
+    assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / 5000.0) < 0.00025
     ext = pos.flights[1]
     tips = kin.tip(ext.q)
     speed = np.linalg.norm(np.diff(tips, axis=0), axis=1) / np.diff(ext.t)
@@ -88,8 +88,14 @@ def test_refusals_before_moving(rig, setup):
     r = touch(dataclasses.replace(m, extra_depth=0.05), SimPositionArm(q0, None), Kinematics.of(rig, ARM),
               TouchSettings())
     assert not r.done and "cap" in r.why
-    r, pos, _, _ = _run(rig, setup, 0.0, bias=9.0)
-    assert not r.done and r.why.startswith("tare_too_large") and not pos.flights
+    class Silent(SimPositionArm):                    # no force signal at all
+        def forces(self, seconds):
+            return []
+    pos = Silent(q0, FakePaper(Kinematics.of(rig, ARM), rig.paper(ARM)))
+    r = touch(m, pos, Kinematics.of(rig, ARM), TouchSettings())
+    assert not r.done and r.why.startswith("no_tare") and not pos.flights
+    r, pos, _, _ = _run(rig, setup, 0.0, bias=9.0)  # a large air reading is no reason to stop
+    assert r.done, r.why
 
 
 def test_the_executor_logs_the_contact_row_with_the_joints(rig, setup, tmp_path):
@@ -111,6 +117,31 @@ def test_the_executor_logs_the_contact_row_with_the_joints(rig, setup, tmp_path)
     rows = log.read()
     contact = next(r for r in rows if r["event"] == "contact")
     assert len(contact["q"]) == 7
-    assert abs(_height_of(arm.kin, arm.paper, np.array(contact["q"]))) < 0.0004
+    assert abs(_height_of(arm.kin, arm.paper, np.array(contact["q"])) + 3.0 / 5000.0) < 0.00025
     done = next(r for r in rows if r["event"] == "motion done")
     assert np.allclose(done["q"], q0, atol=1e-9)
+
+
+class Jolting(SimPositionArm):
+    """Every flight starts with a jolt: the force estimate reads 5 N more for its first
+    0.15 s (the descent's own acceleration, as on 2026-10-07: tripped 60 mm in the air)."""
+
+    def fly(self, traj, watch):
+        n, ticks = self.paper.n, [0]
+
+        def jolted(q, F):
+            ticks[0] += 1
+            return watch(q, F + (5.0 * n if ticks[0] * 0.004 <= 0.15 else 0.0))
+        return super().fly(traj, jolted)
+
+
+def test_the_start_transient_is_not_a_contact(rig, setup):
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    paper = FakePaper(kin, rig.paper(ARM), height=0.0, k=5000.0, bias=2.3)
+    pos = Jolting(q0, paper)
+    r = touch(m, pos, kin, TouchSettings())
+    assert r.done, r.why
+    assert r.early_trips >= 15                       # it would have tripped, unarmed
+    assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / 5000.0) < 0.00025
+    assert r.armed_zero == pytest.approx(2.3, abs=0.1)

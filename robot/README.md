@@ -9,10 +9,8 @@ steps.
 ```
 robot/
   site.json                    this PC: the server, which slots are mounted, each slot's
-                               force sign, the tare and contact thresholds, the touch
+                               force sign and real-time core, the touch, the thresholds
   aris_robot/                  the Python package (the command `aris-robot`)
-  ros2_ws/src/aris_msgs        the reference and status messages
-  ros2_ws/src/aris_controllers the controller aris_joint_impedance_controller (C++)
   ros2_ws/src/aris_bringup     the launch file of one arm and the controller settings
   tests/                       everything that runs without ROS
 ```
@@ -62,16 +60,11 @@ grep -c mount_to_world $(ros2 pkg prefix franka_description)/share/franka_descri
 cd ~/aris3/robot/ros2_ws
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
     -DFranka_DIR=<libfranka build dir>     # on the Dell: where libfranka 0.21 was built
-colcon test --packages-select aris_controllers && colcon test-result --verbose
 source install/setup.bash
 ```
 
-`colcon test` runs `core_test`: the controller's law, reference and holds without the robot
-(the same test ran on the planning PC). If the build fails in
-`joint_impedance_controller.cpp`, the likely places are the Jazzy API calls that could not be
-compiled here: `get_optional()` on state interfaces, `RealtimePublisher::trylock/msg_/
-unlockAndPublish`, `FrankaRobotModel`. The live Cartesian controller on this PC uses the same
-calls; compare with it.
+The workspace holds one package, `aris_bringup`: the launch file of one arm and its
+controller settings (the stock joint trajectory controller and the two broadcasters).
 
 ## 3. The Python side
 
@@ -103,15 +96,12 @@ the site table.
   id, as the live stacks use it.
 - **`robot/site.json`** is about this PC. It holds the server's address (`server_url`, the
   planning PC, port 8420) and the site table it uses (`site_table`). Per slot it holds
-  `mounted` (true only for a slot whose arm hangs there and answers) and `force_sign`. It also
-  holds the tare and contact thresholds (`force`), the touch (`touch`), and the collision
-  thresholds for position tracking (`collision`). One source for each fact: nothing in the
-  site table is repeated here.
+  `mounted` (true only for a slot whose arm hangs there and answers), `force_sign` and
+  `rt_core`. It also holds the touch (`touch`) and the collision thresholds (`collision`).
+  One source for each fact: nothing in the site table is repeated here.
 
-How hard the pen presses (the force band, levels, cap, ramps, the servo, the press depth) is
-a fact of pen and paper. It lives in `config/rig.json` (`pens`) on the planning PC, comes
-with every job, and the runner applies the job's values. A job without them (an older one)
-runs with this PC's rig file.
+How hard the pen presses is the plan's: it runs the pen's `press_m` (config/rig.json `pens`)
+below the paper. The job header carries the pen, and the first row records it.
 
 **Which robot is it?** `aris-robot identify` and serve's first row report, per slot, the
 robot the table names and what answers at its address (the robot mode, the address the stack
@@ -120,17 +110,14 @@ the table names is refused. The check needs a serial, and FCI and ROS report non
 serial can be read, every slot is reported as "unverified". Identify by the address and by
 which park the arm stands at.
 
-**Tracking.** The job header says how the arms follow (DESIGN 4c):
-- `position` (mode A, the default): every motion, the drawing ones included, flies through
-  the stock trajectory controller exactly as planned. The press is geometric: the plan runs
-  the pen's `press_m` (3.5 mm for 4H graphite) below the paper. For the job the collision
-  thresholds are raised to site.json `collision.job` (40 N, as the old stack did before every
-  pass), with a service call at job start; after the job they go back to `collision.normal`.
-- `impedance` (mode B): lower, draw and lift under `aris_joint_impedance_controller` with the
-  pen force (DESIGN 4b). It is chosen on the planning PC (`--tracking impedance` when the job
-  is submitted); nothing changes here.
-
-The calibration touch is under position control in both modes.
+**Tracking.** One mode: joint position control (Pete, 2026-10-07). Every motion, the
+drawing ones included, flies through the stock trajectory controller exactly as planned.
+The press is geometric: the plan runs the pen's `press_m` (3.5 mm for 4H graphite) below the
+paper. A job header asking for another mode is refused. For each job except a mark job, the
+collision thresholds are raised to site.json `collision.job` (40 N, as the old stack did
+before every pass), with a service call at job start. After the job they go back to
+`collision.normal`. If the robot will not take them, that is noted in the first row, and the
+job runs at the normal thresholds.
 
 ## 5. The resident process: `aris-robot serve`
 
@@ -170,9 +157,8 @@ The config directory must hold the same rig file as the server's. Add
 that one.
 
 **Fake hardware**: `aris-robot --fake serve` (add `--fake` to the unit's command line). The
-stacks start on fake hardware, which ignores torques. A drawing motion therefore goes through
-the trajectory controller, without pen force, and the impedance controller is never used. A
-touch works as on a real arm: the fake hardware has no force estimate, so a fake paper stands
+stacks start on fake hardware, with the trajectory controller on the position interface
+(fake hardware ignores torques). A touch works as on a real arm: the fake hardware has no force estimate, so a fake paper stands
 in for it, at `--fake-paper-mm` above the nominal paper (default 0: the touch meets it at the
 planned end of its descent). `aris-robot serve --sim-speed inf` runs without ROS at all, on
 simulated arms that also touch a fake paper. It is useful for trying the server's commands on
@@ -256,20 +242,34 @@ stack is down.
 with panda-py 1.1.1: take control, FCI on, connect, guide, release; `listen` and
 `stop_listen`; that the joints read the same standing still after the hand-back.
 
-**Real-time cores.** Each arm's stack runs pinned to its own isolated core (site.json
-`rt_core`, launched under `taskset -c`). Another lane's controller preempted our loops and
-dropped the link every 3 to 7 minutes until each arm had its own core. The Dell's isolated
-cores are 8-19 and 28-39; keep `rt_core` inside them, one per slot.
+**Real-time cores.** Each mounted slot's stack runs on its own isolated core at SCHED_FIFO
+95: serve launches it as `chrt -f 95 taskset -c <rt_core> ros2 launch ...`. The cores are
+site.json `rt_core`: 2L → 16, 2R → 17, 1L → 18, 1R → 19, and the priority is `ros.rt_priority`.
+3L (the floor arm) and 3R (empty) get no stack at all: the site table marks them
+`controlled: never` / `absent`, and site.json refuses to mount them. Link drops ended on
+2026-10-07 once each arm's loop had its own core and the network card's interrupts were kept
+off those cores. The Dell's isolated cores are 8-19 and 28-39.
+
+**One-time host step: the network card's interrupts on cores 12, 13, 32, 33** (as root, once;
+again after a kernel or NIC change):
+
+```
+sudo systemctl disable --now irqbalance          # it would move them back
+grep -E 'enp|eno|eth' /proc/interrupts           # the NIC's IRQ numbers, first column
+# give each of the NIC's IRQs one of the four cores, in turn, e.g. for IRQs 140..143:
+echo 12 | sudo tee /proc/irq/140/smp_affinity_list
+echo 13 | sudo tee /proc/irq/141/smp_affinity_list
+echo 32 | sudo tee /proc/irq/142/smp_affinity_list
+echo 33 | sudo tee /proc/irq/143/smp_affinity_list
+cat /proc/irq/140/smp_affinity_list              # check
+```
+
+`/proc/irq` settings do not survive a reboot. Put the `echo` lines into
+`/etc/rc.local`, or a oneshot systemd unit that runs before `aris-robot.service`, so they
+are applied at every boot.
 
 ## Defaults worth knowing
 
-- Joint stiffness `[300 300 250 250 40 40 15]` Nm/rad: 170 to 300 N/m at the pen tip in the
-  paper plane. While the pen is down, the stiffness along the paper normal is replaced by a
-  soft spring, 100 N/m, critically damped (`k_normal`, `d_normal`).
-- Pen force 0.7 to 1.0 N (graphite), cap 3.5 N, ramped in over the first 2 mm of a line; the
-  force servo trims it from the force estimate with a 1 s time constant (on by default).
-- The controller holds and reports when the stream runs dry for 20 ms, when a joint is 0.05 rad
-  off its reference, or on `~/hold`.
 - On the arms (2026-10-06):
   - Start tolerance 0.03 rad, from the job header or rig.json.
   - Trajectory goal tolerance 0.03 rad, `goal_time` 3 s.
@@ -279,19 +279,19 @@ cores are 8-19 and 28-39; keep `rt_core` inside them, one per slot.
     reported in a row:
     1. Franka error recovery.
     2. The hardware component inactive, then active.
-    3. The trajectory controller and both broadcasters active; the impedance controller
-       stays inactive.
+    3. The trajectory controller and both broadcasters active.
     4. The joint states must be fresh: their stamp advances over 1 s.
     5. If they are not fresh within 10 s, serve restarts that arm's stack and checks again.
 
     After that a park (`aris park`) flies without restarting anything. A joint reading older
     than 2 s is no reading: rows say `"q": null` with "stale joint states (last 7.3 s ago)".
-  - Mode B: before switching the impedance controller in, the driver gives it the job's start
-    tolerance (0.03 rad). The stream then starts with a short join from where the arm holds
-    to the plan's start: a straight joint move over max(0.5 s, distance / 0.2 rad/s), with
-    zero force and a "join" row. More than the tolerance off: refused, with the distance.
-  - After a mode A job the trajectory controller stays active and holds.
+  - After a job the trajectory controller stays active and holds.
   - A link drop (`communication_constraints_violation`) is recovered by itself, at most once
     per 2 minutes per arm (site.json `execution.auto_recover`).
-  - Touch: onset at 3 N over 15 readings, cap 6 N, tare spread 1.5 N.
+  - Touch: onset at 3 N over 15 readings, cap 6 N. The detector arms only once the descent
+    runs at constant speed (its acceleration ramp over, plus 0.1 s), and takes its zero
+    then. A trip during the ramp is the descent's own jolt, not the paper; it tripped 60 mm
+    in the air on 2026-10-07, and the descent now carries on.
+  - A job starts within 10 s or fails with a row naming the step it was stuck in. A stuck
+    start never moves an arm later.
   - `force_sign` is −1 on the hung arms.

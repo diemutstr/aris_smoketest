@@ -229,6 +229,7 @@ class Operator:
         self.rows = rows or Rows(remote, Path(log_dir))
         self.robots = robots or {}
         self.make_calib = make_calib
+        self.start_timeout_s = 10.0          # a job starts, or fails with a row, within this
         self.auto_recover: dict = {}         # site.json execution.auto_recover
         self._recovered: dict = {}
         self.busy = threading.Event()
@@ -307,14 +308,53 @@ class Operator:
             drivers = {a: Switch(a, d) for a, d in drivers.items()}
             around = HandOver(drivers, lambda a, say: self.make_calib(a, rig, say),
                               self.stacks, self.rows.say).around
-        res = run_job(self.remote, job, rig, self.config, self.work, drivers,
-                      robots=self.robots, around_phase=around)
+        res = self._run_watched(job, rig, drivers, around)
+        if res is None:
+            return
         if isinstance(res, Refusal):
             self.rows.say("run refused", job=job, reason=res.reason, why=res.detail,
                           **self.where_fields())
         else:
             self.rows.say("run ended", job=job, status=res.status, why=res.why,
                           **self.where_fields())
+
+    def _run_watched(self, job, rig, drivers, around):
+        """run_job in a worker, watched until the job has started: no progress for
+        `start_timeout_s` (a call into a restarted stack that never answers, ...) fails the
+        job with a row naming the step, here and in the job's own log, instead of hanging.
+        Returns run_job's answer, or None when it was given up."""
+        step = {"name": "starting", "t": time.monotonic()}
+        out: list = []
+        given_up = threading.Event()
+
+        def progress(name):
+            if given_up.is_set():       # declared failed: it must not start late
+                raise RuntimeError(f"given up while: {step['name']}")
+            step.update(name=name, t=time.monotonic())
+
+        def work():
+            try:
+                out.append(run_job(self.remote, job, rig, self.config, self.work, drivers,
+                                   robots=self.robots, around_phase=around, progress=progress))
+            except Exception as e:                   # said, not swallowed
+                out.append(Refusal("exception", f"{type(e).__name__}: {e}"))
+
+        t = threading.Thread(target=work, daemon=True, name=f"run {job}")
+        t.start()
+        while t.is_alive() and step["name"] != "started":
+            if time.monotonic() - step["t"] > self.start_timeout_s:
+                why = (f"no progress for {self.start_timeout_s:g} s while: {step['name']} "
+                       f"(the job was not started)")
+                self.rows.say("run failed", job=job, step=step["name"], why=why,
+                              **self.where_fields())
+                self.remote.post_events(job, [dict(seq=0, time=time.time(),
+                                                   event="runner finished", status="failed",
+                                                   why=why, **self.where_fields())])
+                given_up.set()
+                return None
+            t.join(0.1)
+        t.join()
+        return out[0] if out else Refusal("exception", "the run ended without an answer")
 
     def recover(self, arm: str) -> None:
         d = self.drivers.get(arm)
@@ -364,12 +404,15 @@ class Operator:
 
 def launch_commands(args_files, site=None) -> dict:
     """slot -> the `ros2 launch` command of its stack, from bringup's argument files; pinned
-    to the slot's isolated core (site.json `rt_core`, `taskset -c`) when it has one, so no
-    other process's real-time loop preempts its control loop (link drops, 2026-10-06)."""
+    to the slot's isolated core (site.json `rt_core`, `taskset -c`) at SCHED_FIFO
+    (`chrt -f`, site.json `ros.rt_priority`) when it has one, so no other process's real-time
+    loop preempts its control loop (link drops ended so, 2026-10-07)."""
     out = {}
+    prio = 95 if site is None else int(site.rt_priority)
     for f in args_files:
         a = json.loads(Path(f).read_text())
         cmd = ["ros2", "launch", "aris_bringup", "arm.launch.py", f"args:={f}"]
         core = None if site is None else site.arm(a["arm"]).rt_core
-        out[a["arm"]] = cmd if core is None else ["taskset", "-c", str(core)] + cmd
+        out[a["arm"]] = cmd if core is None else (
+            ["chrt", "-f", str(prio), "taskset", "-c", str(core)] + cmd)
     return out

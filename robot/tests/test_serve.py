@@ -135,7 +135,8 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
     contact = next(r for r in cal_rows if r["event"] == "contact")
     kin = Kinematics.of(rig, "2L")
     paper = FakePaper(kin, rig.paper("2L"), 0.003)
-    assert abs(float(kin.tip(np.array(contact["q"]))[0] @ paper.n) - paper.c) < 0.0004
+    assert abs(float(kin.tip(np.array(contact["q"]))[0] @ paper.n) - paper.c
+               + 3.0 / 5000.0) < 0.00025
     assert rows[events.index("recovered")]["arm"] == "2L"
     assert "not a mounted arm" in rows[events.index("recover refused")]["why"]
     assert all(set(r["where"]) == {"2L", "2R"} for r in rows if r["event"] == "where")
@@ -216,8 +217,9 @@ def test_each_stack_is_pinned_to_its_core(tmp_path):
     f = tmp_path / "arm_2R.json"
     f.write_text(json.dumps(dict(arm="2R")))
     cmd = launch_commands([f], site)["2R"]
-    assert cmd[:3] == ["taskset", "-c", str(site.arm("2R").rt_core)]
-    assert cmd[3:6] == ["ros2", "launch", "aris_bringup"]
+    assert site.arm("2R").rt_core == 17 and site.arm("2L").rt_core == 16
+    assert cmd[:6] == ["chrt", "-f", "95", "taskset", "-c", "17"]
+    assert cmd[6:9] == ["ros2", "launch", "aris_bringup"]
     assert launch_commands([f])["2R"][0] == "ros2"
 
 
@@ -260,3 +262,109 @@ def test_link_drops_recover_by_themselves_once_per_window_and_where_is_never_zer
     assert w["where"]["1L"] is None and w["where_missing"]["1L"] == "no joint states"
     assert w["where"]["2L"] == pytest.approx([0.1] * 7)
     assert json.dumps(w, allow_nan=False)
+
+
+class _Restartable:
+    def __init__(self):
+        self.calls, self.state = [], {}
+
+    def restart(self, arm):
+        self.calls.append(("restart", arm))
+        return ""
+
+    def pause(self, arm, grace=15.0):
+        return ""
+
+    def resume(self, arm):
+        pass
+
+
+def _park_job(rig, jobs, jid, slot, off):
+    from aris.execute import Job
+    from aris.kernel.retime import retime
+    from aris.types import JointPath, Motion, Phase
+    from test_runner import Passed, _header
+    job = Job.create(jobs / jid, dict(_header(rig), kind="park"))
+    phase = Phase(f"park {slot}", (slot,), tuple(b for b in rig.arm_ids if b != slot), ())
+    job.add_phase(phase)
+    q = job.queue(phase.name, slot)
+    traj = retime(JointPath(np.array([rig.park_q(slot) + off, rig.park_q(slot)])),
+                  rig.arm(slot).limits, rig.rules())
+    assert q.append(Motion("free", traj), Passed()) == 0
+    q.close()
+    job.end_phases()
+
+
+def _serve_until(app, op, event, timeout=15.0):
+    t = threading.Thread(target=op.serve, daemon=True)
+    t.start()
+    ok = _wait_for(lambda: any(r["event"] == event for r in app.state.rows), timeout)
+    op.quit.set()
+    t.join(timeout=5)
+    return ok
+
+
+def test_a_park_after_a_stack_restart_runs(tmp_path):
+    from aris.rig import Rig
+    from aris_robot.remote import Remote
+    from aris_robot.simarm import SimTouchArm
+    from fake_server import Served, create_app
+    rig = Rig.load(CONFIG)
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    off = np.array([0, 0, 0, 0, 0, 0, 0.05])
+    _park_job(rig, jobs, "p1", "2L", off)
+    stacks = _Restartable()
+    stacks.restart("2L")                                   # the stack came back
+    drivers = {"2L": SimTouchArm(rig, "2L", rig.park_q("2L") + off, speed=math.inf)}
+    app = create_app(jobs)
+    app.state.commands.append(dict(id="c", command="run", job="p1"))
+    with Served(app) as srv:
+        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w", drivers, tmp_path / "log",
+                      stacks=stacks, idle_s=5.0, wait_s=0.3)
+        t0 = time.monotonic()
+        assert _serve_until(app, op, "run ended")
+    ended = next(r for r in app.state.rows if r["event"] == "run ended")
+    assert ended["status"] == "done", ended["why"]
+    assert time.monotonic() - t0 < 10.0
+
+
+def test_a_job_that_cannot_start_fails_with_a_row_instead_of_hanging(tmp_path):
+    """A call into a restarted stack that never answers (here: the collision thresholds)
+    must not hang the runner: the job fails, named, and never starts late."""
+    from aris.rig import Rig
+    from aris_robot.remote import Remote
+    from aris_robot.simarm import SimTouchArm
+    from fake_server import Served, create_app
+    rig = Rig.load(CONFIG)
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    off = np.array([0, 0, 0, 0, 0, 0, 0.05])
+    _park_job(rig, jobs, "p2", "2L", off)
+
+    class Stuck(SimTouchArm):
+        moves = 0
+
+        def set_collision(self, which):
+            if which == "job":
+                time.sleep(2.0)                             # never answers in time
+            return ""
+
+        def move(self, traj):
+            Stuck.moves += 1
+            return super().move(traj)
+
+    drivers = {"2L": Stuck(rig, "2L", rig.park_q("2L") + off, speed=math.inf)}
+    app = create_app(jobs)
+    app.state.commands.append(dict(id="c", command="run", job="p2"))
+    with Served(app) as srv:
+        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w", drivers, tmp_path / "log",
+                      idle_s=5.0, wait_s=0.3)
+        op.start_timeout_s = 0.5
+        assert _serve_until(app, op, "run failed", timeout=10.0)
+        time.sleep(2.5)                                     # the stuck call returns late
+    failed = next(r for r in app.state.rows if r["event"] == "run failed")
+    assert failed["step"] == "collision thresholds" and "not started" in failed["why"]
+    last = app.state.received["p2"][-1]
+    assert last["event"] == "runner finished" and last["status"] == "failed"
+    assert Stuck.moves == 0 and not (tmp_path / "w" / "p2" / "events.jsonl").exists()

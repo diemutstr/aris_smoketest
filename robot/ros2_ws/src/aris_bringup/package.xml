@@ -3,13 +3,12 @@
 <package format="3">
   <name>aris_bringup</name>
   <version>0.1.0</version>
-  <description>Launch one arm of the drawing rig (namespace arm_id, its DDS domain) with the trajectory and the aris impedance controller.</description>
+  <description>Launch one arm of the drawing rig (namespace arm_id, its DDS domain) with its joint trajectory controller.</description>
   <maintainer email="wernerpe.mail@gmail.com">Peter Werner</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <exec_depend>aris_controllers</exec_depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>franka_description</exec_depend>
   <exec_depend>franka_hardware</exec_depend>

@@ -4,11 +4,9 @@ This is the only file besides driver.py and tools.py that imports ROS.  Names, a
 /arm_<id>:
   franka/joint_states                                    sensor_msgs/JointState (100 Hz)
   franka_robot_state_broadcaster/robot_state             franka_msgs/FrankaRobotState
-  aris_joint_impedance_controller/{reference,status}     aris_msgs
-  aris_joint_impedance_controller/{hold,resume}          std_srvs/Trigger
   fr3_arm_controller/follow_joint_trajectory             control_msgs action
   action_server/error_recovery                           franka_msgs/ErrorRecovery action
-  controller_manager/{list,switch}_controller(s)         controller_manager_msgs
+  controller_manager/{list,switch}_controller(s), set_hardware_component_state
   service_server/set_full_collision_behavior             franka_msgs/SetFullCollisionBehavior
 """
 from __future__ import annotations
@@ -20,7 +18,6 @@ import time
 import numpy as np
 import rclpy
 from action_msgs.msg import GoalStatus
-from aris_msgs.msg import ImpedanceStatus, Reference
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import (ListControllers, SetHardwareComponentState,
@@ -29,17 +26,12 @@ from franka_msgs.action import ErrorRecovery
 from franka_msgs.msg import FrankaRobotState
 from franka_msgs.srv import SetFullCollisionBehavior
 from lifecycle_msgs.msg import State
-from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
-from rcl_interfaces.srv import SetParameters
 from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
-from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectoryPoint
 
 TRAJECTORY = "fr3_arm_controller"
-IMPEDANCE = "aris_joint_impedance_controller"
 BROADCASTERS = ("joint_state_broadcaster", "franka_robot_state_broadcaster")
 MODES = {0: "other", 1: "idle", 2: "move", 3: "guiding", 4: "reflex", 5: "user stopped",
          6: "automatic error recovery"}
@@ -71,17 +63,11 @@ class ArmNode:
         self.q = self.qd = None
         self.joint_stamp, self.joint_rx = None, None   # the newest joint state: stamp, arrival
         self.robot_state = None
-        self.status = None
-        self.statuses = collections.deque(maxlen=4096)   # every status, for the force servo
         self.readings = collections.deque(maxlen=4096)   # (q, F) per robot state, for touch
         self.joint_readings = collections.deque(maxlen=4096)   # q per joint state
         n.create_subscription(JointState, f"{ns}/franka/joint_states", self._on_joints, 10)
         n.create_subscription(FrankaRobotState, f"{ns}/franka_robot_state_broadcaster/robot_state",
                               self._on_robot_state, 10)
-        n.create_subscription(ImpedanceStatus, f"{ns}/{IMPEDANCE}/status", self._on_status, 100)
-        self.reference = n.create_publisher(
-            Reference, f"{ns}/{IMPEDANCE}/reference",
-            QoSProfile(depth=100, reliability=ReliabilityPolicy.RELIABLE))
         self.follow = ActionClient(n, FollowJointTrajectory,
                                    f"{ns}/{TRAJECTORY}/follow_joint_trajectory")
         self.recovery = ActionClient(n, ErrorRecovery, f"{ns}/action_server/error_recovery")
@@ -89,8 +75,6 @@ class ArmNode:
         self.list_srv = n.create_client(ListControllers, f"{ns}/controller_manager/list_controllers")
         self.hardware_srv = n.create_client(
             SetHardwareComponentState, f"{ns}/controller_manager/set_hardware_component_state")
-        self.hold_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/hold")
-        self.resume_srv = n.create_client(Trigger, f"{ns}/{IMPEDANCE}/resume")
         self.collision_srv = n.create_client(
             SetFullCollisionBehavior, f"{ns}/service_server/set_full_collision_behavior")
         self.executor = MultiThreadedExecutor(context=self.ctx)
@@ -135,18 +119,6 @@ class ArmNode:
                 return None, None
             return self.joint_stamp, time.monotonic() - self.joint_rx
 
-    def set_parameter(self, node: str, name: str, value: float, timeout: float = 3.0) -> str:
-        """A double parameter of a node in this arm's namespace; "" when set."""
-        cli = self.node.create_client(SetParameters, f"/{self.arm.namespace}/{node}/set_parameters")
-        if not cli.wait_for_service(timeout_sec=timeout):
-            return f"{node} has no parameter service"
-        p = Parameter(name=name, value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE,
-                                                      double_value=float(value)))
-        res = wait(cli.call_async(SetParameters.Request(parameters=[p])), timeout)
-        if res is None or not res.results or not res.results[0].successful:
-            return f"{node} refused {name} = {value}"
-        return ""
-
     def drain_readings(self, joints_only: bool = False) -> list:
         """Every (q, F) from the robot state since the last call; `joints_only`: every q from
         the joint states instead (fake hardware has no robot state), with F None."""
@@ -159,20 +131,9 @@ class ArmNode:
                 self.readings.clear()
             return out
 
-    def _on_status(self, m) -> None:
-        with self._lock:
-            self.status = m
-            self.statuses.append(m)
-
     def joints(self):
         with self._lock:
             return (None, None) if self.q is None else (self.q.copy(), self.qd.copy())
-
-    def drain_statuses(self) -> list:
-        with self._lock:
-            out = list(self.statuses)
-            self.statuses.clear()
-            return out
 
     def mode_and_errors(self):
         """(robot mode number or None, [names of the current errors])."""
@@ -185,20 +146,6 @@ class ArmNode:
         return int(rs.robot_mode), names
 
     # ------------------------------------------------------------------ outgoing
-
-    def publish(self, chunk, extra_f=None) -> None:
-        f = chunk.f if extra_f is None else chunk.f + extra_f[None, :]
-        self.reference.publish(Reference(
-            stream=int(chunk.stream), last=bool(chunk.last), t=[float(x) for x in chunk.t],
-            q=chunk.q.ravel().tolist(), qd=chunk.qd.ravel().tolist(), f=f.ravel().tolist(),
-            n=chunk.n.ravel().tolist()))
-
-    def trigger(self, client, timeout: float = 2.0) -> str:
-        """Calls a Trigger service; "" when done, else why not."""
-        if not client.wait_for_service(timeout_sec=timeout):
-            return f"{client.srv_name} is not available"
-        res = wait(client.call_async(Trigger.Request()), timeout)
-        return "" if res is not None and res.success else f"{client.srv_name} did not answer"
 
     def active_controllers(self, timeout: float = 2.0) -> set[str] | None:
         if not self.list_srv.wait_for_service(timeout_sec=timeout):

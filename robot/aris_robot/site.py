@@ -5,9 +5,8 @@ needs to know about it.  One source for each fact:
       per slot: the robot (e.g. "fr3-71"), its control-box IP, its DDS domain, optionally its
       serial, and whether the row was checked ("sure")
   robot/site.json (this operator PC)
-      the server URL, ROS settings, per slot `mounted` (bolted in and switched on) and
-      `force_sign`, the tare and contact thresholds (`force`), the touch (`touch`), the
-      collision thresholds for position tracking (`collision`)
+      the server URL, ROS settings, per slot `mounted` (bolted in and switched on),
+      `force_sign` and `rt_core`, the touch (`touch`), the collision thresholds (`collision`)
 
 Arms are slots, `1L 1R 2L 2R 3L 3R` (DESIGN 4c): string ids everywhere.  The DDS domain is an
 integer and comes from the site table (today the old robot id, as the live stacks use it).
@@ -36,6 +35,7 @@ class SiteArm:
     serial: str | None = None  # the robot's serial, when the site table knows it
     sure: bool = False       # the table row was checked against the hardware
     rt_core: int | None = None  # the isolated CPU core this arm's stack runs on (taskset)
+    never: bool = False      # the site table: a robot this rig never drives (no stack at all)
 
     @property
     def namespace(self) -> str:
@@ -49,13 +49,13 @@ class Site:
     server_url: str
     joint_prefix: str
     rmw: str
-    force: dict              # tare and contact detection (ForceSettings.from_parts)
     touch: dict              # the touch (touch.TouchSettings.from_site)
     arms: tuple[SiteArm, ...]
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
     desk: dict = field(default_factory=dict)        # Desk's web API: "mode_endpoint"
     execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
     hardware_component: str = "FrankaHardwareInterface"
+    rt_priority: int = 95                           # SCHED_FIFO of each arm's stack
 
     def arm(self, slot: str) -> SiteArm:
         for a in self.arms:
@@ -88,9 +88,14 @@ def load(path) -> Site:
         if not 0 <= dom <= 101:
             raise ValueError(f"slot {slot}: DDS domain {dom} outside 0..101")
         core = mine.get("rt_core")
+        never = row.get("controlled") == "never" or bool(row.get("absent", False))
+        if mine["mounted"] and never:
+            raise ValueError(f"{path}: slot {slot} is mounted, but the site table says its "
+                             f"robot is never driven by this rig (or the slot is empty)")
         arms.append(SiteArm(slot, str(row["robot"]), str(row["ip"]), dom, bool(mine["mounted"]),
                             float(mine.get("force_sign", 1.0)), row.get("serial"),
-                            bool(row.get("sure", False)), None if core is None else int(core)))
+                            bool(row.get("sure", False)), None if core is None else int(core),
+                            never))
     cores = [a.rt_core for a in arms if a.rt_core is not None]
     if len(set(cores)) != len(cores):
         raise ValueError(f"{path}: two slots share an rt_core")
@@ -101,10 +106,11 @@ def load(path) -> Site:
     ros = d.get("ros", {})
     return Site(path, table_path, str(d["server_url"]).rstrip("/"),
                 str(ros.get("joint_prefix", "fr3")), str(ros.get("rmw", "rmw_fastrtps_cpp")),
-                dict(d["force"]), dict(d.get("touch", {})), tuple(arms),
+                dict(d.get("touch", {})), tuple(arms),
                 dict(d.get("collision", {})), dict(d.get("desk", {})),
                 dict(d.get("execution", {})),
-                str(ros.get("hardware_component", "FrankaHardwareInterface")))
+                str(ros.get("hardware_component", "FrankaHardwareInterface")),
+                int(ros.get("rt_priority", 95)))
 
 
 def identity(arm: SiteArm, found_serial: str | None) -> str:

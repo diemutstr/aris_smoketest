@@ -1,12 +1,8 @@
 # The controllers of one arm.  This file is the template: `aris-robot serve` writes one copy
-# per arm with that arm's pen tip (`tip_offset_flange`, from the rig) and, for fake hardware,
-# the position interface for the trajectory controller.  Node names are wildcards so the same
-# file works in every namespace (arm_<id>).
-#
-# Two controllers take the arm, never together (the driver switches between them):
-#   fr3_arm_controller              joint trajectory controller: free moves, parks, jogs
-#   aris_joint_impedance_controller joint impedance around the streamed trajectory, pen force
-#                                   fed forward: lower, draw, lift, touch
+# per arm with its joint names and, for fake hardware, the position interface for the
+# trajectory controller.  Node names are wildcards so the same file works in every namespace
+# (arm_<slot>).  One controller moves the arm: fr3_arm_controller, the joint trajectory
+# controller, for every motion (joint position control, Pete 2026-10-07).
 
 /**/controller_manager:
   ros__parameters:
@@ -14,9 +10,6 @@
 
     fr3_arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
-
-    aris_joint_impedance_controller:
-      type: aris_controllers/JointImpedanceController
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
@@ -65,28 +58,3 @@
       fr3_joint5: {trajectory: 0.05, goal: 0.03}
       fr3_joint6: {trajectory: 0.05, goal: 0.03}
       fr3_joint7: {trajectory: 0.05, goal: 0.03}
-
-/**/aris_joint_impedance_controller:
-  ros__parameters:
-    arm_id: fr3
-    # Joint stiffness and damping.  In the paper plane about 170 to 300 N/m at the pen tip at
-    # drawing poses; along the paper normal, while the pen is down, they are replaced by
-    # k_normal (docs/modules/robot.md, "How stiff the pen is").  Values must be floats.
-    k_gains: [300.0, 300.0, 250.0, 250.0, 40.0, 40.0, 15.0]
-    d_gains: [30.0, 30.0, 25.0, 20.0, 4.0, 4.0, 1.5]
-    max_torques: [75.0, 75.0, 75.0, 75.0, 11.0, 11.0, 11.0]  # FR3 rated 87 / 12 Nm
-    max_torque_rate: 990.0          # Nm/s per joint; libfranka refuses 1000
-    max_force: 5.0                  # N, largest pen force fed forward
-    starve_timeout: 0.02            # s the stream may run dry before the arm holds
-    max_tracking_error: 0.05        # rad on any joint: hold where the arm is
-    start_tolerance: 0.01           # rad, a stream must start this close to where it holds
-    idle_force_timeout: 2.0         # s without a stream before the pen force is taken away
-    idle_force_ramp: 1.0            # s to take it away
-    k_normal: 100.0                 # N/m, the pen's spring along the paper normal (pen down)
-    d_normal: -1.0                  # N s/m along the normal; < 0: critically damped for the
-                                    # arm's own mass along the normal (from the model)
-    mass_normal: 3.0                # kg, used for that without the model (fake hardware)
-    tip_offset_flange: [0.0, 0.0, 0.0]   # written per arm from the rig's pen
-    use_model: true                 # false only with fake hardware (no model there)
-    status_rate: 250.0              # Hz
-    queue_capacity: 8192            # samples (8 s at 1 kHz)

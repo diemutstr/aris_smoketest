@@ -7,7 +7,7 @@ about the arm is typed here.  Everything runs in the namespace arm_<id> and on t
 of the arm.  Started:
   robot_state_publisher, ros2_control_node (franka_hardware, 1 kHz), joint_state_publisher,
   joint_state_broadcaster, franka_robot_state_broadcaster (not with fake hardware),
-  fr3_arm_controller (active), aris_joint_impedance_controller (loaded, inactive).
+  fr3_arm_controller (active): the one controller that moves the arm.
 Not started, on purpose: MoveIt, RViz, and the gripper node (homing the gripper would open
 the fingers that hold the pen holder).
 """
@@ -64,7 +64,6 @@ def _nodes(context):
              namespace=ns, parameters=[{'source_list': ['franka/joint_states'], 'rate': 30}]),
         spawner('joint_state_broadcaster'),
         spawner('fr3_arm_controller'),
-        spawner('aris_joint_impedance_controller', '--inactive'),
     ]
     if not a['use_fake_hardware']:
         nodes.append(spawner('franka_robot_state_broadcaster'))

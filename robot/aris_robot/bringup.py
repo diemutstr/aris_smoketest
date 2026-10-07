@@ -5,9 +5,9 @@ For each arm of the site it writes, into one folder:
                               robot_ip, namespace, DDS domain, fake hardware or not, and the
                               base pose for the operator patches of franka_description
                               (mount_to_world, mroll, mpitch, myaw, mz)
-  arm_<id>_controllers.yaml   aris_bringup/config/controllers.yaml with this arm's pen tip
-                              (tip_offset_flange) and joint names; for fake hardware, the
-                              trajectory controller on the position interface and no model
+  arm_<id>_controllers.yaml   aris_bringup/config/controllers.yaml with this arm's joint
+                              names; for fake hardware, the trajectory controller on the
+                              position interface
 
 The mount: the patched fr3.urdf.xacro hangs `base` from a per-arm `world` frame on the paper
 right under the arm's axis, by a height `mz` and a roll-pitch-yaw.  So only the rotation and
@@ -36,13 +36,6 @@ def rpy(R) -> tuple[float, float, float]:
     return math.atan2(-R[1, 2], R[1, 1]), pitch, 0.0          # gimbal lock: yaw folded in
 
 
-def tip_in_flange(arm) -> np.ndarray:
-    """The pen tip in the flange frame (libfranka's kFlange), from the kernel's chain."""
-    c = arm.chain_table()
-    f = c.names.index("hand")
-    return c.R[f] @ np.asarray(arm.tool.tip_hand, float) + c.t[f]
-
-
 def launch_args(rig, site, slot: str, controllers_file, fake: bool) -> dict:
     """Every slot hangs from the frame: its base pose (rig.json) is the robot model's mount."""
     sa = site.arm(slot)
@@ -54,15 +47,12 @@ def launch_args(rig, site, slot: str, controllers_file, fake: bool) -> dict:
                 controllers=str(controllers_file))
 
 
-def controllers(site, tip_flange, fake: bool, template=TEMPLATE) -> dict:
+def controllers(site, fake: bool, template=TEMPLATE) -> dict:
     """The template with this arm's settings filled in."""
     d = yaml.safe_load(Path(template).read_text())
     prefix = site.joint_prefix
     jtc = d["/**/fr3_arm_controller"]["ros__parameters"]
-    imp = d["/**/aris_joint_impedance_controller"]["ros__parameters"]
     d["/**/franka_robot_state_broadcaster"]["ros__parameters"]["arm_id"] = prefix
-    imp["arm_id"] = prefix
-    imp["tip_offset_flange"] = [float(x) for x in tip_flange]
     names = site.joint_names()
     jtc["joints"] = names
     jtc["gains"] = {n: g for n, g in zip(names, jtc["gains"].values())}
@@ -73,7 +63,6 @@ def controllers(site, tip_flange, fake: bool, template=TEMPLATE) -> dict:
         # fake hardware mirrors a position command and ignores torques
         jtc["command_interfaces"] = ["position"]
         jtc.pop("gains")
-        imp["use_model"] = False
     return d
 
 
@@ -84,11 +73,10 @@ def write(rig, site, out_dir, fake: bool = False, template=TEMPLATE) -> list[Pat
     out.mkdir(parents=True, exist_ok=True)
     written = []
     for sa in site.arms:
-        if sa.id not in rig.arm_ids:
-            continue
+        if sa.id not in rig.arm_ids or sa.never:
+            continue                    # not on this rig, or a robot this rig never drives
         ctl = out / f"arm_{sa.id}_controllers.yaml"
-        tip = tip_in_flange(rig.arm(sa.id))
-        ctl.write_text(yaml.safe_dump(controllers(site, tip, fake, template), sort_keys=False))
+        ctl.write_text(yaml.safe_dump(controllers(site, fake, template), sort_keys=False))
         args = out / f"arm_{sa.id}.json"
         args.write_text(json.dumps(launch_args(rig, site, sa.id, ctl.resolve(), fake), indent=1))
         written.append(args)

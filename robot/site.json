@@ -1,11 +1,11 @@
 {
   "about": {
-    "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted and its force sign, the tare and contact thresholds, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
+    "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted, its force sign and its real-time core, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
     "read_by": "robot/aris_robot/site.py and nothing else",
     "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
     "force_sign_note": "per slot: +1 when the paper pushing the pen up reads positive; -1 on the hung (inverted) arms, as found 2026-10-06. The first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
     "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table",
-    "rt_core_note": "each stack runs pinned to its own isolated core (`taskset -c rt_core`): another lane's controller preempted ours and dropped the link every 3-7 min (2026-10-06). The Dell's isolated cores are 8-19 and 28-39."
+    "rt_core_note": "each mounted slot's stack runs on its own isolated core at SCHED_FIFO 95 (`chrt -f 95 taskset -c rt_core`): link drops ended on 2026-10-07 once each arm's loop had its own core (16-19), with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). 3L (the floor arm) and 3R (empty) get none: their robots are never driven."
   },
   "server_url": "http://192.168.50.1:8420",
   "site_table": "site/aris_2026-10.json",
@@ -14,17 +14,9 @@
     "joint_prefix_note": "joint names are <joint_prefix>_joint1..7; the briefing notes one stack that used fr3v2",
     "rmw": "rmw_fastrtps_cpp",
     "hardware_component": "FrankaHardwareInterface",
-    "hardware_component_note": "the ros2_control hardware component of franka_description's fr3 ros2_control xacro; recovery brings it back (inactive, then active) after the reflex is cleared"
-  },
-  "force": {
-    "source": "facts of this site about the force estimate (control-stack briefing 2026-09-09). How hard the pen presses (band, levels, cap, ramps, servo) is a fact of pen and paper: config/rig.json `pen`, carried in every job header.",
-    "tare_s": 0.2,
-    "tare_max_n": 8.0,
-    "tare_note": "the force estimate in the air is not zero (2.5 N on arm 17 in the old stack was the clamp); a larger reading than this refuses the landing",
-    "contact_n": 0.25,
-    "contact_ticks": 3,
-    "cap_ticks": 12,
-    "cap_ticks_note": "readings in a row over the pen's force cap before the arm holds"
+    "hardware_component_note": "the ros2_control hardware component of franka_description's fr3 ros2_control xacro; recovery brings it back (inactive, then active) after the reflex is cleared",
+    "rt_priority": 95,
+    "rt_priority_note": "SCHED_FIFO priority of each arm's stack (chrt -f); the unit's LimitRTPRIO must allow it"
   },
   "touch": {
     "source": "the calibration touch under position control (DESIGN section 6 step 1; orchestrator 2026-10-01)",
@@ -35,11 +27,10 @@
     "extra_speed": 0.002,
     "extra_max": 0.03,
     "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed",
-    "tare_spread_n": 1.5,
-    "field_note": "on the arms 2026-10-06: onset 3 N over 15 readings, cap 6 N, tare spread 1.5 N (1 N / 3 readings tripped on noise)"
+    "field_note": "on the arms 2026-10-06/07: onset 3 N over 15 readings, cap 6 N; the detector arms only at constant descent speed (a trip in the descent's own acceleration is not a contact)"
   },
   "collision": {
-    "source": "set for a job in position tracking (mode A) and restored after it, as the old stack raised them before every pass (control-stack briefing 2026-09-09 section 9: 20 N -> 40 N; HARDWARE_DAY1 1.5: the installation operator's 40/40/36/36/32/28/24 Nm, fr3drivers' 'sensitive' 20 Nm / 20 N). Lower and upper thresholds, acceleration and nominal, all set to these.",
+    "source": "set for a job (not a mark job) and restored after it, as the old stack raised them before every pass (control-stack briefing 2026-09-09 section 9: 20 N -> 40 N; HARDWARE_DAY1 1.5: the installation operator's 40/40/36/36/32/28/24 Nm, fr3drivers' 'sensitive' 20 Nm / 20 N). Lower and upper thresholds, acceleration and nominal, all set to these.",
     "job": {
       "torque_nm": [40, 40, 36, 36, 32, 28, 24],
       "force_n": [40, 40, 40, 40, 40, 40]
@@ -51,12 +42,12 @@
     "force_n_note": "the Cartesian thresholds: x, y, z in N, then the three torques in Nm"
   },
   "slots": {
-    "1L": {"mounted": false, "force_sign": -1.0, "rt_core": 10},
-    "1R": {"mounted": false, "force_sign": -1.0, "rt_core": 11},
-    "2L": {"mounted": true, "force_sign": -1.0, "rt_core": 8},
-    "2R": {"mounted": true, "force_sign": -1.0, "rt_core": 9},
-    "3L": {"mounted": false, "force_sign": 1.0, "rt_core": 12},
-    "3R": {"mounted": false, "force_sign": 1.0, "rt_core": 13}
+    "1L": {"mounted": false, "force_sign": -1.0, "rt_core": 18},
+    "1R": {"mounted": false, "force_sign": -1.0, "rt_core": 19},
+    "2L": {"mounted": true, "force_sign": -1.0, "rt_core": 16},
+    "2R": {"mounted": true, "force_sign": -1.0, "rt_core": 17},
+    "3L": {"mounted": false, "force_sign": 1.0},
+    "3R": {"mounted": false, "force_sign": 1.0}
   },
   "desk": {
     "source": "Franka Desk's web API for the calibration driver (desk.py). panda-py has no call for the operating mode; this request is sent through its authenticated helper with Desk's control token.",
