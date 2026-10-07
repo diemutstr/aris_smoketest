@@ -8,6 +8,9 @@ This is the only file besides driver.py and tools.py that imports ROS.  Names, a
   action_server/error_recovery                           franka_msgs/ErrorRecovery action
   controller_manager/{list,switch}_controller(s), set_hardware_component_state
   service_server/set_full_collision_behavior             franka_msgs/SetFullCollisionBehavior
+and the gripper (franka_gripper_node, at the root of the arm's DDS domain):
+  /franka_gripper/{homing,move,grasp}                    franka_msgs actions
+  /franka_gripper/joint_states                           width = 2 x the finger joint
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import (ListControllers, SetHardwareComponentState,
                                          SwitchController)
-from franka_msgs.action import ErrorRecovery
+from franka_msgs.action import ErrorRecovery, Grasp, Homing, Move
 from franka_msgs.msg import FrankaRobotState
 from franka_msgs.srv import SetFullCollisionBehavior
 from lifecycle_msgs.msg import State
@@ -77,6 +80,11 @@ class ArmNode:
             SetHardwareComponentState, f"{ns}/controller_manager/set_hardware_component_state")
         self.collision_srv = n.create_client(
             SetFullCollisionBehavior, f"{ns}/service_server/set_full_collision_behavior")
+        self.gripper_q = None                         # the finger joint, m
+        n.create_subscription(JointState, "/franka_gripper/joint_states", self._on_gripper, 10)
+        self.grip_actions = {name: ActionClient(n, kind, f"/franka_gripper/{name}")
+                             for name, kind in (("homing", Homing), ("move", Move),
+                                                ("grasp", Grasp))}
         self.executor = MultiThreadedExecutor(context=self.ctx)
         self.executor.add_node(n)
         self._spin = threading.Thread(target=self.executor.spin, daemon=True)
@@ -111,6 +119,29 @@ class ArmNode:
             if order is not None:
                 self.readings.append((np.array([js.position[i] for i in order]),
                                       np.array([f.x, f.y, f.z])))
+
+    def _on_gripper(self, m) -> None:
+        if len(m.position):
+            with self._lock:
+                self.gripper_q = float(m.position[0])
+
+    def gripper_width(self) -> float | None:
+        with self._lock:
+            return None if self.gripper_q is None else 2.0 * self.gripper_q
+
+    def gripper_action(self, name: str, goal, timeout: float = 30.0) -> str:
+        """One gripper action to its end; "" when it reports success, else why not."""
+        client = self.grip_actions[name]
+        if not client.wait_for_server(timeout_sec=3.0):
+            return f"the gripper's {name} action is not available (is the gripper node up?)"
+        handle = wait(client.send_goal_async(goal), 5.0)
+        if handle is None or not handle.accepted:
+            return f"the gripper refused {name}"
+        res = wait(handle.get_result_async(), timeout)
+        if res is None:
+            return f"the gripper's {name} did not finish within {timeout:g} s"
+        r = res.result
+        return "" if r.success else f"the gripper's {name} failed: {r.error or 'no reason given'}"
 
     def joint_freshness(self) -> tuple:
         """(stamp of the newest joint state in s, seconds since it arrived), or (None, None)."""
@@ -222,3 +253,24 @@ class ArmNode:
         self.executor.shutdown()
         self.node.destroy_node()
         rclpy.shutdown(context=self.ctx)
+
+
+class GripperRos:
+    """gripper.GripperPort on an arm's ROS connection."""
+
+    def __init__(self, node: ArmNode):
+        self.node = node
+
+    def width(self):
+        return self.node.gripper_width()
+
+    def homing(self) -> str:
+        return self.node.gripper_action("homing", Homing.Goal())
+
+    def move(self, width: float, speed: float) -> str:
+        return self.node.gripper_action("move", Move.Goal(width=float(width), speed=float(speed)))
+
+    def grasp(self, width, speed, force, inner, outer) -> str:
+        g = Grasp.Goal(width=float(width), speed=float(speed), force=float(force))
+        g.epsilon.inner, g.epsilon.outer = float(inner), float(outer)
+        return self.node.gripper_action("grasp", g)

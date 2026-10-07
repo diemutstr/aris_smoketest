@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import numpy as np
 from pathlib import Path
@@ -87,6 +88,47 @@ class ArmLog(EventLog):
 
     def where(self) -> dict:
         return where_of(self.drivers)["where"]
+
+
+GRIP_PARAMS = {"width_m": "width", "speed_m_per_s": "speed", "force_n": "force",
+               "epsilon_inner_m": "epsilon_inner", "epsilon_outer_m": "epsilon_outer"}
+
+
+def run_grip(remote: Remote, job_id: str, header: dict, drivers: dict, progress=None):
+    """A grip job: `{"kind": "grip", "slot": "2L", "verb": "home"|"open"|"close", "params":
+    {"width_m", "speed_m_per_s", "force_n", "epsilon_inner_m", "epsilon_outer_m"} (any of
+    them; the site's for the rest)}`, no phases.  Posts on the job "grip started" (width),
+    then "grip done" (verb, width_before_m, width_after_m, grasped) or "failed" (why), then
+    "job done" / "job failed" and "runner finished"."""
+    from aris.execute.coordinator import JobRun
+    progress = progress or (lambda step: None)
+    slot, verb = str(header.get("slot")), str(header.get("verb"))
+    drv = drivers.get(slot)
+    if drv is None or not hasattr(drv, "gripper"):
+        return Refusal("no_gripper", f"slot {slot} is not mounted on this PC")
+    params = {GRIP_PARAMS[k]: float(v) for k, v in (header.get("params") or {}).items()
+              if k in GRIP_PARAMS}
+    progress("started")
+    seq = [0]
+
+    def post(event, **f):
+        remote.post_events(job_id, [dict(seq=seq[0], time=time.time(), event=event, **f)])
+        seq[0] += 1
+
+    post("grip started", arm=slot, verb=verb, width_m=drv.gripper.port.width())
+    r = drv.gripper.run(verb, **params)
+    if r.done:
+        grasped = True if verb == "close" else (False if verb == "open" else None)
+        post("grip done", arm=slot, verb=verb, width_before_m=r.width_before,
+             width_after_m=r.width_after, grasped=grasped, nothing_to_do=r.noop, why=r.why)
+        post("job done", why="")
+    else:
+        post("failed", arm=slot, verb=verb, why=r.why, width_before_m=r.width_before,
+             width_after_m=r.width_after)
+        post("job failed", why=r.why)
+    status = "done" if r.done else "failed"
+    post("runner finished", status=status, why=r.why)
+    return JobRun(status=status, why=r.why)
 
 
 def check_header(header: dict, rig) -> str:
@@ -194,6 +236,8 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
         return Refusal("wrong_code", f"the job was planned by {describe(header.get('code'))}, "
                                      f"this PC runs {describe(mine)}: update both machines to "
                                      f"the same commit")
+    if header.get("kind") == "grip":            # no plan, no motion, no thresholds
+        return run_grip(remote, job_id, header, drivers, progress)
     why = check_header(header, rig)
     if why:
         return Refusal("wrong_rig", why)

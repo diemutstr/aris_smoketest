@@ -54,6 +54,7 @@ class Site:
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
     desk: dict = field(default_factory=dict)        # Desk's web API: "mode_endpoint"
     execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
+    gripper: dict = field(default_factory=dict)     # the gripper's parameters (gripper.py)
     hardware_component: str = "FrankaHardwareInterface"
 
     def arm(self, slot: str) -> SiteArm:
@@ -107,7 +108,7 @@ def load(path) -> Site:
                 str(ros.get("joint_prefix", "fr3")), str(ros.get("rmw", "rmw_fastrtps_cpp")),
                 dict(d.get("touch", {})), tuple(arms),
                 dict(d.get("collision", {})), dict(d.get("desk", {})),
-                dict(d.get("execution", {})),
+                dict(d.get("execution", {})), dict(d.get("gripper", {})),
                 str(ros.get("hardware_component", "FrankaHardwareInterface")))
 
 

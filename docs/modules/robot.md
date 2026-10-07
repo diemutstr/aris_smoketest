@@ -38,6 +38,13 @@ long-poll and acknowledgement and in its first row. The runner refuses a job who
 `code.digest` differs from its own, or that has no `code` ("planned by unknown"), before
 anything moves.
 
+**The gripper** (`gripper.py`): `franka_gripper_node` per stack (root namespace of the arm's
+domain). A `grip` job (header `kind: "grip"`, `slot`, `verb`, `params`, no phases) runs home,
+open or close with no plan, no motion and no threshold call. It posts "grip started", then
+"grip done" (`width_before_m`, `width_after_m`, `grasped`) or "failed", then "job done" or
+"job failed". Each command is idempotent, and jaws that did not move fail even when the
+gripper said success.
+
 **Where the arms stand.** The server plans from what the runner reports; it cannot see the
 arms. The first row of a run, "runner started", carries `where`, the 7 joints of every
 mounted arm, read before anything moves, and the job id. Every row about one arm (motion

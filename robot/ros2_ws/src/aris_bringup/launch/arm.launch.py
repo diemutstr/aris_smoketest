@@ -7,9 +7,13 @@ about the arm is typed here.  Everything runs in the namespace arm_<id> and on t
 of the arm.  Started:
   robot_state_publisher, ros2_control_node (franka_hardware, 1 kHz), joint_state_publisher,
   joint_state_broadcaster, franka_robot_state_broadcaster (not with fake hardware),
-  fr3_arm_controller (active): the one controller that moves the arm.
-Not started, on purpose: MoveIt, RViz, and the gripper node (homing the gripper would open
-the fingers that hold the pen holder).
+  fr3_arm_controller (active): the one controller that moves the arm,
+  franka_gripper_node (not with fake hardware), at the root of the arm's DDS domain as the old
+  stack had it: actions /franka_gripper/{homing,move,grasp}, joint states
+  /franka_gripper/joint_states (width = 2 x the finger joint).  The node does NOT home by
+  itself: homing opens the fingers that hold the pen holder, so it happens only on request
+  (`aris grip <slot> home`).
+Not started: MoveIt, RViz.
 """
 import json
 import os
@@ -67,6 +71,14 @@ def _nodes(context):
     ]
     if not a['use_fake_hardware']:
         nodes.append(spawner('franka_robot_state_broadcaster'))
+        gripper_config = os.path.join(get_package_share_directory('franka_gripper'), 'config',
+                                      'franka_gripper_node.yaml')
+        nodes.append(Node(package='franka_gripper', executable='franka_gripper_node',
+                          name='franka_gripper', namespace='/', output='screen',
+                          parameters=[{'robot_ip': a['robot_ip'],
+                                       'joint_names': ['fr3_finger_joint1',
+                                                       'fr3_finger_joint2']},
+                                      gripper_config]))
     env = [SetEnvironmentVariable('ROS_DOMAIN_ID', str(a['domain'])),
            SetEnvironmentVariable('RMW_IMPLEMENTATION', a['rmw'])]
     return env + nodes

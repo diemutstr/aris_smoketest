@@ -5,6 +5,8 @@
             server; everything a person does, they do on the planning PC
   identify  read-only diagnostics for when the server is down: per slot, the robot the site
             table names, whether its address and domain answer, its mode, where it stands
+  grip      the gripper of one slot, for emergencies on this PC (the stack must be up):
+            `aris-robot grip 2L close` (or open, home); normally `aris grip` on the planning PC
 """
 from __future__ import annotations
 
@@ -116,6 +118,17 @@ def cmd_serve(a, site, rig) -> int:
     return 0
 
 
+def cmd_grip(a, site, rig) -> int:
+    from aris_robot.driver import RosArm
+    drv = RosArm(site, rig, a.arm)
+    drv.say = lambda event, **f: print(json.dumps(dict(event=event, **f)))
+    try:
+        r = drv.gripper.run(a.verb)
+        return _say(r.done, f"gripper {a.verb} on {a.arm}" + (f": {r.why}" if r.why else ""))
+    finally:
+        drv.close()
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aris-robot", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -132,6 +145,9 @@ def parser() -> argparse.ArgumentParser:
     sv.add_argument("--fake-paper-mm", type=float, default=0.0,
                     help="with --fake or --sim-speed: the fake paper, mm above the nominal one")
     sub.add_parser("identify")
+    g = sub.add_parser("grip")
+    g.add_argument("arm", help="the slot, e.g. 2L")
+    g.add_argument("verb", choices=["home", "open", "close"])
     return p
 
 
@@ -143,7 +159,7 @@ def main(argv=None) -> int:
     rig = Rig.load(a.config)
     print(f"site {site.path}; server {site.server_url}; mounted {list(site.mounted)}"
           + ("; FAKE HARDWARE" if a.fake else ""))
-    verbs = dict(identify=cmd_identify, serve=cmd_serve)
+    verbs = dict(identify=cmd_identify, serve=cmd_serve, grip=cmd_grip)
     return verbs[a.verb](a, site, rig)
 
 

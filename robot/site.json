@@ -71,5 +71,18 @@
     "stale_note": "a joint reading older than this is no reading: rows say q null with 'stale joint states (last x s ago)'",
     "fresh_wait_s": 10.0,
     "fresh_note": "after a recovery the joint states must be fresh again (their stamp advancing over 1 s) within this, else serve restarts the arm's stack and checks again"
+  },
+  "gripper": {
+    "source": "the old working parameters (Aris_Kindt arm_orchestrator/arbiter.py), 2026-10-07: open to 70 mm at 0.10 m/s; close = a grasp to 0 mm at 0.10 m/s with 70 N, epsilon inner 0, outer 80 mm",
+    "open_width": 0.07,
+    "open_speed": 0.1,
+    "close_width": 0.0,
+    "close_speed": 0.1,
+    "close_force": 70.0,
+    "epsilon_inner": 0.0,
+    "epsilon_outer": 0.08,
+    "open_noop_m": 0.055,
+    "min_move_m": 0.0005,
+    "check_note": "open when wider than open_noop_m is a no-op; after every command the width is read back, and jaws that moved less than min_move_m fail (libfranka reports success for a grasp that moved nothing)"
   }
 }

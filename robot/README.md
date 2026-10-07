@@ -185,6 +185,17 @@ It needs the stacks running, and it moves nothing. `systemctl status aris-robot`
 `out/operator/serve.log` say why serve stopped. To look at one arm with the ROS tools, set
 its domain: `ROS_DOMAIN_ID=71 ros2 control list_controllers -c /arm_2R/controller_manager`.
 
+**The gripper** holds the pen holder. Each arm's stack starts `franka_gripper_node`, at the
+root of the arm's DDS domain (`/franka_gripper/...`). The node never homes by itself: homing
+opens the fingers. `aris grip <slot> close|open|home` on the planning PC runs a grip job; in
+an emergency on this PC, `aris-robot grip 2L close` does the same with the stack up.
+- The parameters are site.json `gripper`, the old working ones: close is a grasp to 0 at
+  0.10 m/s, 70 N, epsilon 0 / 80 mm; open is to 70 mm.
+- Open when wider than 55 mm, or close when already holding, does nothing and says so.
+- After every command the width is read back. Jaws that moved less than 0.5 mm fail with
+  "the jaws did not move (still 35.9 mm) — blocked, or the travel calibration is lost: home
+  the gripper".
+
 ## 6. Calibration on the operator PC
 
 The mark calibration (`aris mark` on the planning PC, DESIGN 6) has a person seat the pen on

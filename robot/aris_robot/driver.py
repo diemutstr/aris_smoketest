@@ -29,7 +29,8 @@ import numpy as np
 
 from aris.execute.drivers import ArmState, Result
 from aris_robot import touch as T
-from aris_robot.rosarm import BROADCASTERS, MODES, TRAJECTORY, ArmNode, wait
+from aris_robot.gripper import Gripper, GripperSettings
+from aris_robot.rosarm import BROADCASTERS, MODES, TRAJECTORY, ArmNode, GripperRos, wait
 
 TICK = 0.005               # s between two looks at a running goal
 
@@ -53,6 +54,8 @@ class RosArm:
         self.fake_paper = T.FakePaper(self.kin, rig.paper(arm_id), fake_paper_m) if fake else None
         self.start_tol = float(rig.execution().start_tolerance)
         self.ros = ArmNode(site.arm(arm_id), site.joint_names())
+        self.gripper = Gripper(GripperRos(self.ros), GripperSettings.from_site(site.gripper),
+                               say=lambda event, **f: self.say(event, **f))
         self._busy = threading.Lock()
         self._halt = threading.Event()
         self._stopped = False
