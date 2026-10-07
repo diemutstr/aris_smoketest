@@ -835,7 +835,7 @@ def test_paper_height_map(tmp_path):
 
 def test_press_is_where_the_tip_draws(good_draw, tmp_path):
     """The drawing's points lie the press below the paper: a drawing motion whose tip runs the
-    pen's press below the paper (3.5 mm when written, 2.1 mm since) passes 'tip on paper' with
+    pen's press below the paper (3.5 mm when written, 1.6 mm since) passes 'tip on paper' with
     that press and fails it when rig.json says the press is 0."""
     assert read_rig(CONFIG).press == PRESS > 0.001                    # same number as planners
     tips = good_draw.tip_base @ RIG.T_table_base("2L")[:3, :3].T + RIG.T_table_base("2L")[:3, 3]

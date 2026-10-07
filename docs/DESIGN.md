@@ -254,7 +254,7 @@ code knows a robot.
 **Tracking.** The word "unknown" was drawn on 2026-10-01 under plain joint position control:
 certified joint trajectories through the stock trajectory controller, at most 15 mm/s on the
 paper, every touchdown from standstill, and a purely geometric press — the plan runs `press`
-below the measured paper (2.1 mm for 2 mm 4H graphite, measured on site 2026-10-06). It is the
+below the measured paper (1.6 mm for 2 mm 4H graphite, found on site 2026-10-07). It is the
 only mode (4b).
 
 **The paper height map (2026-10-07).** A fixed press on paper that varies by millimetres gives

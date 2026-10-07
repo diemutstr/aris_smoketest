@@ -375,7 +375,7 @@ def test_drawing_area(rig, tmp_path):
 def test_rules(rig):
     r = rig.rules()
     # press and speed on the paper are the current pen's (graphite_4h, 2026-10-01)
-    assert r.draw_speed == 0.015 and r.press == 0.0021 and r.landing_speed == 0.003
+    assert r.draw_speed == 0.015 and r.press == 0.0016 and r.landing_speed == 0.003
     assert r.speed_fraction == 0.30 and abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
     assert r.gates == rig.gates()
 
@@ -403,7 +403,7 @@ def test_pen_is_the_current_entry_with_its_name(rig):
     assert pen["name"] == "graphite_4h" == cfg["pens"]["current"]
     assert {k: v for k, v in pen.items() if k != "name"} == {
         k: v for k, v in entry.items() if not k.endswith("note") and k != "source"}
-    assert pen["press_m"] == 0.0021 and pen["speed_m_per_s"] == 0.015
+    assert pen["press_m"] == 0.0016 and pen["speed_m_per_s"] == 0.015
     assert json.loads(json.dumps(pen)) == pen                 # travels in a job header as is
     # the nominal pen is the tool model as built: nothing moved
     for slot in rig.arm_ids:

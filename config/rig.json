@@ -196,8 +196,8 @@
     "table": {
       "graphite_4h": {
         "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule).",
-        "press_m": 0.0021,
-        "press_measured_note": "0.0021 is what drew on 2L/2R (site, 2026-10-06); 0.0035 before",
+        "press_m": 0.0016,
+        "press_measured_note": "0.0016 (site, 2026-10-07: 2R ripped the paper at 0.0021); 0.0021 on 2026-10-06; 0.0035 before",
         "press_note": "the drawing surface lies this far below the measured paper: with position control the pen is pressed into the paper by planning it there",
         "speed_m_per_s": 0.015,
         "speed_note": "speed of the tip along a line on the paper",
