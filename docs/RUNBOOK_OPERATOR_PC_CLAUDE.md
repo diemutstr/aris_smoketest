@@ -103,23 +103,9 @@ Two files. Change only what is named.
    report what answers at each address and let Pete confirm the assignment; change the two
    rows only if he says so. Set `"sure": true` on a row only when Pete has confirmed it.
 
-## Step 7 — the one hardware fact to verify (Diemut at the e-stop, nothing moves by itself)
+## Step 7 — removed
 
-The calibration has Diemut hand-guide an arm while our stack keeps reading its joints. That
-works when the arm is idle under FCI with no controller active. Check it on ONE arm, with
-serve stopped and that arm's stack started by hand (see the README for the launch line), Desk:
-unlocked, FCI on:
-
-```
-ros2 control switch_controllers --deactivate fr3_arm_controller
-ros2 topic echo /joint_states --field position
-```
-
-Diemut pinches the enabling buttons on that arm and moves it a little, then lets go. Expected:
-the numbers follow her hand while she guides and stand still when she lets go. Report the
-first and last lines you saw. If the numbers freeze during guiding, stop and report: the
-calibration design depends on this. Then `ros2 control switch_controllers --activate
-fr3_arm_controller` and stop the stack.
+Nothing in this system needs hand-guiding or Desk beyond unlocking and FCI on.
 
 ## Step 8 — removed
 

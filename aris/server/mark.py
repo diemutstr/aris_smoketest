@@ -1,229 +1,254 @@
-"""The mark job (`aris mark`): steps 2 and 3 of the calibration (DESIGN.md section 6), by
-hand-guiding, as `docs/figures/mark_protocol.png` draws it.
+"""The mark job (`aris mark`, `POST /mark`): where each row's two arms hang against each other,
+found by bringing their pen tips together in the air.  No ruler, no marks to hit.
 
-One arm at a time, in rig order, the others standing (parked, or as their joints where they
-stand).  For each arm, its marks (the group's marks this slot shares, rig.json order): at its
-first mark six hand orientations (the pivot: pen upright and five tilts of 30 degrees, 72
-degrees apart; turning about the vertical alone leaves the pen length free), at
-every other mark one.  The whole sequence is planned and checked up front and queued at once:
-a free move to each hover (the pen 30 mm above the mark), the `guide` there, and home.  At a
-guide the driver lets the person move the arm by hand (under FCI, its controller switched
-off): she pinches the enabling button, puts the pen on the cross and lets go; after 2 s
-standing still the touch is registered.  Pinching again before the 2 s are up restarts the
-clock; a brief pinch without moving skips the touch.  The executor writes the "registered" row
-(joints, mark, and what the driver made of the gesture in `button`); the driver then lifts the
-pen 3 cm and returns to the hover itself, so a guide ends where it began.
-  "check"   registered (let go): the touch counts;
-  "circle"  skipped (brief pinch): marked skipped for the solver; the rest runs as planned.
-A guide that fails (the hand-over itself) fails the job; the arm holds where it is.  When the
-arm's phase has run, the solver looks at this arm's touches (the pivot's residuals): a touch
-it names as bad gets one small extra phase (to that hover, the guide, home).  At the end the
-joint solve over every arm of the group, with the marks solved before as known; when it
-passes, each slot's `base` (method "marks") and `pen` parts and calibration/marks.json are
-written and the rig reloads; when it fails, the report names the slot or touch and nothing is
-written.
+For every row pair (L, R) that shares spots (rig.json `marks`), in rig order, at the first
+shared spot (and with `--yaw` also at the second):
+
+1. every arm parked first (the park job's steps);
+2. "meet <spot> <L>": L flies (free motion, checked) from its park to a hover above the spot,
+   its pen upright, tip MEET_HEIGHT above the paper and a half gap toward −x; then
+   "meet <spot> <R>": R the same toward +x, L standing at its hover (the half gap: the first
+   of HALF_GAPS both arms reach);
+3. "meet <spot>": both arms active, each a `guide`.  At the arms the person switches both to
+   Desk's programming mode, brings the two pen tips together in the air, lets go, and switches
+   both back to execution mode with FCI on; each driver answers "check" with the joints at
+   standstill (the executor's "registered" row) and brings its arm back to the hover;
+4. "park <L> after <spot>", "park <R> after <spot>": home, one arm at a time.
+
+At the end, per pair, `aris.server.meetings.calibrate_from_meetings(config_dir, (L, R),
+[{L: q, R: q}, ...])` (the calib's `solve_meetings`, written when it passes): where the two tips met is one point, so the joints give the row's
+relative x and y (one meeting: yaw nominal) and yaw (two meetings).  On a pass the rig
+reloads.  The report lists the meetings, the solved x, y, yaw per slot and the residual.
 """
 from __future__ import annotations
 
-# what the driver's two answers mean at the arm, in the words the person uses
-GESTURE = {"check": "registered (let go)", "circle": "skipped (brief pinch)"}
-
-import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from aris.execute import Coordinator
-from aris.server.mark_plan import Task, choose_pivot, plan_arm, tasks_for
-from aris.types import Refusal
+from aris.check import check
+from aris.free import plan as free_plan
+from aris.sequencer.guard import Guard
+from aris.server.steps import Scene, Step, steps_work
+from aris.types import Motion, Piece, Refusal, Trajectory
 
-__all__ = ["submit_mark", "group_slots", "solver_input", "Task", "tasks_for"]
+MEET_HEIGHT = 0.030      # m above the paper: where the tips are brought together
+# m: each tip this far from the spot along x at the hover, the first that both arms reach
+# inside the arm-to-arm clearance (on the two-arm rig: 50 mm at A, 120 mm at B; 30 mm, tips
+# 60 mm apart, is refused everywhere)
+HALF_GAPS = (0.050, 0.060, 0.080, 0.100, 0.120, 0.150)
+SPINS = np.deg2rad(np.arange(0.0, 360.0, 15.0))
+Q7_TRIES = np.linspace(-1.2, 1.2, 9)
 
-POLL = 0.05                      # s between looks at the event log
+TO_DO = ("at the two arms: switch BOTH to programming mode in Desk;",
+         "bring the two pen tips together in the air, touching, and let go;",
+         "switch BOTH back to execution mode with FCI on: the arms then return and park.")
+
+
+def row_pairs(rig, slots) -> list[dict]:
+    """[{slots: (L, R), spots: [spot, ...]}] for every row whose L and R slot are both in
+    `slots` and share spots, in rig order; spots in rig.json order."""
+    out = {}
+    for name, (xy, sharers) in rig.marks.items():
+        s = sorted(sharers)
+        if len(s) == 2 and s[0][0] == s[1][0] and {x[1] for x in s} == {"L", "R"} \
+                and set(s) <= set(slots):
+            pair = tuple(x for side in "LR" for x in s if x[1] == side)
+            out.setdefault(pair, []).append(name)
+    order = {a: i for i, a in enumerate(rig.arm_ids)}
+    return [dict(slots=p, spots=v) for p, v in sorted(out.items(), key=lambda kv: order[kv[0][0]])]
+
+
+def hover(st, slot, tip_table, guard, q_near) -> np.ndarray | None:
+    """The joints that hold the pen upright with its tip at `tip_table`, inside the gates,
+    nearest `q_near` over the hand's turns about the pen and the arm's shapes."""
+    rig, gates = st.rig, st.rules.gates
+    arm, paper = rig.arm(slot), rig.paper(slot, for_planning=True)
+    T = rig.T_base_table(slot)
+    p = T[:3, :3] @ np.asarray(tip_table, float) + T[:3, 3]
+    q7s = rig.park_q(slot)[6] + Q7_TRIES
+    best = None
+    for spin in SPINS:
+        Th = arm.hand_pose(p[None], paper.normal, np.array([spin]), np.zeros((1, 2)))
+        Q, ok = arm.ik(np.repeat(Th, len(q7s), axis=0), q7s)
+        for i in range(len(q7s)):
+            for b in np.flatnonzero(ok[i]):
+                h = Q[i, b]
+                if (arm.limit_margin(h[None]).min() < gates.limit_margin
+                        or arm.sigma_min(h[None]).min() < gates.sigma_min
+                        or guard.hold(h, touching=False) is not None):
+                    continue
+                d = float(np.linalg.norm(h - q_near))
+                if best is None or d < best[0]:
+                    best = (d, h)
+    return None if best is None else best[1]
 
 
 @dataclass
-class Book:
-    """What the job has gathered."""
-    touches: list = field(default_factory=list)    # {slot, mark, orientation, q, index,
-                                                   #  skipped, button: check|circle}
-    notes: list = field(default_factory=list)
-    buttons: dict = field(default_factory=dict)    # "check" / "circle" -> count (GESTURE)
-    redone: list = field(default_factory=list)
+class MarkPlan:
+    steps: list = field(default_factory=list)
+    pairs: list = field(default_factory=list)
+    meetings: list = field(default_factory=list)   # [{pair, spot, phase, hovers}]
+    why: str = ""
+
+    def failed(self) -> dict:
+        return dict(pairs=self.pairs, meetings=self.meetings)
 
 
-def run_phase(st, rec, job, slot, plan) -> list | str:
-    """Queue an arm's planned phase whole, wait until the arm has run it, and gather its
-    touches from the registered rows.  -> the touches, or why the job ends."""
-    phase, standing, items, at, _ = plan
-    job.add_phase(phase, standing)
-    q = job.queue(phase.name, slot)
-    for m, v in items:
-        res = q.append(m, v)
-        if isinstance(res, Refusal):
-            q.close(complete=False, note=res.detail)
-            return f"the queue refused a {m.kind}: {res.reason}: {res.detail}"
-        rec.count_queued(phase.name, slot)
-    q.close()
-    if rec.state != "moving":
-        rec.set_state("moving")
-    while True:
-        rows = [r for r in rec.log.read() if r.get("arm") == slot and r.get("phase") == phase.name]
-        end = next((r for r in rows if r.get("event") in ("finished", "failed", "stopped")), None)
-        if end is not None:
-            break
-        if rec.stop.is_set():
-            return "stop requested"
-        time.sleep(POLL)
-    if end["event"] != "finished":
-        return f"{phase.name}: {end.get('why')}"
-    touches = []
-    for r in rows:
-        if r.get("event") == "registered" and r.get("index") in at:
-            t = at[r["index"]]
-            touches.append(dict(slot=slot, mark=t.mark, orientation=t.orientation,
-                                q=list(map(float, r["q"])), index=r["index"],
-                                skipped=str(r.get("button")) == "circle",
-                                button=str(r.get("button"))))
-    return touches
+def _fly(st, slot, now, spot, side, half_gap) -> tuple | str:
+    """(Step flying `slot` from where it stands to its hover at `spot`, the hover) or why."""
+    rig = st.rig
+    xy = rig.marks[spot][0]
+    tip = np.array([xy[0] + side * half_gap, xy[1], rig.paper_z + MEET_HEIGHT])
+    obs, standing, phase = Scene(rig).of(slot, now, (slot,), (), f"meet {spot} {slot}")
+    h = hover(st, slot, tip, Guard(rig.arm(slot), obs, st.rules.gates), now[slot])
+    if h is None:
+        return f"{slot}: no upright pen pose over {spot} inside the gates"
+    m = free_plan(rig.arm(slot), now[slot], h, obs, st.rules, seed_extra=b"meet")
+    if isinstance(m, Refusal):
+        return f"{slot}: no way to its hover over {spot}: {m.reason}: {m.detail}"
+    v = check(st.config_dir, slot, m, phase, now[slot], standing=standing)
+    if not v.passed:
+        return f"{slot}: the way to its hover over {spot} fails the checker: " + \
+            ", ".join(v.failed)
+    return Step(slot, phase, (m,), (v,), dict(standing)), h, v, tip
 
 
-def run_arm(st, rec, job, slot, now, slots, book) -> str:
-    """One arm: its phase, its own solve, at most one extra phase for a touch the solver names
-    as bad.  -> "" or why the job ends."""
-    plan = plan_arm(st, slot, now, choose_pivot(st, slot, now, slots), f"mark {slot}")
-    if isinstance(plan, str):
-        return plan
-    book.notes += plan[4]
-    touches = run_phase(st, rec, job, slot, plan)
-    if isinstance(touches, str):
-        return touches
-    bad = _bad_touch(st.rig, slot, [t for t in touches if not t["skipped"]])
-    if bad is not None:
-        kept = [t for t in touches if not t["skipped"]]
-        t = kept[bad]
-        book.redone.append(f"{slot}: {t['mark']} orientation {t['orientation']}")
-        again = plan_arm(st, slot, {**now, slot: st.rig.park_q(slot)},
-                         [Task(t["mark"], t["orientation"])], f"mark {slot} again")
-        if isinstance(again, str):
-            return again
-        more = run_phase(st, rec, job, slot, again)
-        if isinstance(more, str):
-            return more
-        touches = [x for x in touches if x is not t] + more
-    for t in touches:
-        book.buttons[t["button"]] = book.buttons.get(t["button"], 0) + 1
-        if t["skipped"]:
-            book.notes.append(f"{slot}: {t['mark']} orientation {t['orientation']} "
-                              f"{GESTURE['circle']}")
-    book.touches += touches
-    return ""
-
-
-def _bad_touch(rig, slot, touches) -> int | None:
-    """The pivot touch the solver names as off the common point (the pen slipped), as an index
-    into `touches`, or None."""
-    from aris.calib.marks import pivot
-    piv = [k for k, t in enumerate(touches) if t["mark"] == touches[0]["mark"]] if touches \
-        else []
-    if len(piv) < 3:
-        return None
-    pv = pivot(rig, slot, np.array([touches[k]["q"] for k in piv]))
-    if pv.passed or not len(pv.residuals) or "off the common point" not in pv.why:
-        return None
-    return piv[int(np.argmax(pv.residuals))]
-
-
-def solver_input(touches) -> dict:
-    """{slot: {mark: (K,7)}} for `aris.calib.solve_marks`, skipped touches left out, each
-    slot's first mark (its pivot) first."""
-    out = {}
-    for t in touches:
-        if not t["skipped"]:
-            out.setdefault(t["slot"], {}).setdefault(t["mark"], []).append(t["q"])
-    return {s: {m: np.asarray(q, float) for m, q in by.items()} for s, by in out.items()}
-
-
-# --------------------------------------------------------------------------- the job
+def plan_mark(st, where, pairs, yaw: bool) -> MarkPlan:
+    from aris.server.park import plan_park
+    from aris.execute.queue import verdict_numbers
+    rig = st.rig
+    out = MarkPlan(pairs=pairs)
+    parking = plan_park(st, where)
+    bad = [s for s in parking if s.why and s.why != "already at its park"]
+    if bad:
+        out.why = "the arms cannot all be parked first: " + "; ".join(
+            f"{s.arm}: {s.why}" for s in bad)
+        return out
+    out.steps += parking
+    now = {a: rig.park_q(a) for a in rig.arm_ids}
+    for p in pairs:
+        L, R = p["slots"]
+        for spot in p["spots"][:2 if yaw else 1]:
+            got, why = None, ""
+            for half in HALF_GAPS:
+                trial, at = {}, dict(now)
+                for slot, side in ((L, -1.0), (R, +1.0)):
+                    f = _fly(st, slot, at, spot, side, half)
+                    if isinstance(f, str):
+                        why = f
+                        break
+                    trial[slot], at[slot] = f, f[1]
+                if len(trial) == 2:
+                    got, now = trial, at
+                    break
+            if got is None:
+                out.why = f"{why} (tips up to {2e3 * HALF_GAPS[-1]:.0f} mm apart tried)"
+                return out
+            out.steps += [got[L][0], got[R][0]]
+            name = f"meet {spot}"
+            for slot in (L, R):
+                obs, standing, phase = Scene(rig).of(slot, now, (L, R), (), name)
+                h, v, tip = got[slot][1], got[slot][2], got[slot][3]
+                T = rig.T_base_table(slot)
+                g = Motion("guide", Trajectory(np.zeros(1), h[None], np.zeros((1, 7))),
+                           Piece(spot, 0.0, 0.0), (T[:3, :3] @ tip + T[:3, 3])[None],
+                           checked=dict(verdict_numbers(v), tightest="the hover, held at the "
+                                        "free move's end"))
+                out.steps.append(Step(slot, phase, (g,), (None,), dict(standing)))
+            out.meetings.append(dict(pair=[L, R], spot=spot, phase=name, gap_m=2 * half,
+                                     hovers={a: got[a][1].tolist() for a in (L, R)}))
+            home = plan_park(st, now)
+            bad = [s for s in home if s.why and s.why != "already at its park"]
+            if bad:
+                out.why = f"no way home after {spot}: " + "; ".join(f"{s.arm}: {s.why}"
+                                                                    for s in bad)
+                return out
+            out.steps += [replace(s, phase=replace(s.phase, name=f"{s.phase.name} after "
+                                                   f"{spot}")) if s.phase else s
+                          for s in home if s.motions]
+            now = {a: rig.park_q(a) for a in rig.arm_ids}
+    return out
 
 
 def group_slots(rig, slots=(), group: str | None = None):
-    """The slots of a mark job: the ones named, or a group's (default "all", or every
-    controlled slot when the rig has no such group), in rig order."""
-    if slots:
-        bad = [s for s in slots if s not in rig.arm_ids]
-        if bad:
-            return Refusal("no_slot", f"slots {bad} are not controlled on this rig")
-        return tuple(s for s in rig.arm_ids if s in slots)
-    name = group or "all"
-    if name in rig.mark_groups:
-        return tuple(s for s in rig.arm_ids if s in rig.mark_groups[name])
-    if group is None:
-        return tuple(rig.arm_ids)
-    return Refusal("no_group", f"no mark group {group!r}; groups are {tuple(rig.mark_groups)}")
+    from aris.server.crosses import group_slots as gs
+    return gs(rig, slots, group)
 
 
-def needs_solved_marks(rig, slots) -> str:
-    """Why the job cannot start: a slot touching no mark at all, or one that touches marks
-    shared with slots outside the job (a single slot) while none of them has a solved place
-    yet ("" when it can).  Checked before anything moves; the solver never gets an empty set."""
-    from aris.server.mark_plan import slot_marks
-    for s in slots:
-        marks = slot_marks(rig, s, slots)
-        if not marks:
-            return f"{s} shares no calibration mark with a controlled slot"
-        outside = [m for m in marks if not set(rig.marks[m][1]) <= set(slots)]
-        if outside and not any(rig.mark_state(m) == "solved" for m in marks):
-            partners = sorted({p for m in outside for p in rig.marks[m][1]} | set(slots))
-            return (f"{s} alone needs marks solved by an earlier run; run `aris mark` "
-                    f"({', '.join(partners)}) first")
-    return ""
-
-
-def submit_mark(st, store, slots=(), group: str | None = None):
-    """Admit and start the mark job (refused while another job runs, with the robot when an
-    arm never reported where it stands, and for slots or a group the rig does not have)."""
+def submit_mark(st, store, slots=(), group: str | None = None, yaw: bool = False):
+    """Admit and start the mark job: refused for slots or a group the rig does not have, or
+    without a row pair that shares a spot (and, with yaw, two)."""
     from aris.server import runner
     chosen = group_slots(st.rig, tuple(slots), group)
     if isinstance(chosen, Refusal):
         return chosen
-    why = needs_solved_marks(st.rig, chosen)
-    if why:
-        return Refusal("needs_solved_marks", why)
-    return runner.start(st, store, "mark", "mark " + " ".join(chosen), _work(chosen),
-                        lambda rec: dict(slots=list(chosen), group=group),
+    pairs = row_pairs(st.rig, chosen)
+    if not pairs:
+        return Refusal("no_pair", f"slots {', '.join(chosen)} hold no row pair (a row's L and "
+                       "R slot) that shares a spot")
+    short = [p for p in pairs if yaw and len(p["spots"]) < 2]
+    if short:
+        return Refusal("no_second_spot", f"--yaw needs two shared spots; "
+                       f"{'/'.join(short[0]['slots'])} share only {short[0]['spots']}")
+    plan = lambda st_, where: plan_mark(st_, where, pairs, yaw)
+    return runner.start(st, store, "mark", "mark " + " ".join(chosen) + (" yaw" if yaw else ""),
+                        steps_work(plan, _report),
+                        lambda rec: dict(slots=list(chosen), group=group, yaw=yaw,
+                                         pairs=pairs, to_do=list(TO_DO)),
                         need_positions=True)
 
 
-def _work(slots):
-    def work(st, rec, job):
-        from aris.server import runner
-        where = runner.where_now(st, need_all=True)
-        if isinstance(where, Refusal):
-            return runner.fail_job(st, rec, job, where.detail)
-        before = {s: (st.rig.T_table_base(s), np.asarray(st.rig.arm(s).tool.tip_hand))
-                  for s in slots}
-        result, ct = [], None
-        if not st.remote:
-            coord = rec.coordinator = Coordinator(job, st.drivers, st.config_dir, st.rig)
-            ct = threading.Thread(target=lambda: result.append(coord.run()), daemon=True)
-            ct.start()
-        rec.set_state("planning")
-        book, now, why = Book(), {a: np.asarray(q, float) for a, q in where.items()}, ""
-        for s in slots:
-            why = run_arm(st, rec, job, s, now, slots, book)
-            if why:
-                break
-            now[s] = st.rig.park_q(s)
-        job.end_phases(why or "every arm touched its marks")
-        if ct is None:
-            run = runner.wait_robot(rec)
-        else:
-            if rec.stop.is_set():
-                rec.coordinator.stop()
-            ct.join()
-            run = result[0]
-        from aris.server.markreport import finish
-        finish(st, rec, job, slots, book, run, why, before)
-    return work
+def _report(st, rec, plan, run, planning_s):
+    rows = [r for r in rec.log.read() if r.get("event") == "registered"]
+    meetings = []
+    for m in plan.meetings:
+        got = {str(r["arm"]): r["q"] for r in rows if r.get("phase") == m["phase"]
+               and str(r.get("arm")) in m["pair"] and str(r.get("button")) == "check"}
+        meetings.append(dict(m, q=got))
+    if rec.stop.is_set():
+        state, why = "stopped", "stop requested"
+    elif run.status != "done":
+        state, why = "failed", run.why
+    else:
+        state, why = "done", ""
+    solved = []
+    if state == "done":
+        for p in plan.pairs:
+            pair = tuple(p["slots"])
+            qs = [m["q"] for m in meetings if tuple(m["pair"]) == pair and len(m["q"]) == 2]
+            res = solve_pair(st, pair, qs)
+            solved.append(dict(pair=list(pair), meetings=len(qs), **res))
+            if not res.get("passed"):
+                state, why = "failed", f"{'/'.join(pair)}: {res.get('why')}"
+        if all(s.get("passed") for s in solved):
+            st.reload()
+    rep = dict(state=state, why=why, kind="mark", pairs=plan.pairs, meetings=meetings,
+               solved=solved, to_do=list(TO_DO),
+               phases=[dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
+                       for n, p, t, c in run.phase_ends],
+               planning_s=planning_s)
+    return rep, state, why
+
+
+def solve_pair(st, pair, meetings) -> dict:
+    """The calib agent's solver on one pair's meetings -> plain {passed, why, ...}."""
+    if not meetings:
+        return dict(passed=False, why="no meeting was registered")
+    from aris.server.meetings import calibrate_from_meetings
+    sol, written = calibrate_from_meetings(
+        st.config_dir, pair, [{k: np.asarray(v, float) for k, v in m.items()} for m in meetings])
+    slots = {}
+    for s, f in (sol.slots or {}).items():
+        T, T0 = f.T_table_base, f.T_before
+        yaw, yaw0 = (float(np.arctan2(M[1, 0], M[0, 0])) for M in (T, T0))
+        slots[str(s)] = dict(x_mm=round(1e3 * float(T[0, 3]), 2),
+                             y_mm=round(1e3 * float(T[1, 3]), 2),
+                             yaw_mrad=round(1e3 * yaw, 3),
+                             moved_mm=round(1e3 * float(np.linalg.norm(T[:2, 3] - T0[:2, 3])), 2),
+                             turned_mrad=round(1e3 * (yaw - yaw0), 3))
+    fin = lambda x: None if x is None or not np.isfinite(x) else round(1e3 * float(x), 3)
+    return dict(passed=bool(sol.passed), why=sol.why, slots=slots, residual_mm=fin(sol.rms),
+                worst_mm=fin(sol.max_residual), notes=list(sol.notes or ()), frame=sol.frame,
+                written=[str(p) for p in written],
+                yaw="solved" if len(meetings) >= 2 else "nominal")

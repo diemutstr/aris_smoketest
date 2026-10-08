@@ -13,48 +13,33 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_server_mark import TWO, ClientHttp, _job, _station  # noqa: E402
 
 from aris import cli  # noqa: E402
 from aris.rig import Rig  # noqa: E402
 from aris.server import open_station  # noqa: E402
-from aris.server.mark import needs_solved_marks  # noqa: E402
-from aris.server.mark_plan import slot_marks, tasks_for  # noqa: E402
 from aris.server.server import create_app  # noqa: E402
 from aris.server.station import STALE_S, Positions  # noqa: E402
 from aris.system.settings import Settings  # noqa: E402
 from aris.types import Refusal  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+TWO = ROOT / "config" / "two_arms"
+
+
+class ClientHttp:
+    """The server's endpoints for `aris.cli.main` through a TestClient."""
+
+    def __init__(self, client):
+        self.c = client
+
+    def get(self, path):
+        r = self.c.get(path)
+        return r.status_code, r.json()
+
+    def post(self, path, body=b""):
+        r = self.c.post(path, content=body)
+        return r.status_code, r.json()
 SMALL = ROOT / "tests" / "data" / "server_small.json"
-
-
-# --------------------------------------------------------------------------- 1. one slot
-
-
-def test_a_single_slot_touches_the_marks_it_shares_and_needs_them_solved(tmp_path):
-    rig = Rig.load(TWO)
-    assert rig.marks_for(("2L",)) == ()                        # what crashed on site
-    assert slot_marks(rig, "2L", ("2L",)) == ["A", "B"]
-    assert [t.mark for t in tasks_for(rig, "2L", ("2L",))] == ["A"] * 6 + ["B"]
-    why = needs_solved_marks(rig, ("2L",))
-    assert why == "2L alone needs marks solved by an earlier run; run `aris mark` (2L, 2R) first"
-    assert needs_solved_marks(rig, ("2L", "2R")) == ""
-
-
-@pytest.mark.slow
-def test_a_single_slot_after_a_full_run(tmp_path):
-    st = _station(tmp_path, TWO)
-    c = TestClient(create_app(st))
-    r = c.post("/mark?slots=2L")
-    assert r.status_code == 409 and r.json()["refused"] == "needs_solved_marks"
-    assert cli.main(["mark", "--poll", "0.05"], http=ClientHttp(c)) == 0       # both arms
-    assert all(st.rig.mark_state(n) == "solved" for n in ("A", "B"))
-    assert cli.main(["mark", "2L", "--poll", "0.05"], http=ClientHttp(c)) == 0
-    rep = _job(c)["report"]
-    assert rep["slots"] == ["2L"] and rep["touches"] == 7
-    assert {m["state"] for m in rep["marks"].values()} == {"known"}
 
 
 # --------------------------------------------------------------------------- 2. no reading
@@ -85,7 +70,7 @@ def test_the_robot_server_refuses_to_plan_from_no_reading_and_aris_arms(tmp_path
                                where={"2L": list(rig.park_q("2L")), "2R": [0.0] * 7}), "op")
     r = c.post("/park").json()
     assert r["refused"] == "no_joint_states" and "no joint states for 2R" in r["detail"]
-    r = c.post("/mark").json()
+    r = c.post("/crosses").json()
     assert r["refused"] == "no_joint_states"
     inside = dict(units="mm", frame="table", lines=[dict(id="a", points=[[-300, 100], [-200, 150]])])
     jid = c.post("/jobs", content=json.dumps(inside).encode()).json()["id"]
@@ -500,3 +485,108 @@ def test_robot_names_from_the_site_table(tmp_path):
     r = open_station(TWO, uncalibrated=True, with_arms=False, with_area=False,
                      site=tmp_path / "missing.json")
     assert isinstance(r, Refusal) and r.reason == "site"
+
+
+# --------------------------------------------------------------------------- crosses
+
+
+def test_the_spots_and_the_shapes():
+    from aris.server import crosses
+    rig = Rig.load(ROOT / "config")
+    spots = crosses.row_spots(rig, rig.mark_groups["rows12"])
+    assert [(s["spot"], s["cross"], s["circle"]) for s in spots] == [
+        ("A", "2L", "2R"), ("B", "2L", "2R"), ("R1a", "1L", "1R"), ("R1b", "1L", "1R")]
+    cross = crosses.shape_lines("A", (0.0, -0.4), "cross", -0.002)
+    circle = crosses.shape_lines("A", (0.0, -0.4), "circle", -0.002)
+    assert len(cross) == 2 and all(np.ptp(x.points[:, :2], axis=0).max() == pytest.approx(0.03)
+                                   for x in cross)
+    assert len(circle) == 1 and np.ptp(circle[0].points[:, 0]) == pytest.approx(0.02)
+
+
+def test_crosses_on_the_simulated_arms(tmp_path, capsys):
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    c = TestClient(create_app(st))
+    assert cli.main(["crosses", "--poll", "0.05"], http=ClientHttp(c)) == 0
+    out = capsys.readouterr().out
+    assert "the L slots draw a cross, the R slots a circle" in out
+    assert "spot A       at (+0.000, -0.400) m: 2L drew the cross, 2R the circle" in out
+    assert "the cross and the circle should sit on each other" in out
+    jid = c.get("/jobs").json()[-1]["id"]
+    from aris.execute.queue import Queue
+    drawn, entries = {}, []
+    for a in ("2L", "2R"):
+        got = Queue(st.jobs_dir / jid / f"crosses_{a}__{a}.queue").read()
+        entries += got
+        drawn[a] = {e.motion.piece.line_id for e in got if e.motion.kind == "draw"}
+    # 2 shapes x 2 spots: 2L both strokes of each cross, 2R each circle, every motion checked
+    assert drawn == {"2L": {"A cross 1", "A cross 2", "B cross 1", "B cross 2"},
+                     "2R": {"A circle", "B circle"}}
+    assert entries and all(e.verdict["passed"] for e in entries)
+    done = [r for r in c.get(f"/jobs/{jid}/events").json() if r.get("event") == "motion done"]
+    assert len(done) == len(entries)
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-6
+
+
+# --------------------------------------------------------------------------- mark: the meeting
+
+
+def test_the_row_pairs():
+    from aris.server import mark
+    rig = Rig.load(ROOT / "config")
+    assert mark.row_pairs(rig, rig.mark_groups["rows12"]) == [
+        dict(slots=("1L", "1R"), spots=["R1a", "R1b"]),
+        dict(slots=("2L", "2R"), spots=["A", "B"])]
+
+
+def test_mark_brings_the_tips_together(tmp_path, capsys):
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False,
+                      sim_base_error=(3.0, 2.0))
+    truth = {a: st.rig.T_table_base(a) for a in st.rig.arm_ids}
+    from aris.server.simtruth import Truth
+    true = Truth(st.rig, None, (3.0, 2.0)).T
+    c = TestClient(create_app(st))
+    assert cli.main(["mark", "--yaw", "--poll", "0.05"], http=ClientHttp(c)) == 0, \
+        capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "switch BOTH to programming mode in Desk" in out
+    assert "meeting      2L/2R at A: registered" in out and "meeting      2L/2R at B: registered" in out
+    rep = c.get(f"/jobs/{c.get('/jobs').json()[-1]['id']}/report").json()
+    (m1, m2) = rep["meetings"]
+    # the TRUE tips met: through the true bases both joints put the tip at one point
+    for m in (m1, m2):
+        tips = [(true[a] @ np.r_[st.rig.arm(a).tip(np.asarray(m["q"][a])[None])[0], 1.0])[:3]
+                for a in ("2L", "2R")]
+        assert np.linalg.norm(tips[0] - tips[1]) < 1.5e-3
+    (s,), = [rep["solved"]]
+    assert s["passed"] and s["yaw"] == "solved" and s["residual_mm"] < 1.0
+    # the solved seam (2R seen from 2L) is the true one, within the guiding error
+    T = {a: st.rig.T_table_base(a) for a in ("2L", "2R")}          # reloaded: solved
+    seam = np.linalg.inv(T["2L"]) @ T["2R"]
+    seam_true = np.linalg.inv(true["2L"]) @ true["2R"]
+    assert np.linalg.norm(seam[:2, 3] - seam_true[:2, 3]) < 1.5e-3
+    assert abs(np.arctan2(seam[1, 0], seam[0, 0]) - np.arctan2(seam_true[1, 0],
+                                                               seam_true[0, 0])) < 3e-3
+    assert any(np.abs(T[a] - truth[a]).max() > 1e-4 for a in T)
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-6
+
+
+def test_mark_with_one_meeting_keeps_the_yaw(tmp_path):
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False,
+                      sim_base_error=(3.0, 2.0))
+    c = TestClient(create_app(st))
+    v = _wait_report(c, c.post("/mark").json()["id"], 120)
+    assert v["state"] == "done", v["why"]
+    (s,) = v["report"]["solved"]
+    assert s["yaw"] == "nominal" and len(v["report"]["meetings"]) == 1
+    assert c.post("/mark?slots=2L").json()["refused"] == "no_pair"

@@ -180,10 +180,19 @@ def add_routes(app, st, store) -> None:
         return dict(id=rec.id, state=rec.state)
 
     @app.post("/mark")
-    def mark_job(slots: str = "", group: str = ""):
+    def mark_job(slots: str = "", group: str = "", yaw: bool = False):
         from aris.server import mark
         rec = mark.submit_mark(st, store, tuple(x for x in slots.split(",") if x),
-                               group or None)
+                               group or None, yaw)
+        if not hasattr(rec, "id"):
+            return refused(409, rec)
+        return dict(id=rec.id, state=rec.state)
+
+    @app.post("/crosses")
+    def crosses_job(slots: str = "", group: str = ""):
+        from aris.server import crosses
+        rec = crosses.submit_crosses(st, store, tuple(x for x in slots.split(",") if x),
+                                     group or None)
         if not hasattr(rec, "id"):
             return refused(409, rec)
         return dict(id=rec.id, state=rec.state)

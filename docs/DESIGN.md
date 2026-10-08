@@ -416,17 +416,20 @@ nominal spots, are solved wherever they are. Anchoring on a mark would shift the
 steel, the fences and the drawing area by the mark's error against the real table (decided
 2026-10-05 after Pete's "expect 2–5 cm"). Per arm: one pivot (3–4 hand orientations at its first
 spot, which gives the pen tip) and a single touch at every other spot; two arms ≈ 10 touches,
-six ≈ 38. The protocol (decided 2026-10-07, after three days in which Desk's control token
-was never handed over): `aris mark` once; nothing else. The arm flies to the hover under the
-normal stack, then its trajectory controller is deactivated — idle under FCI, joint states
-still streaming, the pilot's enabling button hand-guides it as always. The person pinches, puts
-the pen on the cross, lets go; when the robot's mode has left Guiding and the joints have stood
-still for two seconds, that is the sample (✓). Pinching again before that restarts the clock
-(✗); a brief pinch without moving skips the touch (○). The controller re-activates and the
-flight to the next hover is the confirmation. No Desk, no login, no token, no mode switch, no
-light: the robot's own mode stream and its joints are the whole interface. The earlier design
-(a separate panda-py/Desk driver with the ROS stack paused, pilot buttons, lights) lives at
-commit 7d93a14.
+six ≈ 38. **Decided 2026-10-08** (after the pilot's enabling button turned out to work only in
+Desk's programming mode, and Desk's control token was never handed to software in three days):
+the shared point is the other arm's pen tip, in the air, and the person operates Desk. Both
+arms of a pair fly to a meeting spot above the seam, tips 60 mm apart; their controllers are
+switched off; the person puts both arms in programming mode in the browser, brings the two
+tips together, lets go, and puts both back in execution mode with FCI on. The robot PC expects
+the link to drop and come back, recovers the hardware without activating a controller, and
+reads both arms at standstill: one physical point seen by two arms, T_L p_L = T_R p_R — their
+relative x, y; a second meeting 0.8 m along the seam (`--yaw`) adds the relative yaw; the
+gauge is as before (mean position and mean yaw of the pair = nominal). One Desk cycle per
+meeting, done by hand; the software never logs in. `aris crosses` draws a cross (L) and a
+circle (R) at the spots as the visual check. Earlier versions: pilot buttons through panda-py
+and Desk (7d93a14); controller-deactivated guiding under FCI (b26aecd); drawn marks measured
+with a ruler (14dfeb0).
 
 **Subsets.** `aris mark` does every controlled slot; `--group row2 | rows12 | rows23` or a list
 of slots does fewer. x, y and yaw only exist relative to the spots, so a spot's position must be

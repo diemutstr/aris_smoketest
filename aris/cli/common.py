@@ -67,24 +67,29 @@ def report_lines(rep: dict) -> list[str]:
     out = [f"AIR RUN      every draw flown {rep['air_mm']:g} mm above the paper, no contact"] \
         if rep.get("air_mm") else []
     out.append(f"state        {rep.get('state')}" + (f" ({rep['why']})" if rep.get("why") else ""))
+    if rep.get("kind") == "crosses":
+        sh = rep.get("shapes", {})
+        out.append(f"shapes       the L slots draw a {sh.get('L')}, the R slots a {sh.get('R')}")
+        for p in rep.get("spots", []):
+            out.append(f"spot {p['spot']:<7} at ({p['xy_m'][0]:+.3f}, {p['xy_m'][1]:+.3f}) m: "
+                       f"{p['cross']} drew the cross, {p['circle']} the circle")
+        if rep.get("state") == "done":
+            out.append(rep.get("instruction", ""))
     if rep.get("kind") == "mark":
-        from aris.server.mark import GESTURE
-        out.append(f"marks        {rep.get('touches', 0)} touches by {', '.join(rep.get('slots', []))}"
-                   + "".join(f"; {n} {GESTURE.get(k, k)}"
-                             for k, n in sorted(rep.get("buttons", {}).items())))
-        for n in rep.get("notes", []) + [f"redone: {x}" for x in rep.get("redone", [])]:
-            out.append(f"  {n}")
-        for sl, e in rep.get("per_slot", {}).items():
-            out.append(f"slot {sl:<7} moved {e.get('moved_mm')} mm, yaw {e.get('yaw_mrad')} mrad, "
-                       f"tip {e.get('tip_change_mm')} mm; rms {e.get('residual_rms_mm')} mm, "
-                       f"pivot {e.get('pivot_residuals_mm')} mm")
-        for n, e in rep.get("marks", {}).items():
-            out.append(f"mark {n:<7} {e.get('state')} at {e.get('xy_m')} m, "
-                       f"{e.get('from_nominal_mm')} mm from nominal, rms "
-                       f"{e.get('residual_mm')} mm, by {e.get('by')}"
-                       + (f" ({e['note']})" if e.get("note") else ""))
-        for p in rep.get("pairs", []):
-            out.append(f"pair         {p['slots']} on {p['marks']}: {p['disagreement_mm']} mm")
+        for m in rep.get("meetings", []):
+            out.append(f"meeting      {'/'.join(m['pair'])} at {m['spot']}: "
+                       + ("registered" if len(m.get("q", {})) == 2 else "NOT registered"))
+        for s in rep.get("solved", []):
+            pair = "/".join(s["pair"])
+            if not s.get("passed"):
+                out.append(f"solve        {pair}: not solved: {s.get('why')}")
+                continue
+            for slot, e in (s.get("slots") or {}).items():
+                vals = ", ".join(f"{k} {x}" for k, x in e.items()) if isinstance(e, dict) else e
+                out.append(f"slot {slot:<7} {vals}" + ("; yaw nominal (one meeting)"
+                                                       if s.get("yaw") == "nominal" else ""))
+            if s.get("residual_mm") is not None:
+                out.append(f"residual     {pair}: {s['residual_mm']} mm")
     if rep.get("kind") == "touchoff":
         ref = rep.get("reference", {})
         out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "
@@ -189,13 +194,21 @@ def _progress(v: dict) -> str:
             + (f"; {', '.join(cur)}" if cur else ""))
 
 
-def follow(http, jid: str, poll: float = 0.5) -> dict:
-    """Prints a progress line whenever something changes, until the job ends."""
-    last = None
+def follow(http, jid: str, poll: float = 0.5, show_rows=()) -> dict:
+    """Prints a progress line whenever something changes, until the job ends; and every event
+    row named in `show_rows` (the driver's instructions to the person) as it comes."""
+    last, seen = None, 0
     while True:
         code, v = http.get(f"/jobs/{jid}")
         if code != 200:
             raise SystemExit(f"aris: job {jid}: {v}")
+        if show_rows:
+            ok, rows = http.get(f"/jobs/{jid}/events")
+            rows = rows if ok == 200 and isinstance(rows, list) else []
+            for r in rows[seen:]:
+                if r.get("event") in show_rows:
+                    say(f"  >> {r.get('arm', '')} {r.get('text') or r.get('why') or ''}".rstrip())
+            seen = max(seen, len(rows))
         line = _progress(v)
         key = line.split("]", 1)[1]
         if key != last:

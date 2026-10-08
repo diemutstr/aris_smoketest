@@ -80,7 +80,7 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 |---|---|---|
 | `GET /` , `GET /gui` | — | redirect to `/gui/` |
 | `GET /gui/{file}` | — | the GUI's static files from `aris/server/gui/` (`index.html` for `/gui/`); 404 if missing |
-| `GET /rig` | — | `{arms: {slot: {T_table_base, park_q, calibration, robot (from the site table given to `aris serve --site`, else null)}}, mark_groups: {name: [slots]}, drawing_area_m, drawing_area_centre_m, drawing_area_from_maps_m, drawing_area_problem (null or why drawing is refused), canvas_m, pen_in, calibration_files, paper_surface {exists, points, z_min_m, z_max_m, date}, code {commit, dirty, digest}, rig_digest, calibration_digest, calibration, uncalibrated, driver, speed, note}` |
+| `GET /rig` | — | `{arms: {slot: {T_table_base, park_q, calibration, robot (from the site table given to `aris serve --site`, else null)}}, mark_groups: {name: [slots]}, marks: {spot: {xy_m, shared_by}}, drawing_area_m, drawing_area_centre_m, drawing_area_from_maps_m, drawing_area_problem (null or why drawing is refused), canvas_m, pen_in, calibration_files, paper_surface {exists, points, z_min_m, z_max_m, date}, code {commit, dirty, digest}, rig_digest, calibration_digest, calibration, uncalibrated, driver, speed, note}` |
 | `GET /arms` | — | `{arms: {slot: ...}, code: {same (true/false/null), line, server, operator_pc, operator_pc_reported_at}}`; per slot with simulated arms `{robot, q, qd, ok, flags, at_park}`, with the robot `{robot (as the operator PC names it, else the site table's), q (null: no reading), reading ("fresh" or why not), at_park (null without reading), reported_at, age_s, source, job}` |
 | `GET /jobs` | — | every job of this server run: `[{id, kind, name, state, why, ...}]` |
 | `POST /jobs` | body: the drawing JSON; query `name`, `note`, `air_mm`; or `drawing=<id>` (an uploaded drawing, no body); or `rest_of=<job id>` (no body) | `{id, state, why}`; 400 bad file, 404 unknown drawing id, 409 refused (`{refused, detail}`) |
@@ -92,7 +92,8 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 | `POST /arms/{slot}/recover` | — | simulated: `{recovered, why}`; robot: `{queued: command}` |
 | `POST /calibrate/{slot}` | — | `{id, state}` of the plane job; 409 refused |
 | `POST /touchoff/{slot}` | — | `{id, state}` of the touch-off job; 409 refused |
-| `POST /mark` | query `slots=2L,2R` and/or `group=rows12` (neither: group "all", else every slot) | `{id, state}` of the mark job; 409 refused |
+| `POST /mark` | query `slots=2L,2R` and/or `group=row2`, `yaw=true` (two meetings) | `{id, state}` of the mark job (each row's pen tips brought together; the driver's `instruction` rows on its events); its report: `{pairs, meetings: [{pair, spot, phase, gap_m, hovers, q: {L, R}}], solved: [{pair, passed, why, slots: {slot: {x_mm, y_mm, yaw_mrad, moved_mm, turned_mrad}}, residual_mm, worst_mm, yaw: "solved"\|"nominal", notes, written}]}`; 409 refused |
+| `POST /crosses` | query `slots=2L,2R` and/or `group=row2` | `{id, state}` of the crosses job, the check after `mark` (each row's L slot draws a cross, R slot a circle, at their shared spots); its report: `{spots: [{spot, xy_m, row, cross, circle}], shapes, instruction}`; 409 refused |
 | `POST /grip/{slot}` | JSON `{verb: "home"\|"open"\|"close", width_m?, speed_m_per_s?, force_n?, epsilon_inner_m?, epsilon_outer_m?}` | `{id, state}` of the grip job; its report: `{slot, verb, params, width_before_m, width_after_m, grasped, nothing_to_do}`; 409 refused (no reading, a job running, bad verb, unknown slot) |
 | `POST /drawings` | multipart: `file` (.json or .svg), `width` (m, needed for .svg: else 400 "an SVG needs its width on the table, in metres"), `at` ("x,y" m, .svg; default the area's centre) | `{id, name, kind, stored_at, lines, points, bbox_m, width_m, at_m}`; stored under `out/drawings/`; 400 refused |
 | `GET /drawings` | — | every stored drawing's `{id, name, kind, lines, points, ...}`, oldest first |
@@ -109,7 +110,7 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 | `POST /operator/rows` | `{source, rows}` | operator PC: `{accepted}` (rows outside any job; positions updated) |
 
 Every refusal is `{"refused": reason, "detail": text}` with status 400 (bad input) or 409 (cannot
-run now). Job kinds: `draw`, `park`, `calibrate`, `touchoff`, `mark`, `grip`. Job states:
+run now). Job kinds: `draw`, `park`, `calibrate`, `touchoff`, `mark`, `crosses`, `grip`. Job states:
 `received`, `fitted` (drawings), `planning`, `drawing` or `moving`, then `done`, `failed` or
 `stopped`.
 
@@ -125,7 +126,8 @@ run now). Job kinds: `draw`, `park`, `calibrate`, `touchoff`, `mark`, `grip`. Jo
 | `aris draw --rest-of <job id>` | draw what that stopped, failed or finished job left over (a job that failed before anything was accounted: the whole drawing): its leftover stretches as lines `<line>#rest` (`#rest2`, ... when a line has several), not refitted |
 | `aris status`, `aris stop`, `aris park`, `aris rig` | the current or last job; stop it; park all arms; the rig |
 | `aris calibrate <slot>` | touch the paper on a grid with that slot's arm: the `base` part of its calibration file |
-| `aris mark [slots ...] [--group all\|row2\|rows12\|rows23]` | the mark job: guide each arm's pen onto its marks; x, y, yaw and the pen tip |
+| `aris mark [slots ...] [--group row2\|rows12\|rows23] [--yaw]` | each row's two pen tips brought together in the air (Desk programming mode); x, y (and yaw) solved and written |
+| `aris crosses [slots ...] [--group ...]` | the check: each row's L slot draws a cross, R slot a circle, at their shared spots; they should sit on each other |
 | `aris touchoff <slot>` | one touch at the slot's reference point: the `pen` part (after every pen switch or handling of the pencil) |
 | `aris recover <slot>` | release an arm after a fault |
 | `aris plan <drawing> [--out dir]` | plan and check only, no server, no arms; writes the job directory and prints the report |
@@ -250,61 +252,42 @@ own pen and joints. `aris calibrate 2R`.
    is used: the robot's touch detector arms only once the descent runs at constant speed, so a
    trip early in the descent is real contact.
 
-## The mark job
+## The mark job: the pen tips meet
 
-Steps 2 and 3 of the calibration (DESIGN.md section 6), as `docs/figures/mark_protocol.png`
-draws it: `aris mark` once, then the person's hands at the arms. At each mark the arm stops
-with the pen 3 cm above it; she pinches the enabling button, puts the pen on the cross and
-lets go: after 2 s standing still the touch is registered. Pinching again before the 2 s are
-up restarts the clock; a brief pinch without moving skips the touch.
+Where each row's two arms hang against each other (x, y, and with `--yaw` the turn) is found by
+bringing their pen tips together in the air; no ruler, no marks to hit (`mark.py`). The
+hand-guided mark job lives at b26aecd.
 
-- **Who.** The slots named, or a group's (`--group all | row2 | rows12 | rows23`; default the
-  group "all", or every controlled slot when the rig has no such group), in rig order, one arm
-  at a time, the others standing (parked, or given to the checker as their joints).
-- **What each arm touches.** Its marks among the group's (`rig.marks_for(slots)`, the ones it
-  shares); a slot sharing fewer than two marks within the job (a single slot, or a group cut
-  through a pair) touches every mark it shares with any controlled slot. Those need places
-  solved by an earlier run: if none is solved the job is refused before anything moves ("2L
-  alone needs marks solved by an earlier run; run `aris mark` (2L, 2R) first"), so the solver
-  never gets an empty set: at its first mark six hand orientations — the pivot: the pen upright and five
-  tilts of 30 degrees, 72 degrees apart (turned by up to 60 degrees where a tilt is out of
-  reach; tilting, not only turning, is what pins the pen length) — and one upright touch at
-  every other mark. The first mark is the first in rig.json order where at least three of the
-  tilts can be reached, else the next. Planning is `mark_plan.py`; `mark.py` runs the job.
-- **Planned up front.** For each touch a free move to the hover (the pen 30 mm above the mark,
-  `rig.mark_xy`: the solved position when there is one), by way of 80 mm up when turning the
-  pen near the paper is cramped, then a `guide` there; then home. Every motion is checked
-  (the guide stands at the hover, which the checker held as the move's end), the arm's whole
-  phase is queued at once.
-- **The guide.** The driver lets the person move the arm by hand (under FCI, its controller
-  switched off) and reads her gesture; the executor writes the "registered" row (joints, mark,
-  and the driver's answer). "check", registered (let go): the touch counts. "circle", skipped
-  (brief pinch): the touch is marked skipped for the solver; the rest runs. The driver then
-  lifts the pen 3 cm and returns to the hover itself, so the next move starts there. A guide
-  whose hand-over fails fails the job; the arm holds at its hover.
-- **After each arm.** The pivot's own fit (`aris.calib.marks.pivot`): a touch it names as off
-  the common point gets one small extra phase ("mark 2L again": to that hover, the guide,
-  home); then the next arm.
-- **At the end.** The joint solve over every arm of the group (`aris.calib.solve_marks`). A full
-  calibration (every controlled slot) solves the marks afresh; a smaller group or single slots
-  keep the marks solved before as known (`rig.mark_state`; a single arm needs two solved marks,
-  else "needs a partner"). The frame is the fit of the solved arms onto their nominal
-  mountings; the marks are found wherever they were taped (2 to 5 cm off nominal is normal), the base parts' tips for the height. When it
-  passes, `aris.calib.files.write_mark_solution` writes every slot's `base` (method "marks")
-  and `pen` (the pivot's tip) and `calibration/marks.json`, and the rig reloads. When it fails,
-  the report's why names the slot, mark or touch and **nothing is written**. The report gives
-  per slot the move and yaw against the job's start, the distance from rig.json's nominal axis,
-  the tip change, the pivot's residuals and the slot's RMS; per mark its position, state,
-  residual and who touched it; per pair of arms their disagreement; how many touches were
-  registered and skipped, and the redone touches.
+`aris mark [slots | --group row2|rows12|rows23] [--yaw]` (`POST /mark?slots=&group=&yaw=`):
+for every row pair (L, R) that shares spots, in rig order, at its first shared spot (with
+`--yaw` also at its second):
 
-**In simulation** the person is simulated (`aris/server/simtruth.py`): in a "true" world
-(`aris serve --sim-truth <config dir>`, or `--sim-base-error 3,2`: every base 3 mm and 2 mrad
-off in x, y, yaw, the quantities the marks find), they seat the true pen tip on the true mark in
-the hover's hand orientation (turned a little and with another elbow where it must be), 0.3 mm
-off, and let go (tests script skips, a correction and a failed hand-over); `--sim-mark-error 3.5` tapes every
-true mark 3.5 cm off its nominal place. The report prints each mark's solved position and its
-offset from nominal.
+1. every arm parked first (the park job's steps);
+2. "meet A 2L": 2L flies (free motion, checked) from its park to a hover over the spot, pen
+   upright, tip 30 mm above the paper and half a gap toward −x; "meet A 2R": 2R the same
+   toward +x, 2L standing at its hover. The gap is the first of 100, 120, 160, 200, 240,
+   300 mm that both arms reach inside the arm-to-arm clearance (on the two-arm rig 100 mm at
+   A, 240 mm at B); 60 mm is refused everywhere;
+3. "meet A": both arms active, each a `guide`. At the arms the person switches both to Desk's
+   programming mode, brings the two pen tips together in the air, lets go, and switches both
+   back to execution mode with FCI on. Each driver answers "check" with the joints at
+   standstill (the "registered" row) and brings its arm back to the hover. The driver's
+   `instruction` rows (`{event: "instruction", arm, text}`) are printed by `aris mark` and
+   shown in the GUI's status line as they come;
+4. "park 2L after A", "park 2R after A": home, one arm at a time.
+
+At the end, per pair, `aris.server.meetings.calibrate_from_meetings(config_dir, (L, R),
+[{L: q, R: q}, ...])` (the calib's `solve_meetings`; written with `write_mark_solution` when it
+passes) and the rig reloads. The report lists each meeting (spot, gap, hovers, the two
+registered joints) and per pair the solved x, y, yaw per slot (moved and turned against the
+job's start), the residual, and "yaw nominal" with one meeting. Refused: slots or a group the
+rig does not have, no row pair sharing a spot, `--yaw` with only one shared spot.
+
+`aris crosses [slots | --group row2]` (`POST /crosses`, `crosses.py`) is the visual check
+afterwards: every arm parked, then one arm at a time each row's L slot draws a CROSS (two
+30 mm strokes) and its R slot a CIRCLE (20 mm across) at the spots they share, on the real
+paper with the pen in, every motion checked as it is planned. The report says: the cross and
+the circle should sit on each other.
 
 ## The touch-off job
 
@@ -409,9 +392,7 @@ A park job's report says per arm "parked", "already at its park" or why not.
 ## What is not built
 
 - Resume after a stop or a failure; re-planning after a failure.
-- SVG drawings.
-- Steps 4 and 5 of the calibration (the pen length against the pin, the drawn check); the
-  mark job (steps 2 and 3) is built.
+- Steps 4 and 5 of the calibration (the pen length against the pin, the drawn check).
 - The real arm driver in this process: with `--driver sim` every arm is simulated here; with `--driver robot` the operator PC runs them.
 - Pause.
 - Clearing an arm's fault from the server.
@@ -428,22 +409,17 @@ with the rest left over as "stopped"; a refused drawing file makes `aris draw` f
 park` parks every arm from a random near-park configuration and `aris check` confirms the park
 queues. Slow: the word through `aris draw` against a live `aris serve` at 20 x.
 
-The mark job (`tests/test_server_mark.py`, simulated person, real executor, queues and solver):
-on the two-arm rig with every base 3 mm and 2 mrad off and both marks 3.5 cm off nominal, 14
-touches (a correction handled inside the driver), the files written, the seam (2R seen from 2L) within
-0.15 mm and 0.06 mrad of the truth, each mark found within 1.5 mm of where it was taped (34
-and 36 mm from nominal), the rig reloaded with base and pen applied; a skip on 2R's second mark:
-the solve refuses ("needs a partner"), nothing written, both arms home; a failed hand-over: the
-job fails, the arm holds at its hover; a touch named bad: one extra phase; `--group rows12` on
-the six-slot rig: 32 touches, four slots applied, 3L untouched. 6 tests, 32 s.
-
-The site-day fixes (`tests/test_server_field.py`): `aris mark 2L` on a fresh two-arm rig is
-refused before moving, and after a full run touches A and B (7 touches) with the marks known;
-a null, all-zero or 60 s old reading is no reading, refuses park, mark and a drawing with "no
-joint states for 2R (FCI off?)", and shows in `aris arms`; the phase-end check waits for a
-reading rather than judging zeros; `aris arms` on the simulated arms; the rest of a job that
-failed before it moved.
-8 tests (2 slow).
+The site-day fixes (`tests/test_server_field.py`): a null, all-zero or 60 s old reading is no
+reading, refuses park, crosses and a drawing with "no joint states for 2R (FCI off?)", and
+shows in `aris arms`; the phase-end check waits for a reading rather than judging zeros; the
+rest of a job that failed before it moved; pens of row partners lifted one arm per phase; the
+paper map through planner, `/rig` and reports; SVG import; a one-arm config; code versions
+against the operator PC; grip jobs (simulated and through the operator PC); uploaded drawings
+and the GUI route; robot names from the site table; the crosses job on the two-arm rig (2L
+draws both strokes of each cross, 2R each circle, every queued motion checked, both arms home);
+the mark job on the two-arm rig with every base 3 mm / 2 mrad off: two meetings, the true tips
+met, the solved seam within 1.5 mm and 3 mrad of the true one, both arms home; one meeting:
+yaw kept nominal; a single slot refused.
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen and note; `--rest-of` (a job stopped midway, its leftovers

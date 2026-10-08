@@ -11,6 +11,7 @@ const FINAL = ["done", "stopped", "failed"];
 const KIND_WORDS = {
   draw: "Drawing", park: "Park", grip: "Gripper", calibrate: "Calibrate (paper)",
   touchoff: "Touch-off (pen length)", mark: "Mark (where the arms hang)",
+  crosses: "Crosses (the check)",
 };
 
 const S = {
@@ -169,6 +170,13 @@ async function pollJob() {
     const ev = await call("GET", `/jobs/${encodeURIComponent(cur.id)}/events`);
     S.events = ev.ok ? ev.data || [] : [];
     S.eventsFor = cur.id;
+    // the driver's instructions to the person (mark job): the newest one in the status line
+    const said = S.events.filter((r) => r.event === "instruction");
+    if (run && said.length && S.saidCount !== said.length) {
+      S.saidCount = said.length;
+      const r = said[said.length - 1];
+      setStatus(`${r.arm ? label(r.arm) + ": " : ""}${r.text || r.why || ""}`, "wait");
+    }
   }
   const done = [...S.jobs].reverse().find((j) => FINAL.includes(j.state));
   if (done && S.autoReportId !== done.id) {
@@ -260,13 +268,19 @@ function plainReport(rep) {
     if (t) out.push(t.passed ? `${label(rep.arm)}: pen length measured.` : `${label(rep.arm)}: pen measurement FAILED: ${t.why}`);
     if (rep.written) out.push(`Saved: ${rep.written}`);
   } else if (rep.kind === "mark") {
-    out.push(`${rep.touches || 0} touches by ${(rep.slots || []).join(", ")}.`);
-    for (const [sl, e] of Object.entries(rep.per_slot || {}))
-      out.push(`${label(sl)} hangs ${e.moved_mm} mm from where the drawings say (turned ${e.yaw_mrad} mrad); pen tip changed ${e.tip_change_mm} mm.`);
-    for (const [n, e] of Object.entries(rep.marks || {}))
-      out.push(`mark ${n}: ${e.state}, ${e.from_nominal_mm} mm from where it was meant to be` + (e.note ? ` (${e.note})` : ""));
-    for (const n of rep.notes || []) out.push(n);
-    for (const p of rep.pairs || []) out.push(`${p.slots} agree on ${p.marks} to ${p.disagreement_mm} mm`);
+    for (const m of rep.meetings || [])
+      out.push(`${m.pair.map(label).join(" and ")} at ${m.spot}: ` + (Object.keys(m.q || {}).length === 2 ? "tips met, registered." : "NOT registered."));
+    for (const s of rep.solved || []) {
+      if (!s.passed) { out.push(`${s.pair.map(label).join("/")}: not solved: ${s.why}`); continue; }
+      for (const [sl, e] of Object.entries(s.slots || {}))
+        out.push(`${label(sl)}: x ${e.x_mm} mm, y ${e.y_mm} mm, yaw ${e.yaw_mrad} mrad (moved ${e.moved_mm} mm, turned ${e.turned_mrad} mrad)` +
+                 (s.yaw === "nominal" ? "; yaw kept nominal (one meeting)" : ""));
+      if (s.residual_mm != null) out.push(`residual ${s.residual_mm} mm`);
+    }
+  } else if (rep.kind === "crosses") {
+    for (const p of rep.spots || [])
+      out.push(`spot ${p.spot}: ${label(p.cross)} drew the cross, ${label(p.circle)} the circle.`);
+    if (rep.instruction && rep.state === "done") out.push(rep.instruction);
   }
   if (rep.total_s != null) out.push(`Took ${Number(rep.total_s).toFixed(0)} s.`);
   return out.join("\n");
@@ -469,18 +483,26 @@ function renderDrawings() {
 // Calibration buttons: made once the rig is known.
 function buildCalib() {
   const ss = slots();
-  const groups = markGroups(ss);
-  const key = ss.join(",") + "|" + JSON.stringify(groups);
+  const key = ss.join(",") + "|" + JSON.stringify(rowPairs());
   if (!ss.length || key === S.built.calib) return;
   S.built.calib = key;
-  const markBox = $("mark-buttons");
-  markBox.replaceChildren(el("button", { class: "btn btn-main need-idle", text: "MARK (all)",
-    onclick: () => act("MARK (all)", "POST", "/mark", undefined, {
-      ok: (d) => `started job ${d.id}: from here on the arms' lights and the pilot buttons` }) }));
-  for (const g of groups) {
-    markBox.append(el("button", { class: "btn need-idle", text: `MARK ${g.label}`,
-      onclick: () => act(`MARK ${g.label}`, "POST", "/mark?" + new URLSearchParams(g.query), undefined, {
-        ok: (d) => `started job ${d.id}: from here on the arms' lights and the pilot buttons` }) }));
+  const markBox = $("mark-buttons"), checkBox = $("crosses-buttons");
+  markBox.replaceChildren();
+  checkBox.replaceChildren();
+  const toDo = "the arms fly above the spot; then switch BOTH to programming mode in Desk, bring the pen tips together, let go, back to execution mode with FCI on";
+  for (const r of rowPairs()) {
+    const name = `row ${r.row} (${label(r.slots[0])}, ${label(r.slots[1])})`;
+    const q = { slots: r.slots.join(",") };
+    markBox.append(el("button", { class: "btn btn-main need-idle", text: `MARK ${name}`,
+      onclick: () => act(`MARK ${name}`, "POST", "/mark?" + new URLSearchParams(q), undefined, {
+        ok: (d) => `started job ${d.id}: ${toDo}` }) }));
+    if (r.spots.length >= 2)
+      markBox.append(el("button", { class: "btn need-idle", text: `MARK + YAW ${name}`,
+        onclick: () => act(`MARK + YAW ${name}`, "POST", "/mark?" + new URLSearchParams({ ...q, yaw: "true" }), undefined, {
+          ok: (d) => `started job ${d.id}: two meetings, ${toDo}` }) }));
+    checkBox.append(el("button", { class: "btn need-idle", text: `CROSSES ${name}`,
+      onclick: () => act(`CROSSES ${name}`, "POST", "/crosses?" + new URLSearchParams(q), undefined, {
+        ok: (d) => `started job ${d.id}: the arms draw their crosses and circles` }) }));
   }
   const tBox = $("touchoff-buttons"), cBox = $("calibrate-buttons");
   tBox.replaceChildren();
@@ -493,18 +515,17 @@ function buildCalib() {
   }
 }
 
-// The rig's mark groups when /rig lists them (mark_groups: name -> slots); otherwise one
-// button per row of the frame that has two or more slots, unless that row is every slot.
-function markGroups(ss) {
-  const mg = S.rig && S.rig.mark_groups;
-  if (mg && typeof mg === "object") {
-    return Object.entries(mg).filter(([n]) => n !== "all")
-      .map(([n, sl]) => ({ label: `${n} (${sl.join(", ")})`, query: { group: n } }));
+// The rows whose L and R slot share spots (from /rig `marks`): {row, slots: [L, R], spots}.
+function rowPairs() {
+  const marks = (S.rig && S.rig.marks) || {}, rows = {};
+  for (const [n, m] of Object.entries(marks)) {
+    const s = [...m.shared_by].sort();
+    if (s.length !== 2 || s[0][0] !== s[1][0] || s[0][1] === s[1][1]) continue;
+    const k = s[0][0];
+    if (!rows[k]) rows[k] = { row: k, slots: [s.find((x) => x.endsWith("L")), s.find((x) => x.endsWith("R"))], spots: [] };
+    rows[k].spots.push(n);
   }
-  const rows = {};
-  for (const s of ss) (rows[s.replace(/[^0-9]/g, "")] ||= []).push(s);
-  return Object.entries(rows).filter(([, sl]) => sl.length >= 2 && sl.length < ss.length)
-    .map(([r, sl]) => ({ label: `row ${r} (${sl.join(", ")})`, query: { slots: sl.join(",") } }));
+  return Object.values(rows).filter((r) => r.slots.every((x) => slots().includes(x)));
 }
 
 function renderCalib() {

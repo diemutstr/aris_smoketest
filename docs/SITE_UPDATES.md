@@ -23,6 +23,23 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08 — calibration: the two pens meet in the air, Diemut switches the modes
+
+What changed: hand-guiding under FCI did not work (the pilot's enabling button only works in
+Desk's programming mode), so the software never touches Desk again and the person does the two
+clicks. `aris mark`: both arms of a row fly to a spot above the seam, tips 10–25 cm apart, and
+their controllers switch off. In Desk (browser) Diemut puts BOTH arms in programming mode,
+brings the two pen tips together until they touch, lets go, and puts both back in execution
+mode with FCI on. The robot PC waits for the arms to come back, reads both at standstill (one
+point seen by two arms → their relative position), lifts and parks them. `aris mark --yaw` does
+it at a second spot 0.8 m away for the turn. No marks on the wood, no ruler. `aris crosses`
+afterwards draws a cross (L) and a circle (R) at the spots: they should sit on each other.
+Section 6 of her document.
+
+What to do: install (no `colcon build` beyond the gripper one). `aris calibrate` and
+`aris touchoff` for both arms if not done; then `aris mark`; then `aris crosses` and look.
+If the arms do not come back within a minute after FCI on, `aris arms` says what it sees.
+
 ## 2026-10-07, late — calibration without Desk
 
 What changed: `aris mark` no longer touches Desk at all — no login, no control token, no

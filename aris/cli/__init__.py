@@ -10,7 +10,8 @@
     aris touchoff <slot>                             one touch: the pen part
     aris recover <slot>                              release an arm after a fault
     aris grip <slot> home|open|close [--width M]     the slot's gripper
-    aris mark [slots | --group g]                    the marks: guide the pens, x/y/yaw and tip
+    aris mark [slots | --group g] [--yaw]            each row's pen tips brought together: x/y(/yaw)
+    aris crosses [slots | --group g]                 the check: a cross and a circle on each other
     aris plan   <drawing> [--out dir]                plan and check only: no server, no arms
     aris check  <job dir>                            the checker again on every queued motion
 
@@ -26,7 +27,8 @@ from __future__ import annotations
 
 import argparse
 
-from aris.cli.calibration import cmd_calibrate, cmd_grip, cmd_mark, cmd_recover, cmd_touchoff
+from aris.cli.calibration import (cmd_calibrate, cmd_crosses, cmd_grip, cmd_mark, cmd_recover,
+                                  cmd_touchoff)
 from aris.cli.common import (CONFIG, DEFAULT_SERVER, Http, _summary, assumptions_line, follow,
                              job_passed, report_lines, say, verdict)
 from aris.cli.jobs import (cmd_check, cmd_draw, cmd_import, cmd_park, cmd_plan, cmd_status,
@@ -109,12 +111,19 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("verb", choices=("home", "open", "close"))
     s.add_argument("--width", type=float, default=None, metavar="M",
                    help="close: to this width (metres)")
-    s = sub.add_parser("mark", help="calibrate x, y and yaw by guiding the pens onto the marks")
+    s = sub.add_parser("crosses", help="the check after aris mark: each row's arms draw a cross "
+                       "and a circle at the spots they share; they should sit on each other")
     s.add_argument("slots", nargs="*", help="the slots (default: the group)")
     s.add_argument("--group", default=None, help="all, row2, rows12, rows23 (default: all)")
+    s = sub.add_parser("mark", help="where each row's arms hang: their pen tips brought "
+                       "together in the air by hand (Desk programming mode)")
+    s.add_argument("slots", nargs="*", help="the slots (default: the group)")
+    s.add_argument("--group", default=None, help="all, row2, rows12, rows23 (default: all)")
+    s.add_argument("--yaw", action="store_true",
+                   help="a second meeting at the other shared spot: the yaw too")
     for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "arms",
                                        "calibrate",
-                                       "touchoff", "recover", "mark", "grip")):
+                                       "touchoff", "recover", "mark", "grip", "crosses")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -134,6 +143,7 @@ COMMANDS = {"import": cmd_import, "arms": cmd_arms, "serve": cmd_serve, "draw": 
             "status": cmd_status, "stop": cmd_stop, "park": cmd_park, "rig": cmd_rig,
             "plan": cmd_plan, "check": cmd_check, "calibrate": cmd_calibrate,
             "recover": cmd_recover, "touchoff": cmd_touchoff, "mark": cmd_mark,
+            "crosses": cmd_crosses,
             "grip": cmd_grip}
 
 

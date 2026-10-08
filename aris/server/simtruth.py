@@ -1,4 +1,4 @@
-"""The simulated person of the mark job, and the "true" rig they work in.
+"""The simulated person of the mark job (the meeting of two pen tips), and the "true" rig.
 
 The station believes the rig it loaded; the simulated world can differ: another config
 directory (`aris serve --sim-truth <dir>`: its base poses, pen tips and mark positions are the
@@ -9,12 +9,7 @@ same truth; x, y and yaw are what the marks find, height and tilt are the plane 
 `--sim-mark-error cm` moves every true mark that far from its nominal position, in a
 direction of its own: marks are taped by hand, 2 to 5 cm off is normal.
 
-The person of a `guide`: from the hover, they seat the TRUE pen tip on the TRUE mark keeping
-the hover's hand orientation as the true arm holds it, a little off (0.3 mm of guiding
-error, from a seeded generator), and press a button: "check" unless a scripted list says
-otherwise (`buttons`: e.g. ["check", "cross", "check", "circle"], used in order, then
-"check"; a cross stays inside the driver, the person tries again), or fail the hand-over (a
-button "fail: <why>").
+The person: see `Person`.
 """
 from __future__ import annotations
 
@@ -75,56 +70,51 @@ class Truth:
 
 
 class Person:
-    """`person(motion, q)` for one simulated arm (`SimArm(person=...)`)."""
+    """`person(motion, q)` for one simulated arm (`SimArm(person=...)`): the person of the mark
+    job's meeting.  Both arms of a row are guided so that their TRUE pen tips meet at one TRUE
+    point: the spot's nominal place (the guide's `piece`), MEET_HEIGHT above the true paper,
+    0.3 mm off (GUIDING_ERROR, seeded), the hand kept as the true arm holds it at the hover.
+    The answer is "check" unless a scripted list says otherwise ("fail: <why>" fails the
+    hand-over)."""
 
     def __init__(self, truth: Truth, slot, buttons=(), error: float = GUIDING_ERROR):
         self.truth, self.slot = truth, slot
         self.buttons, self.error = list(buttons), float(error)
-        self.count, self.crossed, self._lock = 0, 0, threading.Lock()
+        self.count, self._lock = 0, threading.Lock()
 
     def _button(self) -> str:
-        """The next button; a ✗ (cross) never leaves the driver: the person seats the pen
-        again and the next button is the answer."""
         with self._lock:
             self.count += 1
-            while self.buttons and self.buttons[0] == "cross":
-                self.buttons.pop(0)
-                self.crossed += 1
             return self.buttons.pop(0) if self.buttons else "check"
 
     def __call__(self, motion, q_now):
+        from aris.server.mark import MEET_HEIGHT
         button = self._button()
         if button.startswith("fail"):
             return button.split(":", 1)[-1].strip() or "the hand-over failed"
         rig, tr, a = self.truth.rig, self.truth, self.slot
-        mark = motion.piece.line_id if motion.piece is not None else ""
-        if mark not in tr.marks:
-            return f"no mark {mark!r} in the simulated world"
+        spot = motion.piece.line_id if motion.piece is not None else ""
+        if spot not in rig.marks:
+            return f"no spot {spot!r} on this rig"
         arm = rig.arm(a)
-        # the hand's orientation in the table frame, as the true arm holds it at the hover
         R_table = (tr.T[a] @ arm.fk(np.asarray(q_now, float)[None])[0])[:3, :3]
         g = np.random.default_rng(_seed("guide", a, self.count))
         off = g.normal(size=3)
-        off[2] = 0.0
         off = self.error * off / max(np.linalg.norm(off), 1e-12)
-        tip_t = np.array([*tr.marks[mark], tr.paper_z]) + off
+        tip_t = np.array([*np.asarray(rig.marks[spot][0], float),
+                          tr.paper_z + MEET_HEIGHT]) + off
         T_tb = np.linalg.inv(tr.T[a])
-        T = np.eye(4)
-        T[:3, :3] = T_tb[:3, :3] @ R_table
-        T[:3, 3] = T_tb[:3, :3] @ (tip_t - R_table @ tr.tip[a]) + T_tb[:3, 3]
-        # the person keeps the hand's tilt and the arm's shape as far as they can: the answer
-        # nearest the hover, joint 7 free nearby, the hand turned about the vertical if needed
         q7s = q_now[6] + np.linspace(-0.6, 0.6, 25)
         for turn in np.deg2rad([0.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0]):
             Rt = _rot([0.0, 0.0, turn]) @ R_table
-            Tt = T.copy()
-            Tt[:3, :3] = T_tb[:3, :3] @ Rt
-            Tt[:3, 3] = T_tb[:3, :3] @ (tip_t - Rt @ tr.tip[a]) + T_tb[:3, 3]
-            Q, ok = arm.ik(np.repeat(Tt[None], len(q7s), axis=0), q7s)
+            T = np.eye(4)
+            T[:3, :3] = T_tb[:3, :3] @ Rt
+            T[:3, 3] = T_tb[:3, :3] @ (tip_t - Rt @ tr.tip[a]) + T_tb[:3, 3]
+            Q, ok = arm.ik(np.repeat(T[None], len(q7s), axis=0), q7s)
             if not ok.any():
                 continue
             flat, good = Q.reshape(-1, 7), ok.reshape(-1)
             d = np.where(good, np.linalg.norm(np.nan_to_num(flat - q_now, nan=1e9), axis=1),
                          np.inf)
             return flat[int(np.argmin(d))], button
-        return "the person cannot seat the pen on the mark from this hover"
+        return "the person cannot bring the pen tip to the meeting point from this hover"

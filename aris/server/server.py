@@ -61,6 +61,8 @@ def rig_view(st) -> dict:
                            calibration=rig.calibration_status(a), robot=st.robots.get(a))
               for a in rig.arm_ids},
         mark_groups={str(k): list(v) for k, v in rig.mark_groups.items()},
+        marks={str(k): dict(xy_m=[float(x) for x in xy], shared_by=list(by))
+               for k, (xy, by) in rig.marks.items()},
         drawing_area_m=list(st.drawing_area), drawing_area_centre_m=list(st.drawing_centre),
         canvas_m=rig.canvas_size, pen_in=st.pen(),
         calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)

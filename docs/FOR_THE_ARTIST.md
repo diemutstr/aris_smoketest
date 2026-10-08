@@ -165,86 +165,49 @@ stop):
 aris park
 ```
 
-## 5. The calibration marks on the table
+## 5. No marks to draw
 
-Once, before the paper goes down, make two marks on the wood with a thin sharpie. Their exact
-place does not matter — a few centimetres off is fine, the software finds where they really
-are — but each must be a **fine cross-hair**: two thin straight lines crossing, not a filled
-dot. During calibration you put the pen tip exactly on the crossing, and a thin crossing can
-be hit far more precisely than a dot. Use a sharp, hard pencil (4H) in the holder for the
-calibration.
+You do not draw anything on the wood. The two arms of a row meet each other in the air
+(section 6); the sharpie crosses from before can stay, they are not used.
 
-**The picture to work from: `docs/figures/marks_for_diemut.png`** (your desk at the bottom,
-measurements from the table's edges). In words:
+## 6. Calibration (ten minutes; your hands and two clicks in Desk)
 
-- Both marks lie on the **centre line** along the length of the table: 1.09 m from either long
-  edge (the table is 2.19 m across and 4.17 m long).
-- **Mark A**: on the centre line, 1.68 m from the FAR short edge (the end away from your desk).
-- **Mark B**: on the centre line, 1.68 m from the short edge at your desk.
-- A and B come out 0.80 m apart, straddling the middle of the table, each between the two arms
-  in use.
+What it does: finds exactly where each arm hangs, so that a drawing spanning two arms meets at
+the seam. Do it once at the start, again whenever an arm or the frame has been moved, and
+whenever the seam looks wrong.
 
-So A and B are about 0.80 m apart, straddling the centre, each roughly midway between the two
-live arms. Label them A and B. (The drawing area is a strip 1.72 m across and 0.90 m along,
-centred on the table; the marks do not set it, the arms' mountings do.)
+Height, tilt and pen length come from touches and need nothing from you:
 
-**For the back row (arms 1L = robot 2 and 1R = robot 31), two more marks, also on the centre
-line** (`docs/figures/marks_six_slots.png` shows all of them; measured from the FAR short edge,
-the end away from your desk):
+```
+aris calibrate 2L        # touches the paper on a grid: height, roll, pitch (per arm)
+aris calibrate 2R
+aris touchoff 2L         # one touch: the pen's length (per arm, after every pen change)
+aris touchoff 2R
+```
 
-- **Mark R1a**: on the centre line, 0.48 m from the far short edge.
-- **Mark R1b**: on the centre line, 1.28 m from the far short edge.
-
-`aris mark` on the back row's server uses R1a and R1b the way the middle row uses A and B. Two
-more marks, **S12L** and **S12R**, tie the back row and the middle row together; they are needed
-only when both rows are calibrated in one go on one server (`aris mark --group rows12`), which is
-what makes the two rows' drawings line up on one sheet. Draw them now so they are there when
-that day comes: both 1.48 m from the far short edge, each 0.30 m off the centre line — S12L
-toward the long edge on the L arms' side (your right when you sit at your desk), S12R toward
-the other long edge.
-
-## 6. Calibration (about 15 minutes, no computer after the first line)
-
-What it does: each arm in turn comes to a mark; you guide its pen tip into the mark; the
-software works out exactly where each arm hangs and how long its pen is. Do it once at the
-start, again whenever an arm or the frame has been moved, and again when you suspect the
-drawing has shifted.
-
-Type, on the laptop:
+Position comes from the two pens touching each other:
 
 ```
 aris mark
 ```
 
-Then stand at the table. Nothing else is needed — no Desk, no buttons, no light to watch:
+1. Both arms fly to a spot above the seam and stop, their pen tips 10–25 cm apart in the air
+   (the arms are not allowed closer by themselves). The laptop (and the page) say: your turn.
+2. In Desk, in the browser: switch **both** arms to **programming mode** (the arms' lights go
+   white).
+3. Pinch the enabling buttons of one arm and move it so its pen tip touches the other arm's
+   pen tip — tip to tip, as exactly as you can — and let go. Move the other arm too if that is
+   easier. When the two tips touch, hands off.
+4. In Desk: both arms back to **execution mode**, **FCI on**. Wait. Within a minute the laptop
+   says the point is taken; the arms lift and park themselves.
 
-1. The arm flies to a mark and stops a few centimetres above it, then goes soft: your turn.
-2. Pinch the enabling buttons on the arm, move it so the pen tip sits exactly on the crossing
-   of the mark, and **let go**. **Keep the arm's tilt roughly as it arrived** — the software asked
-   for that tilt on purpose; only move the tip onto the mark.
-3. Keep your hands off for two seconds. The arm takes that as "done", lifts the pen and flies
-   to the next position — sometimes the same mark with a different tilt, sometimes the other
-   mark. The flight is your confirmation.
-4. Not right yet? Pinch again and move it before the two seconds are up; the clock starts
-   over. A mark you cannot reach: pinch briefly without moving the arm, let go — that skips it.
-5. When an arm is done it parks itself and the other arm starts. **Both arms parked = done.**
-   An arm hanging above a mark for more than three minutes without anyone guiding it gives up
-   on that touch; the reason is on the laptop.
+That is the whole calibration. It prints how far each arm really hangs from where the drawings
+assumed (a few millimetres to two centimetres is normal). If a drawing across the seam later
+looks *turned* rather than shifted, `aris mark --yaw`: the same thing twice, at two spots 0.8 m
+apart.
 
-Per arm: six touches at its first mark (upright and five tilts), one touch at the second
-mark. Fourteen touches in all. When it is done the laptop prints, for each arm, how far it
-really hangs from where the drawings say (a few millimetres is normal) and where the marks
-really are (a few centimetres from where you aimed is normal).
-
-**Right after the calibration, and again after every pen change** or whenever you have handled
-a pencil, one touch per arm (seconds, nothing for you to do):
-
-```
-aris touchoff 2L
-aris touchoff 2R
-```
-
-That measures the pen's length exactly; without it the pen presses too hard or not at all.
+To see the result: `aris crosses` — both arms draw at the same spots, the L arm a cross, the R
+arm a circle; after a good calibration the circle sits on the cross.
 
 ## 6b. Your buttons: the page in the browser
 
@@ -320,8 +283,7 @@ Do not skip ahead; every stage proves what the next one relies on.
 
 **Stage 0 — the first run, you and your Claude.** Pete is not there; he answers messages. The
 robot PC is set up by your Claude following `docs/RUNBOOK_OPERATOR_PC_CLAUDE.md` (hand it that
-file when it is logged in on the robot PC); you do the one thing in it that needs hands (pinch
-the enabling buttons and guide an arm by hand) with the emergency stop in your other hand. Then,
+file when it is logged in on the robot PC); nothing in it needs your hands. Then,
 on the laptop, the first motions ever, one at a time, you at the stop and nobody near the
 table:
 1. `aris park` — watch the first arm move; it should be slow and smooth. If anything moves
@@ -335,7 +297,8 @@ Only when all three went as written do you start Stage 1. Send Pete the three re
 
 **Stage 1 — two arms (2L and 2R).**
 1. `aris park` — both arms to their parks.
-2. `aris mark` — the calibration of section 6. Then `aris touchoff 2L`, `aris touchoff 2R`.
+2. The calibration of section 6: `aris calibrate` and `aris touchoff` for both arms, then
+   `aris mark` (the pens meet), then `aris crosses` to look at the result.
 3. `aris draw lines.json --air 30` — a few straight lines, flown in the air. Watch: smooth,
    nothing touches.
 4. `aris draw lines.json` — the same on paper. Look at: are the lines dark and even along their
@@ -346,17 +309,15 @@ Only when all three went as written do you start Stage 1. Send Pete the three re
 6. Repeat 2 → 5 once, a day later or after the pencils were changed: the seam should be as good.
 
 **Stage 2 — four arms (two more switched on: rows 1 and 2, or rows 2 and 3).** Pete makes the
-four-arm rig file and tells you which rows. On the wood, two more marks per added row (he gives
-their rough places, like A and B). Then: `aris park`, `aris mark --group rows12` (or
-`rows23`), touch-offs for all four, a drawing in the air, lines on paper, then a drawing that
+four-arm rig file and tells you which rows. Then: `aris park`, calibrate and touch-off for all
+four, `aris mark --group rows12` (or `rows23`) — the pens meet pair by pair, also between the
+rows — `aris crosses` to look, a drawing in the air, lines on paper, then a drawing that
 crosses the seams between the rows. Same looks, same photos.
 
-**Stage 3 — six arms.** As Stage 2 with `aris mark` (everything), ten marks on the wood.
+**Stage 3 — six arms.** As Stage 2 with `aris mark` (everything).
 
 ## 10. For Pete, before handing over
 
 - The first run under real ROS has not happened yet: build, fake hardware, identify, touch-off,
   air drawing, paper — in that order, with Pete present.
-- The one hardware fact nothing here can test: with the trajectory controller deactivated,
-  the enabling button hand-guides the arm and the joint states keep streaming (runbook step 7).
 - Fill the table at the top.
