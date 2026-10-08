@@ -75,5 +75,17 @@
     "open_noop_m": 0.055,
     "min_move_m": 0.0005,
     "check_note": "open when wider than open_noop_m is a no-op; after every command the width is read back, and jaws that moved less than min_move_m fail (libfranka reports success for a grasp that moved nothing)"
+  },
+  "guide": {
+    "source": "Pete, 2026-10-08: both arms of a pair guided in the same phase until their pen tips touch in the air; the PERSON switches Desk's modes in the browser, the software never touches Desk",
+    "instruction": "your turn: in Desk switch BOTH arms to programming mode; bring the two pen tips together until they touch; let go of both; both back to execution mode, FCI on",
+    "timeout_s": 600.0,
+    "restart_every_s": 15.0,
+    "settle_s": 2.0,
+    "still_rad": 0.002,
+    "moved_rad": 0.02,
+    "lift_m": 0.03,
+    "lift_speed": 0.01,
+    "note": "programming mode switches FCI off: the link drops and the joints go stale, which is expected; the stack is restarted every restart_every_s until they are fresh, then the arm is recovered with its controller off; the sample is the arm still for settle_s, at least moved_rad from the hover"
   }
 }

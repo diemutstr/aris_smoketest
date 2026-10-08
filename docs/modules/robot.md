@@ -26,7 +26,7 @@ read.
 **Tracking.** One mode: joint position control (Pete, 2026-10-07). Every kind of motion goes
 through the stock trajectory controller, and the press is the plan's: the pen's `press_m`
 below the paper, recorded in the first row, with nothing to apply. A header asking for another
-mode is refused. For every job except a mark job, the collision thresholds are set to site.json
+mode is refused. For every job, the collision thresholds are set to site.json
 `collision.job` (40 N) by a service call to franka_hardware's `set_full_collision_behavior`
 at job start, before anything moves, and back to `collision.normal` after the job. A service
 call per job is cleaner than a launch parameter: the thresholds belong to the job, and the
@@ -102,12 +102,27 @@ at boot (`robot/aris-robot.service`, restart always) and:
 
 ## The mark calibration
 
-Not available: on these FR3s the pilot's enabling buttons release the arm only in Desk's
-programming mode, not under FCI with the controller off (site, 2026-10-08). A job of kind
-"mark" is refused before anything moves: "hand-guiding is not available on this rig".
+One guided meeting per arm pair (Pete, 2026-10-08). The person does the Desk mode switches in
+the browser; the software never touches Desk. Both arms of the pair are active in the meet
+phase, each with one `guide` motion at its hover, and each arm's watch runs on its own.
+1. At the hover the arm's `fr3_arm_controller` is deactivated. An `instruction` row goes on
+   the job and the operator rows, with the text from site.json `guide.instruction`: "your
+   turn: in Desk switch BOTH arms to programming mode; bring the two pen tips together until
+   they touch; let go of both; both back to execution mode, FCI on".
+2. Programming mode switches FCI off, so the joint states go stale. This is expected:
+   - the arm's stack is restarted every `guide.restart_every_s` (15 s) while they are stale;
+   - once they are fresh again, the hardware component is reactivated, error recovery runs,
+     and the trajectory controller stays OFF;
+   - the sample is the joints once the arm has been still (`still_rad`) for `settle_s` (2 s).
+   A sample within `moved_rad` (0.02 rad) of the hover gets the row "nobody moved <slot>;
+   waiting" and the watch keeps waiting. After `timeout_s` (600 s) the guide fails.
+3. Then the controller is activated (it holds where the arm is). The pen goes 3 cm straight
+   up and the arm flies back to the hover. The result is done, why "check", with the sampled
+   joints.
+Every stage is a "guide: ..." row on the job and the operator rows.
 
 The Desk/panda-py calibration driver was removed on 2026-10-07 after three days of token
-failures; it lives at 7d93a14. Hand-guided registration lives at b26aecd.
+failures; it lives at 7d93a14. The guide under FCI (enabling buttons with the controller off) lives at b26aecd; it does not work on these FR3s.
 
 **From the arms (2026-10-06).**
 - **No zeros.** An arm without a reading (stack down, stale joints) is `"q": null` with a
@@ -206,7 +221,7 @@ paper stands in for the force estimate.
   slot). A duplicate domain, an unknown slot, or a mounted slot whose robot is never driven
   is refused. Identity is verified, mismatched or unverified.
 - **Jobs and thresholds** (through the stand-in server):
-  - a job raises the collision thresholds and restores them after; a mark job does not;
+  - a job raises the collision thresholds and restores them after;
   - thresholds the robot will not take are noted in the first row, and the job runs;
   - the first row carries the pen with its press and the robots;
   - refused before anything moves: a mode other than position, and a robot mismatch.

@@ -234,8 +234,6 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
         return Refusal("wrong_code", f"the job was planned by {describe(header.get('code'))}, "
                                      f"this PC runs {describe(mine)}: update both machines to "
                                      f"the same commit")
-    if header.get("kind") == "mark":            # its touches are hand-guided
-        return Refusal("no_hand_guiding", "hand-guiding is not available on this rig")
     if header.get("kind") == "grip":            # no plan, no motion, no thresholds
         return run_grip(remote, job_id, header, drivers, progress)
     why = check_header(header, rig)
@@ -257,6 +255,24 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
                     progress)
     finally:
         _collision(drivers, "normal")
+
+
+def _guide_rows_on_the_job(drivers, log) -> dict:
+    """A guide's rows (the person-facing "instruction" ones with their `text`, and every
+    "guide: ..." stage) go on the job too, not only on the operator rows; returns each
+    driver's own `say` to put back."""
+    said = {}
+    for slot, drv in drivers.items():
+        if not hasattr(drv, "say"):
+            continue
+        said[slot] = own = drv.say
+
+        def say(event, _slot=slot, _own=own, **f):
+            _own(event, **f)
+            if event == "instruction" or event.startswith("guide:"):
+                log.write(event, arm=_slot, **f)
+        drv.say = say
+    return said
 
 
 def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, progress):
@@ -291,6 +307,7 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, pr
     mirror = Mirror(remote, job_id, job, drivers).start()
     events = EventForwarder(remote, job_id, job.log_path, stop).start()
     source = phases()
+    said = _guide_rows_on_the_job(drivers, log)
     try:
         result = coord.run(source)
         if refused:
@@ -299,6 +316,8 @@ def _run(remote, job_id, header, d, rig, config_dir, drivers, poll, settings, pr
                   where=None)
     finally:
         source.close()                      # leaves a phase's hand-over if the job broke off
+        for slot, say in said.items():
+            drivers[slot].say = say
         mirror.close()
         events.close()
     return result

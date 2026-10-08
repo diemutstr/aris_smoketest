@@ -165,3 +165,74 @@ def test_recover_runs_every_step_and_restarts_a_stale_stack(monkeypatch, rig, si
     assert said[0]["ok"] is False and "recover: restarting the stack" in events
     assert events[-1] == "recover: joint states fresh"
 
+
+
+def _guided(monkeypatch, rig, site, **cfg):
+    hover = rig.park_q("2L")
+    arm, node = _arm(monkeypatch, rig, site, hover)
+    arm.guide_cfg = {**arm.guide_cfg, **dict(timeout_s=8.0, restart_every_s=0.3, settle_s=0.3), **cfg}
+    arm.stale_s = 0.2
+    said = []
+    arm.say = lambda event, **f: said.append(dict(event=event, **f))
+    from types import SimpleNamespace
+    return arm, node, said, hover, SimpleNamespace(q_start=hover, q_end=hover)
+
+
+def test_a_guide_survives_fci_off_and_samples_where_the_person_left_the_pen(
+        monkeypatch, rig, site):
+    """The person switches Desk to programming mode (FCI off: the joints go stale), moves the
+    arm, switches FCI back on; the stack is restarted while stale, the arm recovered with its
+    trajectory controller off, the sample read away from the hover, then the controller is
+    back, the pen lifts, flies back to the hover and the next motion flies."""
+    arm, node, said, hover, m = _guided(monkeypatch, rig, site)
+    moved = hover + np.array([0.0, 0.06, 0.0, -0.05, 0.0, 0.04, 0.0])
+    fci_on, restarts = [False], []
+
+    def person():
+        while not any(x["event"] == "instruction" for x in said):
+            time.sleep(0.01)
+        assert "fr3_arm_controller" not in node.active        # let go before the person comes
+        node.stalled_at = time.time()                         # programming mode: FCI off
+        time.sleep(0.5)
+        with node._lock:
+            node.q_d = moved.copy()                           # the pen tip on the other's
+        time.sleep(0.5)
+        fci_on[0] = True                                      # execution mode, FCI on
+
+    def restart():
+        restarts.append(time.time())
+        if fci_on[0]:                                         # the new stack publishes
+            node.stalled_at = None
+            node.active |= {"fr3_arm_controller"}             # it comes up with it active
+
+    arm.restart_stack = restart
+    import threading
+    threading.Thread(target=person, daemon=True).start()
+    r = arm.guide(m)
+    assert r.done and r.why == "check", r.why
+    assert np.allclose(r.q, moved)
+    assert len(restarts) >= 2
+    events = [x["event"] for x in said]
+    assert said[0]["text"].startswith("your turn: in Desk switch BOTH arms")
+    for e in ("guide: link down (FCI off), waiting for FCI on", "guide: restarting the stack",
+              "guide: hardware component", "guide: error recovery",
+              "guide: trajectory controller off", "guide: link back", "guide: registered",
+              "guide: trajectory controller back", "guide: lifted", "guide: back at the hover"):
+        assert e in events, e
+    # the trajectory controller was off when the sample was read, on again only after it
+    assert events.index("guide: trajectory controller off") < events.index("guide: registered") \
+        < events.index("guide: trajectory controller back")
+    assert node.recovery_steps == ["hardware FrankaHardwareInterface", "error recovery"]
+    assert "fr3_arm_controller" in node.active
+    assert np.allclose(node.q_d, hover, atol=1e-6)
+    nxt = _chain(rig, "2L", ("free",))[0]
+    assert arm.move(nxt.traj).done
+
+
+def test_a_guide_nobody_moves_waits_then_times_out(monkeypatch, rig, site):
+    arm, node, said, hover, m = _guided(monkeypatch, rig, site, timeout_s=1.5)
+    r = arm.guide(m)
+    assert not r.done and "nobody guided 2L" in r.why
+    texts = [x["text"] for x in said if x["event"] == "instruction"]
+    assert texts[0].startswith("your turn") and texts[1:] == ["nobody moved 2L; waiting"]
+    assert "fr3_arm_controller" in node.active                # holds again

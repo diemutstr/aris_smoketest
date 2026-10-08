@@ -395,12 +395,25 @@ def test_a_job_planned_by_other_code_is_refused_before_anything_moves(rig, tmp_p
     assert arm.calls == []
 
 
-def test_a_mark_job_is_refused_before_anything_moves(rig, tmp_path):
-    server_dir = tmp_path / "server"
-    server_dir.mkdir()
-    Job.create(server_dir / "mk", dict(_header(rig), kind="mark"))
-    arm = Recording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
-    with Served(create_app(server_dir)) as srv:
-        res = run_job(Remote(srv.url), "mk", rig, CONFIG, tmp_path / "w", {"2L": arm})
-    assert isinstance(res, Refusal) and res.detail == "hand-guiding is not available on this rig"
-    assert arm.calls == []
+
+def test_a_guides_rows_go_on_the_job_too(rig, tmp_path):
+    """The person-facing "instruction" rows and the "guide: ..." stages reach the job's
+    events (with the arm), the driver's own rows still get them, and its say is put back."""
+    import json
+    from types import SimpleNamespace
+    from aris_robot.runner import ArmLog, _guide_rows_on_the_job
+    own = []
+    drv = SimpleNamespace(say=lambda event, **f: own.append(event),
+                          state=lambda: SimpleNamespace(q=rig.park_q("2L"), ok=True, flags=()))
+    log = ArmLog(tmp_path / "events.jsonl", {"2L": drv})
+    first = drv.say
+    said = _guide_rows_on_the_job({"2L": drv}, log)
+    drv.say("instruction", text="your turn")
+    drv.say("guide: link back")
+    drv.say("recover: controllers")
+    assert own == ["instruction", "guide: link back", "recover: controllers"]
+    rows = [json.loads(x) for x in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert [(r["event"], r["arm"]) for r in rows] == [("instruction", "2L"),
+                                                      ("guide: link back", "2L")]
+    assert rows[0]["text"] == "your turn"
+    assert said["2L"] is first

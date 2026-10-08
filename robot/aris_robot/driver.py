@@ -11,6 +11,8 @@ One tracking mode: joint position control through the stock joint trajectory con
   draw(m)     lower, draw and lift: the same as `move`
   touch(m)    the calibration touch under the trajectory controller (touch.py): down until
               the force onset, the joints there, back to the hover
+  guide(m)    the one hand-guided touch per arm, with the PERSON switching Desk's modes in
+              the browser (the software never touches Desk): see `guide`
   hold()      nothing to do: the trajectory controller holds where the last motion ended
   stop()      at once: the running goal is cancelled, the arm holds
   recover()   error recovery, the hardware component back, the controllers back, the joint
@@ -53,6 +55,7 @@ class RosArm:
         self.kin = T.Kinematics.of(rig, arm_id)
         self.fake_paper = T.FakePaper(self.kin, rig.paper(arm_id), fake_paper_m) if fake else None
         self.start_tol = float(rig.execution().start_tolerance)
+        self.guide_cfg = dict(site.guide)
         self.ros = ArmNode(site.arm(arm_id), site.joint_names())
         self.gripper = Gripper(GripperRos(self.ros), GripperSettings.from_site(site.gripper),
                                say=lambda event, **f: self.say(event, **f))
@@ -124,6 +127,118 @@ class RosArm:
             if r.done:
                 return Result.ok(r.q_contact)
             return Result.failed(r.why, self.state().q)
+
+    def guide(self, motion) -> Result:
+        """At the hover the trajectory controller is let go and the person is told what to do
+        in Desk (site.json `guide.instruction`): programming mode, the pen tip on the cross,
+        let go, execution mode, FCI on.  Programming mode switches FCI off, so the link drops
+        and the joint states go stale: that is expected.  The arm's stack is restarted every
+        `restart_every_s` while they are stale; once they are fresh again the arm is recovered
+        with its trajectory controller left OFF, and once it has stood still `settle_s` away
+        from the hover (`moved_rad`) its joints are the sample.  Then the controller holds
+        again, the pen goes straight up and back to the hover.  done with why "check"."""
+        with self._busy:
+            refused = self._refuse(motion.q_start)
+            if refused:
+                return refused
+            why = self.ros.switch([], [TRAJECTORY])
+            if why:
+                return Result.failed(f"cannot let the arm go: {why}", self.state().q)
+            text = self.guide_cfg.get("instruction", "guide: your turn on {slot}").format(
+                slot=self.arm_id)
+            self.say("instruction", text=text)        # the person-facing prompt
+            out = self._await_sample(np.asarray(motion.q_start, float))
+            why = self._trajectory_controller()           # holds where the arm is
+            self.say("guide: trajectory controller back", ok=not why, why=why)
+            if why:
+                self._recover()
+            if not out.done:
+                return out
+            back = self._back_to_hover(np.asarray(motion.q_end, float), out.q)
+            if back:
+                return Result.failed(f"sample read, then {back}", self.state().q)
+            return out
+
+    def _await_sample(self, q_hover) -> Result:
+        g = self.guide_cfg
+        timeout, every = float(g.get("timeout_s", 600.0)), float(g.get("restart_every_s", 15.0))
+        settle, still = float(g.get("settle_s", 2.0)), float(g.get("still_rad", 0.002))
+        moved_min = float(g.get("moved_rad", 0.02))
+        t_end, last_restart, down, since, ref, said_idle = (time.monotonic() + timeout, -1e9,
+                                                           False, None, None, False)
+        while time.monotonic() < t_end:
+            if self._halt.is_set():
+                return Result.failed("stopped", self.state().q)
+            s = self.state()
+            if not np.all(np.isfinite(s.q)):              # the link is down (FCI off): expected
+                if not down:
+                    self.say("guide: link down (FCI off), waiting for FCI on")
+                    down = True
+                if self.restart_stack is not None and time.monotonic() - last_restart >= every:
+                    last_restart = time.monotonic()
+                    self.say("guide: restarting the stack")
+                    self.restart_stack()
+                since = None
+                time.sleep(0.1)
+                continue
+            if down:                                      # back: recover, controller stays off
+                self._recover_off()
+                down, since = False, None
+                continue
+            q = np.asarray(s.q, float)
+            if since is None or float(np.abs(q - ref).max()) > still:
+                since, ref = time.monotonic(), q
+            elif time.monotonic() - since >= settle:
+                if float(np.abs(q - q_hover).max()) >= moved_min:
+                    self.say("guide: registered", q=[float(x) for x in q])
+                    return Result(True, "check", q)
+                if not said_idle:
+                    self.say("instruction", text=f"nobody moved {self.arm_id}; waiting")
+                    said_idle = True
+                since = None
+            time.sleep(0.05)
+        return Result.failed(f"nobody guided {self.arm_id} within {timeout:g} s", self.state().q)
+
+    def _recover_off(self) -> None:
+        """After the link came back: the hardware component active, franka error recovery, and
+        the trajectory controller NOT active (the sample is read first)."""
+        steps = [] if self.fake else [
+            ("hardware component", lambda: self.ros.reactivate_hardware(self.hw_component)),
+            ("error recovery", self.ros.error_recovery)]
+        for name, fn in steps:
+            why = fn()
+            self.say(f"guide: {name}", ok=not why, why=why)
+        active = self.ros.active_controllers() or set()
+        if TRAJECTORY in active:                    # a restarted stack comes up with it active
+            why = self.ros.switch([], [TRAJECTORY])
+            self.say("guide: trajectory controller off", ok=not why, why=why)
+        self.say("guide: link back")
+
+    def _back_to_hover(self, q_hover, q) -> str:
+        """The pen straight up `lift_m` (or 2/3, 1/3 of it where the arm cannot reach), then a
+        straight joint move to the hover, so the queue's next motion starts where planned."""
+        from aris.kernel.retime import retime
+        from aris.types import JointPath, Refusal
+        lift, speed = float(self.guide_cfg.get("lift_m", 0.03)), float(
+            self.guide_cfg.get("lift_speed", 0.01))
+        for h in (lift, 2 * lift / 3, lift / 3):
+            up = T.straight_on(self.kin.arm, self.kin.arm.limits, self.kin.rules, q,
+                               self.kin.normal, h, speed)
+            if not isinstance(up, Refusal):
+                break
+        if isinstance(up, Refusal):
+            return f"cannot lift straight up: {up.detail}"
+        r = self._follow(up)
+        if not r.done:
+            return f"the lift failed: {r.why}"
+        self.say("guide: lifted")
+        if float(np.abs(q_hover - up.q[-1]).max()) > 1e-9:
+            r = self._follow(retime(JointPath(np.array([up.q[-1], q_hover])),
+                                    self.kin.arm.limits, self.kin.rules))
+            if not r.done:
+                return f"the way back to the hover failed: {r.why}"
+        self.say("guide: back at the hover")
+        return ""
 
     def hold(self) -> None:
         return None

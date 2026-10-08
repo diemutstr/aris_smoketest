@@ -18,7 +18,8 @@ robot/
 **One process runs here, `aris-robot serve` (section 5), started at boot by systemd. Nobody
 touches this PC after that: every command (draw, park, calibrate, touch-off, recover, report)
 is given on the planning PC with `aris ...`, and the only thing on this side is the e-stop
-(and, for the mark calibration, the arm's light and its pilot buttons: section 6).**
+(and, for the mark calibration, Desk's mode switches in the browser and the arms in the
+person's hands: section 6).**
 The first run is: build (sections 1 to 3), fill in the site (section 4), install and start
 serve (section 5), then everything from the planning PC.
 
@@ -198,9 +199,24 @@ an emergency on this PC, `aris-robot grip 2L close` does the same with the stack
 
 ## 6. The mark calibration
 
-Not available on this rig: the FR3s release the arm to the enabling buttons only in Desk's
-programming mode. A mark job is refused before anything moves ("hand-guiding is not
-available on this rig").
+One guided meeting per arm pair (Pete, 2026-10-08). The person does the Desk mode switches in
+the browser; the software never touches Desk. Both arms of the pair are active in the meet
+phase, each with one `guide` motion at its hover, and each arm's watch runs on its own.
+1. At the hover the arm's `fr3_arm_controller` is deactivated. An `instruction` row goes on
+   the job and the operator rows, with the text from site.json `guide.instruction`: "your
+   turn: in Desk switch BOTH arms to programming mode; bring the two pen tips together until
+   they touch; let go of both; both back to execution mode, FCI on".
+2. Programming mode switches FCI off, so the joint states go stale. This is expected:
+   - the arm's stack is restarted every `guide.restart_every_s` (15 s) while they are stale;
+   - once they are fresh again, the hardware component is reactivated, error recovery runs,
+     and the trajectory controller stays OFF;
+   - the sample is the joints once the arm has been still (`still_rad`) for `settle_s` (2 s).
+   A sample within `moved_rad` (0.02 rad) of the hover gets the row "nobody moved <slot>;
+   waiting" and the watch keeps waiting. After `timeout_s` (600 s) the guide fails.
+3. Then the controller is activated (it holds where the arm is). The pen goes 3 cm straight
+   up and the arm flies back to the hover. The result is done, why "check", with the sampled
+   joints.
+Every stage is a "guide: ..." row on the job and the operator rows.
 
 **Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
 it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,

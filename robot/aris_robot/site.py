@@ -54,6 +54,7 @@ class Site:
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
     execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
     gripper: dict = field(default_factory=dict)     # the gripper's parameters (gripper.py)
+    guide: dict = field(default_factory=dict)       # the one hand-guided touch per arm
     hardware_component: str = "FrankaHardwareInterface"
 
     def arm(self, slot: str) -> SiteArm:
@@ -108,6 +109,7 @@ def load(path) -> Site:
                 dict(d.get("touch", {})), tuple(arms),
                 dict(d.get("collision", {})),
                 dict(d.get("execution", {})), dict(d.get("gripper", {})),
+                dict(d.get("guide", {})),
                 str(ros.get("hardware_component", "FrankaHardwareInterface")))
 
 
