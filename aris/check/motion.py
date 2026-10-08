@@ -9,7 +9,7 @@ from aris.check import timing
 from aris.check.config import Tolerances, read_rig
 from aris.check.drawing import pen_report
 from aris.check.model import tip
-from aris.check.retreat import retreat_rows
+from aris.check.retreat import limit_rows, recovering, retreat_rows
 from aris.check.scene import CLASSES, build_scene, clearance
 from aris.check.sweep import sweep
 from aris.check.verdict import Verdict, measure, verdict
@@ -96,9 +96,13 @@ def _one(rig, slot, motion, phase, q_before, o, surface_title=ON_SURFACE):
     titles = dict(_TITLE, pen=PEN_DEPTH) if setting else _TITLE
     # A retreat starts inside the arm-to-arm clearance: it is judged by its direction instead.
     classes = tuple(c for c in CLASSES if c != "parked") if motion.kind == "retreat" else CLASSES
-    ms += _clearances(scene, sw, r4, drawing, titles, classes)       # items 3-6, 8
+    back = None
     if motion.kind == "retreat":                                     # item 11
-        ms += retreat_rows(scene, traj, o["step"])
+        back = recovering(scene.model, traj.q[0], rig.limit_gate)
+        ms += retreat_rows(scene, traj, o["step"]) + limit_rows(scene.model, r4.q, back,
+                                                                rig.limit_gate)
+    ms += _clearances(scene, sw, r4, drawing, titles, classes,       # items 3-6, 8
+                      None if back is None else ~back)
     if setting:                                                      # item 8
         ms.append(_on_surface(scene, rig, traj, motion.kind, o["tip_height_tol"],
                               surface_title))
@@ -163,9 +167,15 @@ def _ends(traj, q_before):
     return ms
 
 
-def _clearances(scene, sw, r4, drawing, titles=_TITLE, classes=CLASSES):
+def _clearances(scene, sw, r4, drawing, titles=_TITLE, classes=CLASSES, joints=None):
+    """`joints` (7,) bool: the joints held to their limits here (all when None; a retreat
+    leaves out the ones it is bringing back inside, see retreat.py)."""
     m = scene.model
-    q_margin = min(sw.q_min_margin, float(np.min(np.minimum(r4.q - m.q_min, m.q_max - r4.q))))
+    margin = np.minimum(r4.q - m.q_min, m.q_max - r4.q)
+    if joints is None:
+        q_margin = min(sw.q_min_margin, float(np.min(margin)))
+    else:                               # per joint: the 4 kHz samples (the driver's own grid)
+        q_margin = float(np.min(margin[:, joints])) if joints.any() else np.inf
     ms = [measure("joint positions", q_margin, 0.0, "min", "rad",
                   "closest approach to a joint limit", tol=POSITION_TOL)]
     for c in classes:

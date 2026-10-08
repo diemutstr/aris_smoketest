@@ -71,6 +71,8 @@ class RigData:
                                    # stays on the normal's side of, in every phase (rig.json)
     tolerances: Tolerances = Tolerances()   # rig.json `checker`
     paper_map: PaperMap | None = None       # calibration/paper.json; None: the flat paper
+    limit_gate: float = 0.15                # rad, rig.json gates.limit_margin_rad: the planners'
+                                            # distance to a joint limit (a retreat recovers it)
 
     def surface_at(self, x, y) -> np.ndarray:
         """Where the drawing's points lie at table (x, y): the paper (its height map where
@@ -155,7 +157,8 @@ def read_rig(config_dir) -> RigData:
                    paper_z, float(speed), press, pen_name,
                    float(pen["tip_length_nominal_m"]), float(pen["capsule_radius_m"]),
                    tuple(notes), tuple(fences), _tolerances(cfg),
-                   read_paper(config_dir / "calibration" / "paper.json", paper_z))
+                   read_paper(config_dir / "calibration" / "paper.json", paper_z),
+                   float(cfg.get("gates", {}).get("limit_margin_rad", 0.15)))
 
 
 def _current_pen(cfg):

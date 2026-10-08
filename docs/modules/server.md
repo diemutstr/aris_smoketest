@@ -289,8 +289,12 @@ with a row pair sharing only one spot.
 
 **Retreat** (`retreat.py`). Every job that plans from where the arms stand (park, and through
 it mark and crosses; calibrate and touch-off) first moves apart any arm standing closer to
-another than the arm-to-arm clearance (an interrupted meeting): a phase "retreat <slot>", one
-arm at a time in rig order, one `retreat` motion: the tip 30 mm straight up, then horizontally
+another than the arm-to-arm clearance (an interrupted meeting), and any arm standing with a
+joint closer to its limit than the gates' margin or past it by up to 0.1 rad (more: refused, a
+person must look): a phase "retreat <slot>", one arm at a time in rig order, with first the
+joint retreat (only the offending joints, straight in joint space, to the margin + 0.05 rad,
+timed at the free speed) and then, if still too close to another arm, the up-and-away
+`retreat` motion: the tip 30 mm straight up, then horizontally
 straight away from the nearest other arm's axis until the bodies are the clearance + 20 mm
 apart (IK along the straight tip path, the hand kept, timed at the free speed), checked as a
 retreat (the distance to every other arm never decreases). A drawing is refused instead
@@ -435,7 +439,8 @@ met, the solved seam within 1.5 mm and 3 mrad of the true one, both arms home; o
 yaw kept nominal; a single slot refused; `--group rows12` on the six-arm rig: four meetings
 (two row pairs, two column pairs) in rig order, one graph solve, four slots solved; park from
 two tips 20 mm apart: "retreat 2L" (one checked retreat motion), then both parked, and a
-drawing refused as too close before.
+drawing refused as too close before; 2R with joint 6 0.047 rad past its limit: "retreat 2R"
+moves joint 6 alone to the margin + 0.05 rad, then 2R parks.
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen and note; `--rest-of` (a job stopped midway, its leftovers

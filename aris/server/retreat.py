@@ -1,4 +1,7 @@
-"""Retreat: an arm standing closer to another arm than the rig's arm-to-arm clearance (an
+"""Retreat: an arm standing with a joint closer to its limit than the gates' margin (or past
+it, up to PAST_MAX: an arm stopped or guided there) first moves only those joints, straight in
+joint space, to the margin plus INSIDE; the other joints stay.  Then, or else: an arm standing
+closer to another arm than the rig's arm-to-arm clearance (an
 interrupted meeting of two pen tips, a stop at the wrong moment) first moves only AWAY: its pen
 tip straight up RISE, then horizontally straight away from the nearest other arm (from that
 arm's base axis toward its own) until the two bodies are the clearance plus MARGIN apart.  The
@@ -11,6 +14,8 @@ first; a drawing is refused instead (park first).
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from aris.check import check
@@ -19,6 +24,9 @@ from aris.kernel.retime import retime_detailed
 from aris.types import JointPath, Motion
 
 RISE = 0.030             # m straight up first
+INSIDE = 0.05            # rad beyond the gates' limit margin where a joint retreat ends
+PAST_MAX = 0.10          # rad: a joint further past its limit than this is not moved
+JOINT_STEP = 0.01        # rad between samples of a joint retreat
 MARGIN = 0.020           # m beyond the clearance where the retreat ends
 STEP = 0.003             # m between IK samples along the tip path
 MAX_AWAY = 0.40          # m: the farthest it goes sideways
@@ -112,28 +120,78 @@ def plan_retreat(st, a, now) -> Motion | str:
     return Motion("retreat", res.traj)
 
 
+def joint_retreat(st, a, q) -> Motion | str | None:
+    """The joints of arm a closer to a limit than the gates' margin moved straight to the margin
+    plus INSIDE (the others unchanged), timed at the free speed: a Motion, None when every
+    joint is inside the margin, or why not."""
+    rig = st.rig
+    lim, margin = rig.arm(a).limits, float(rig.gates().limit_margin)
+    q = np.asarray(q, float)
+    lo, hi = np.asarray(lim.q_min, float), np.asarray(lim.q_max, float)
+    goal = q.copy()
+    for j in range(7):
+        if q[j] - lo[j] < margin:
+            goal[j] = lo[j] + margin + INSIDE
+        elif hi[j] - q[j] < margin:
+            goal[j] = hi[j] - margin - INSIDE
+        past = max(lo[j] - q[j], q[j] - hi[j])
+        if past > PAST_MAX:
+            return (f"joint {j + 1} stands {past:.3f} rad past its limit (more than "
+                    f"{PAST_MAX:g}): a person must look")
+    if np.array_equal(goal, q):
+        return None
+    n = max(2, int(np.ceil(np.abs(goal - q).max() / JOINT_STEP)) + 1)
+    path = q + np.linspace(0.0, 1.0, n)[:, None] * (goal - q)
+    # timed with the position box widened to where the arm stands (speeds, accelerations and
+    # jerks as they are): the retimer refuses a start outside the box, and the joint only
+    # moves inward from there
+    box = replace(lim, q_min=np.minimum(lo, q - 1e-3), q_max=np.maximum(hi, q + 1e-3))
+    res = retime_detailed(JointPath(path), box, st.rules)
+    if not hasattr(res, "traj"):
+        return f"the joint retreat cannot be timed: {res.reason} {res.detail}"
+    return Motion("retreat", res.traj)
+
+
 def retreats(st, now) -> tuple[list, dict]:
-    """Steps "retreat <slot>" for every arm, in rig order, standing within the clearance of
-    another, and where everything stands after them.  A refused retreat is a Step with why."""
+    """Steps "retreat <slot>" for every arm, in rig order, standing with a joint inside the
+    gates' limit margin (the joint move first) or within the clearance of another arm (then the
+    up-and-away), and where everything stands after them.  A refused retreat is a Step with
+    why."""
     from aris.server.steps import Scene, Step
     rig = st.rig
     now = {a: np.asarray(q, float) for a, q in now.items()}
     steps = []
     for a in rig.arm_ids:
-        b, g = nearest(rig, a, now)
-        if b is None or g >= clearance(rig):
-            continue
         obs, standing, phase = Scene(rig).of(a, now, (a,), (), f"retreat {a}")
-        m = plan_retreat(st, a, now)
-        if isinstance(m, str):
-            steps.append(Step(a, phase, why=f"retreat from {b}: {m}"))
-            continue
-        v = check(st.config_dir, a, m, phase, now[a], standing=standing)
-        if not v.passed:
-            steps.append(Step(a, phase, why="retreat: checker: " + ", ".join(v.failed)))
-            continue
-        steps.append(Step(a, phase, (m,), (v,), dict(standing)))
-        now[a] = m.q_end
+        motions, verdicts, q, why = [], [], now[a], ""
+        joints = joint_retreat(st, a, q)
+        if isinstance(joints, str):
+            why = f"retreat from the joint limits: {joints}"
+        elif joints is not None:
+            motions.append(joints)
+            q = joints.q_end
+        if not why:
+            b, g = nearest(rig, a, {**now, a: q})
+            if b is not None and g < clearance(rig):
+                m = plan_retreat(st, a, {**now, a: q})
+                if isinstance(m, str):
+                    why = f"retreat from {b}: {m}"
+                else:
+                    motions.append(m)
+        if not why:
+            qb = now[a]
+            for m in motions:
+                v = check(st.config_dir, a, m, phase, qb, standing=standing)
+                if not v.passed:
+                    why = "retreat: checker: " + ", ".join(v.failed)
+                    break
+                verdicts.append(v)
+                qb = m.q_end
+        if why:
+            steps.append(Step(a, phase, why=why))
+        elif motions:
+            steps.append(Step(a, phase, tuple(motions), tuple(verdicts), dict(standing)))
+            now[a] = motions[-1].q_end
     return steps, now
 
 

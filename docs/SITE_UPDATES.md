@@ -23,6 +23,15 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, afternoon — an arm past a joint limit frees itself
+
+What changed: `aris park` failed on 2R with "joint 6 is -0.0469 rad from its limit". Now any
+job first moves such a joint back inside its range on its own (a "retreat" the checker allows
+only inward), then plans as usual. More than 0.1 rad past the limit still needs a person
+(programming mode, turn the joint back by hand).
+
+What to do: install, `aris park`, then the calibration as below.
+
 ## 2026-10-08, later — the same, plus: arms back away when too close; groups; 2L the reference
 
 What changed: after a meeting the arms retreat on their own (up, then away); if the job was

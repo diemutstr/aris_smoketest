@@ -656,3 +656,27 @@ def test_park_retreats_from_touching_tips(tmp_path, capsys):
     assert [e.motion.kind for e in got] == ["retreat"] and all(e.verdict["passed"] for e in got)
     for a, d in st.drivers.items():
         assert np.max(np.abs(d.state().q - rig.park_q(a))) < 1e-6
+
+
+def test_park_retreats_from_past_a_joint_limit(tmp_path, capsys):
+    from aris.execute.drivers.sim import SimArm
+    from aris.execute.queue import Queue
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    rig = st.rig
+    lim, q = rig.arm("2R").limits, rig.park_q("2R").copy()
+    j = 5                                                  # joint 6
+    low = q[j] - lim.q_min[j] < lim.q_max[j] - q[j]
+    q[j] = lim.q_min[j] - 0.047 if low else lim.q_max[j] + 0.047   # as on site: 0.047 past
+    st.drivers["2R"] = SimArm("2R", q)
+    c = TestClient(create_app(st))
+    assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0, capsys.readouterr().out
+    jid = c.get("/jobs").json()[-1]["id"]
+    got = Queue(st.jobs_dir / jid / "retreat_2R__2R.queue").read()
+    assert [e.motion.kind for e in got] == ["retreat"] and all(e.verdict["passed"] for e in got)
+    m = got[0].motion
+    moved = np.abs(m.q_end - m.q_start) > 1e-9
+    assert moved.tolist() == [k == j for k in range(7)]           # only joint 6
+    assert rig.arm("2R").limit_margin(m.q_end[None])[0] >= rig.gates().limit_margin + 0.049
+    assert Queue(st.jobs_dir / jid / "park_2R__2R.queue").read()
+    assert np.max(np.abs(st.drivers["2R"].state().q - rig.park_q("2R"))) < 1e-6

@@ -1183,6 +1183,48 @@ def test_retreat_from_a_meeting():
     _fails(f, "clearance parked arms")
 
 
+def test_retreat_from_past_a_joint_limit():
+    """2R stands with joint 6 0.047 rad past its limit (the site, 2026-10-08).  A retreat that
+    turns joint 6 straight back 0.25 rad passes (it ends 0.20 rad inside, past the 0.15 rad
+    gate); the same motion as a free move fails the joint positions; a wiggle back toward the
+    limit fails; a start 0.12 rad past the limit is refused."""
+    lim = MINE_MODEL.q_min[5]
+    q0 = RIG.park_q("2R").copy()
+    ph = Phase("retreat 2R", ("2R",), (), ())
+
+    def move(*steps, start=-0.047, T=1.5, hz=200):
+        """Joint 6 from `start` past the limit through the offsets `steps`, rest to rest on
+        each leg (a quintic), sampled at `hz` (the planners' timing refuses a start past the
+        limit, so the test times it itself)."""
+        u = np.linspace(0, 1, int(T * hz) + 1)[1:]
+        s, ds = 10 * u**3 - 15 * u**4 + 6 * u**5, (30 * u**2 - 60 * u**3 + 30 * u**4) / T
+        x, v, at = [lim + start], [0.0], lim + start
+        for goal in steps:
+            x += list(at + (lim + start + goal - at) * s)
+            v += list((lim + start + goal - at) * ds)
+            at = lim + start + goal
+        q, qd = np.tile(q0, (len(x), 1)), np.zeros((len(x), 7))
+        q[:, 5], qd[:, 5] = x, v
+        return Trajectory(np.arange(len(x)) / hz, q, qd)
+
+    straight = move(0.25)
+    v = check(CONFIG, "2R", Motion("retreat", straight), ph, straight.q[0])
+    f = check(CONFIG, "2R", Motion("free", straight), ph, straight.q[0])
+    wiggle = move(0.15, 0.10, 0.25)
+    w = check(CONFIG, "2R", Motion("retreat", wiggle), ph, wiggle.q[0])
+    far = move(0.30, start=-0.12)
+    x = check(CONFIG, "2R", Motion("retreat", far), ph, far.q[0])
+    print(f"\n{v}\nfree: {f.get('joint positions')}\nwiggle: "
+          f"{w.get('retreat approaches the limit of joint 6')}\n"
+          f"far: {x.get('retreat starts near the limit of joint 6')}")
+    assert v.passed, v.failed
+    assert abs(v.get("retreat clears the limit of joint 6").value - 0.203) < 1e-3
+    _fails(f, "joint positions")
+    _fails(w, "retreat approaches the limit of joint 6")
+    assert abs(w.get("retreat approaches the limit of joint 6").value - 0.05) < 1e-3
+    _fails(x, "retreat starts near the limit of joint 6")
+
+
 def test_everything_far_away_is_pruned_without_error(good_free):
     """Parked arms and boxes present but far beyond the threshold: every class prunes to
     nothing and still gives a true (large) answer."""
