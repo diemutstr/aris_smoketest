@@ -7,7 +7,7 @@ every serious bug was found because an independent check disagreed with the plan
 
 **In.** `check(config_dir, slot, motion, phase, q_before=None, standing=None, surface_z=None)`: the rig's
 `config/` folder, which arm by its slot on the frame (`"2R"`; the old robot ids mean nothing
-here), one `Motion` (draw, free, lower, lift or touch), the `Phase` it runs in (who moves, who
+here), one `Motion` (draw, free, lower, lift, touch or retreat), the `Phase` it runs in (who moves, who
 stands parked, which walls, all by slot), where the arm is before it starts, and the arms that
 stand still away from their park (`{slot: 7 joints}`). `surface_z` (table frame, metres)
 replaces the drawing surface (paper less the pen's press) as the height every drawing tip, lower
@@ -67,6 +67,7 @@ matches position and velocity at both. Nothing is judged on the samples alone.
 | 8 | lower, lift (setting the pen down, taking it up): `pen depth (lower, lift)`: the pen may reach the drawing surface at one end, where its round end reads up to 1.3 mm below the tip; it may never go 2 mm deeper than the surface. Everything else as for a free motion | 2 mm below the drawing surface: -0.0055 m against the paper today |
 | 8 | lower, lift: `tip on surface (lower, lift)`: a lower ends, a lift starts, with the tip on the drawing surface (a lower that stops on the paper itself fails: the pen would not press) | 0.5 mm |
 | 9 | `hold: clearance at the end`: the last configuration, standing, against everything | at the demanded clearances |
+| 11 | retreat (flown from a pose already inside the arm-to-arm clearance, after an interrupted pen-tip meeting): instead of `clearance parked arms`, one row `retreat approaches <slot>` per other arm (parked, or standing where `standing` says): how far the distance to it ever falls back below the best so far, on samples no more than `step` of capsule travel apart, with the bound between samples. Then `retreat ends clear` (the distance to the nearest other arm at the end, against the arm-to-arm clearance), or `retreat length` when the tip travels at most 0.25 m. Everything else (steel, paper, walls, fences, limits, self, hold) as for a free move | 1 mm; 0.050 m or 0.25 m |
 | 10 | touch (the calibration's probe for the real paper): the motion is split at its bottom (the sample furthest, in joints, from the first); the descent is checked as a lower and the climb as a lift, against the **paper itself** (no press: the touch looks for the paper, it does not draw). `tip on paper`: the descent ends, the climb starts, with the tip on the paper. The extra depth the arm may go on for in reality is not part of the planned path and is not checked. One verdict: each row from the half where it is tighter, its detail saying which | 0.5 mm; pen depth -0.002 m |
 
 The clearances are the **demanded** ones of rig.json (`clearances`), not the planning allowance
@@ -188,7 +189,7 @@ so it follows a calibrated tip.
 
 `motion.py` (the call), `phase.py` (`check_phase_end`), `sweep.py` (clearance along the motion), `scene.py` (obstacles and their
 distances), `model.py` (kinematics), `geometry.py` (distances), `timing.py` (the flown curve and
-the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig reader), `paper.py` (paper height map),
+the driver's readings), `drawing.py` (the pen on the paper), `retreat.py` (the retreat rule), `config.py` (rig reader), `paper.py` (paper height map),
 `verdict.py` (the answer), `fr3.json` (the data copy).
 
 ## Measured (tests/test_check.py)
@@ -207,6 +208,7 @@ the driver's readings), `drawing.py` (the pen on the paper), `config.py` (rig re
 | measured with a press of 3.5 mm (the tests read the press from rig.json): lower (10 mm above the paper to the drawing surface, 3.5 mm below it) and the same reversed as lift | pass; pen 1.4 mm inside its 2 mm below the surface. As a free motion it fails the pen's clearance; lowered 3 mm below the surface it fails pen depth (1.6 mm too deep); a lower that ends on the paper itself (and the lift that starts there) fails `tip on surface` (3.5 mm) |
 | a touch down to the paper and back, press 3.5 mm / the same touch planned to the drawing surface | passes / fails `tip on paper` (3.5 mm) and pen depth |
 | air run: a line drawn 30 mm above the paper and the lower onto it, with `surface_z` = paper + 30 mm / without | pass (tip 0.03 mm and 0.00 mm off) / fail their tip rows (33.5 mm) |
+| retreat of 2L from tools 44 mm apart (2R standing): straight up 60 mm, then 100 mm away / the same with a 3 mm dip toward 2R / the first as a free move | passes (gap 44 to 140 mm) / fails `retreat approaches 2R` (3.5 mm: the dip plus up to half a millimetre of the bound between samples) / fails `clearance parked arms` (44.1 mm) |
 | a line drawn on a 1.5 mm bump of a paper height map (90 touches), with the map / on the plane | passes (tip 0.015 mm off) / fails `tip on paper` by the bump on the line (1.40 mm) |
 | a drawn line on the drawing surface (3.5 mm below the paper), checked with the press of 3.5 mm and with a press of 0 | passes (tip 0.01 mm from the surface) / fails `tip on paper` (3.51 mm); the tool and link clearances are the same in both |
 | the two calibration parts on slot 2R: base only, pen part for another pen, pen part only (base failed), both | each part applied exactly when it should; the notes name what stayed nominal and why; capsule ends against the planners' rig on the same files 5e-16 m |

@@ -1118,6 +1118,71 @@ def test_standing_arm_away_from_park(good_free):
            "well formed")
 
 
+def _ik_along(slot, pts):
+    """Every continuous joint path putting the tip on the table points: one per spin, joint 7
+    and IK branch that is valid all along."""
+    arm, n = RIG.arm(slot), RIG.paper(slot).normal
+    tb = RIG.to_base(slot, Line("x", np.asarray(pts, float), "table")).points
+    M, out = len(tb), []
+    for spin in np.linspace(0, 2 * np.pi, 16, endpoint=False):
+        T = arm.hand_pose(tb, n, np.full(M, spin), np.zeros((M, 2)))
+        for q7 in np.linspace(-2.0, 2.0, 9):
+            Q, valid = arm.ik(T, np.full(M, q7))
+            out += [Q[:, b] for b in range(Q.shape[1]) if valid[:, b].all()
+                    and np.abs(np.diff(Q[:, b], axis=0)).max() < 0.05]
+    return out
+
+
+def _meeting(paths_2L, p_2R):
+    """2L following each of `paths_2L` (table points, one start) and 2R standing at `p_2R`,
+    hands turned to keep everything but each other clear at the start.  -> 2L's joint paths
+    (one per table path, the same spin, joint 7 and branch), 2R's joints."""
+    L = [_ik_along("2L", P) for P in paths_2L]
+    keys = lambda Qs: {tuple(np.round(Q[0], 9)): Q for Q in Qs}
+    common = [k for k in keys(L[0]) if all(k in keys(Ls) for Ls in L[1:])]
+    R = [Q[0] for Q in _ik_along("2R", np.array([p_2R, p_2R]))]
+    starts = np.array(common)
+    best = (-np.inf,)
+    for qr in R[::2]:
+        c = clearance(build_scene(MINE, "2L", (), (), False, standing={"2R": qr}), starts)
+        ok = np.all([c.value[k] > 0.01 for k in ("steel", "links", "tool", "pen", "self")], 0)
+        v = np.where(ok, c.value["parked"], -np.inf)
+        i = int(np.argmax(v))
+        if v[i] > best[0]:
+            best = (v[i], common[i], qr)
+    return [keys(Ls)[best[1]] for Ls in L], best[2]
+
+
+def _polyline(*corners, n=30):
+    return np.vstack([np.linspace(a, b, n, endpoint=False) for a, b in
+                      zip(corners[:-1], corners[1:])] + [np.asarray(corners[-1])[None]])
+
+
+def test_retreat_from_a_meeting():
+    """A retreat starts inside the arm-to-arm clearance (two tools about 40 mm apart, 2R
+    standing): straight up then away passes, judged by the distance to 2R never falling back;
+    the same path with a 3 mm dip toward 2R fails 'retreat approaches 2R'; a free move from that
+    pose still fails the clearance to 2R."""
+    start = np.array([-0.0375, 0.10, 0.06])
+    up, away, dip = start + [0, 0, 0.06], start + [-0.10, 0, 0.06], start + [0.003, 0, 0]
+    (Qg, Qd), qr = _meeting([_polyline(start, up, away), _polyline(start, dip, up, away)],
+                            np.array([0.0375, 0.10, 0.06]))
+    ph, stand = Phase("meet 2L", ("2L",), (), ()), {"2R": qr}
+    good = Motion("retreat", free_motion("2L", Qg).traj)
+    bad = Motion("retreat", free_motion("2L", Qd).traj)
+    v = check(CONFIG, "2L", good, ph, good.q_start, standing=stand)
+    w = check(CONFIG, "2L", bad, ph, bad.q_start, standing=stand)
+    f = check(CONFIG, "2L", Motion("free", good.traj), ph, good.q_start, standing=stand)
+    print(f"\n{v}\ndip: {w.get('retreat approaches 2R')}\nfree: "
+          f"{f.get('clearance parked arms').value * 1e3:.1f} mm")
+    assert v.passed, v.failed
+    assert v.get("retreat approaches 2R").detail.startswith("gap 4")       # ~40 mm apart
+    assert "clearance parked arms" not in [m.name for m in v.measurements]
+    _fails(w, "retreat approaches 2R")
+    assert 0.002 < w.get("retreat approaches 2R").value < 0.004
+    _fails(f, "clearance parked arms")
+
+
 def test_everything_far_away_is_pruned_without_error(good_free):
     """Parked arms and boxes present but far beyond the threshold: every class prunes to
     nothing and still gives a true (large) answer."""

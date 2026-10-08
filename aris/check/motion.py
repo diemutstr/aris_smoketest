@@ -9,6 +9,7 @@ from aris.check import timing
 from aris.check.config import Tolerances, read_rig
 from aris.check.drawing import pen_report
 from aris.check.model import tip
+from aris.check.retreat import retreat_rows
 from aris.check.scene import CLASSES, build_scene, clearance
 from aris.check.sweep import sweep
 from aris.check.verdict import Verdict, measure, verdict
@@ -93,15 +94,19 @@ def _one(rig, slot, motion, phase, q_before, o, surface_title=ON_SURFACE):
     ms += _limits(scene.model, r1, r4, o["rate_tol"])                # item 3
     sw = sweep(scene, traj, o["step"], o["tol"])
     titles = dict(_TITLE, pen=PEN_DEPTH) if setting else _TITLE
-    ms += _clearances(scene, sw, r4, drawing, titles)                # items 3-6, 8
+    # A retreat starts inside the arm-to-arm clearance: it is judged by its direction instead.
+    classes = tuple(c for c in CLASSES if c != "parked") if motion.kind == "retreat" else CLASSES
+    ms += _clearances(scene, sw, r4, drawing, titles, classes)       # items 3-6, 8
+    if motion.kind == "retreat":                                     # item 11
+        ms += retreat_rows(scene, traj, o["step"])
     if setting:                                                      # item 8
         ms.append(_on_surface(scene, rig, traj, motion.kind, o["tip_height_tol"],
                               surface_title))
     if drawing:                                                      # item 7
         ms += _pen(scene, rig, traj, motion.tip_base, r1, o["tip_height_tol"], o["line_tol"],
                    o["back_tol"], o["speed_tol"], o["stop_speed"])
-    ms.append(_hold(scene, traj, titles))                            # item 9
-    worst = min(CLASSES, key=lambda c: sw.per_class[c].value)
+    ms.append(_hold(scene, traj, titles, classes))                   # item 9
+    worst = min(classes, key=lambda c: sw.per_class[c].value)
     return (ms, sw.per_class[worst].value,
             f"{titles[worst]}: {sw.per_class[worst].where} "
             f"({sw.n_samples} samples, {sw.rounds} refinements)")
@@ -158,12 +163,12 @@ def _ends(traj, q_before):
     return ms
 
 
-def _clearances(scene, sw, r4, drawing, titles=_TITLE):
+def _clearances(scene, sw, r4, drawing, titles=_TITLE, classes=CLASSES):
     m = scene.model
     q_margin = min(sw.q_min_margin, float(np.min(np.minimum(r4.q - m.q_min, m.q_max - r4.q))))
     ms = [measure("joint positions", q_margin, 0.0, "min", "rad",
                   "closest approach to a joint limit", tol=POSITION_TOL)]
-    for c in CLASSES:
+    for c in classes:
         if c == "pen" and drawing:
             continue
         res = sw.per_class[c]
@@ -173,10 +178,10 @@ def _clearances(scene, sw, r4, drawing, titles=_TITLE):
     return ms
 
 
-def _hold(scene, traj, titles=_TITLE):
+def _hold(scene, traj, titles=_TITLE, classes=CLASSES):
     """The last configuration, standing still, at the demanded clearances."""
     end = clearance(scene, traj.q[-1:])
-    c = min(CLASSES, key=lambda c: end.value[c][0])
+    c = min(classes, key=lambda c: end.value[c][0])
     return measure("hold: clearance at the end", end.value[c][0], 0.0, "min", "m",
                    f"beyond demanded; {titles[c]}: {end.closest(c, 0)}")
 
@@ -254,7 +259,7 @@ def _malformed(motion, q_before) -> str | None:
         return "NaN or infinity in the trajectory"
     if np.any(np.diff(t) <= 0):
         return "sample times do not increase"
-    if motion.kind not in ("draw", "free", "lower", "lift", "touch"):
+    if motion.kind not in ("draw", "free", "lower", "lift", "touch", "retreat"):
         return f"unknown kind {motion.kind!r}"
     if motion.kind == "touch" and not 0 < _bottom(tr) < len(t) - 1:
         return "a touch goes down and comes back: its bottom must lie between its ends"
