@@ -761,118 +761,173 @@ def test_paper_surface_fallbacks_and_marks(tmp_path):
     assert PAPER.build_surface(cfg).n_points == 0
 
 
-# ================================================================== meetings (a row)
+# ================================================================== meetings
 
 from aris.calib.meetings import solve_meetings  # noqa: E402
 
 ROW = ("2L", "2R")
+Z_AIR = 0.06                       # meetings 6 cm above the paper
 
 
-def pair_truth(rig, slots, seed, yaw=True):
-    """True poses: each slot 1-2 cm off in x and y and (with `yaw`) up to 1 deg in yaw from
-    where the rig has it, the pair then moved onto the nominal mountings (the solver's frame).
-    -> {slot: T}."""
+def world(rig, slots, seed, ref="2L", yaw=True):
+    """True poses: each slot 0.5-1 cm off in x and y and (with `yaw`) 0.1-0.4 deg in yaw from
+    where the rig has it, then the whole layout moved so that `ref` is exactly nominal (the
+    solver's frame; the others then sit up to about 3 cm and 0.8 deg from nominal, inside the
+    pose limits).  -> {slot: T}."""
     rng = np.random.default_rng(seed)
     sign = lambda: float(rng.choice([-1.0, 1.0]))
     truth = {}
     for s in slots:
         T = rig.T_table_base(s)
         if yaw:
-            T[:3, :3] = _rz(sign() * rng.uniform(0.3, 1.0) * np.pi / 180) @ T[:3, :3]
-        T[:2, 3] += [sign() * rng.uniform(0.01, 0.02), sign() * rng.uniform(0.01, 0.02)]
+            T[:3, :3] = _rz(sign() * rng.uniform(0.1, 0.4) * np.pi / 180) @ T[:3, :3]
+        T[:2, 3] += [sign() * rng.uniform(0.005, 0.01), sign() * rng.uniform(0.005, 0.01)]
         truth[s] = T
-    a, t = frame_motion(np.array([truth[s][:2, 3] for s in slots]),
-                        np.array([yaw_between(truth[s][:3, :3], rig.nominal_pose(s)[:3, :3])
-                                  for s in slots]),
-                        np.array([rig.nominal_pose(s)[:2, 3] for s in slots]))
-    for s in slots:
-        truth[s][:3, :3] = _rz(a) @ truth[s][:3, :3]
-        truth[s][:2, 3] = _rz(a)[:2, :2] @ truth[s][:2, 3] + t
-    return truth
+    return regauge(rig, truth, ref)
 
 
-def meet(rig, truth, points, slots=ROW, noise=0.0, seed=0, spins=(0.3, 2.0)):
-    """Both arms guided until their tips touch at each table point (x, y, z): the joints each
-    true arm needs to put its tip there (the rig's tool; spin per arm), plus joint noise."""
-    rng = np.random.default_rng(seed + 7)
-    out = []
-    for P in np.atleast_2d(points):
-        m = {}
-        for s, spin in zip(slots, spins):
-            q = touch_q(rig.arm(s), truth[s], P[:2], spin, P[2])[0]
-            m[s] = q + noise * rng.standard_normal(7)
-        out.append(m)
+def regauge(rig, truth, ref):
+    """Move every true pose together so that `ref` sits exactly at its nominal x, y, yaw."""
+    a = -yaw_between(truth[ref][:3, :3], rig.nominal_pose(ref)[:3, :3])
+    t = rig.nominal_pose(ref)[:2, 3] - _rz(a)[:2, :2] @ truth[ref][:2, 3]
+    out = {}
+    for s, T in truth.items():
+        T = T.copy()
+        T[:3, :3] = _rz(a) @ T[:3, :3]
+        T[:2, 3] = _rz(a)[:2, :2] @ T[:2, 3] + t
+        out[s] = T
     return out
 
 
-def _pose_err(sol, truth):
-    xy = max(np.linalg.norm(sol.slots[s].T_table_base[:2, 3] - truth[s][:2, 3]) for s in truth)
-    yaw = max(abs(yaw_between(sol.slots[s].T_table_base[:3, :3], truth[s][:3, :3]))
-              for s in truth)
+def meet(rig, truth, pairs, noise=0.0, seed=0):
+    """[(slot_a, q_a, slot_b, q_b, spot)]: both arms guided until their tips touch Z_AIR above
+    each spot (true poses, the rig's tool, pen upright; spins 0.3 / 2.0), joint noise added.
+    pairs: [(a, b, spot)] with the spot a mark name (its nominal xy) or an (x, y)."""
+    rng = np.random.default_rng(seed + 7)
+    out = []
+    for a, b, spot in pairs:
+        xy = rig.marks[spot][0] if isinstance(spot, str) else np.asarray(spot, float)
+        q = {s: touch_q(rig.arm(s), truth[s], xy, spin, Z_AIR)[0] + noise
+             * rng.standard_normal(7) for s, spin in ((a, 0.3), (b, 2.0))}
+        out.append((a, q[a], b, q[b], spot if isinstance(spot, str) else "point"))
+    return out
+
+
+def pose_errors(sol, truth):
+    xy = max(np.linalg.norm(f.T_table_base[:2, 3] - truth[s][:2, 3]) for s, f in sol.slots.items())
+    yaw = max(abs(yaw_between(f.T_table_base[:3, :3], truth[s][:3, :3]))
+              for s, f in sol.slots.items())
     return xy, yaw
 
 
-TWO_SPOTS = np.array([[0.0, -0.35, 0.06], [0.0, 0.35, 0.06]])
+SEVEN = [("1L", "1R", "R1b"), ("2L", "2R", "A"), ("3L", "3R", "R3a"), ("1L", "2L", "S12L"),
+         ("1R", "2R", "S12R"), ("2L", "3L", "S23L"), ("2R", "3R", "S23R")]
 
 
-def test_meetings_two_recover_shift_and_yaw(tmp_path, capsys):
+def test_meetings_row_pair(tmp_path):
     rig = Rig.load(fresh("config/two_arms", tmp_path))
-    worst = np.zeros(2)
-    for seed in range(10):
-        truth = pair_truth(rig, ROW, seed)
-        sol = solve_meetings(rig, meet(rig, truth, TWO_SPOTS), ROW)
+    for seed in range(5):
+        truth = world(rig, ROW, seed)
+        sol = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A"), ("2L", "2R", "B")]),
+                             reference="2L")
         assert sol.passed, sol.why
-        xy, yaw = _pose_err(sol, truth)
+        xy, yaw = pose_errors(sol, truth)
         assert xy < 1e-7 and yaw < 1e-7 and sol.max_residual < 1e-7
-        assert sol.slots["2L"].yaw_from == "meetings" and sol.slots["2L"].method == "meetings"
-        noisy = solve_meetings(rig, meet(rig, truth, TWO_SPOTS, noise=0.3e-3, seed=seed), ROW)
-        assert noisy.passed, noisy.why
-        worst = np.maximum(worst, _pose_err(noisy, truth))
-    with capsys.disabled():
-        print(f"\n  meetings, two 0.7 m apart, 0.3 mrad joint noise, 10 seeds: x, y "
-              f"{worst[0] * 1e3:.3f} mm, yaw {worst[1] * 1e3:.3f} mrad")
-    assert worst[0] < 1e-3 and worst[1] < 2e-3
-
-
-def test_meetings_one_gives_shift_only(tmp_path):
-    rig = Rig.load(fresh("config/two_arms", tmp_path))
-    truth = pair_truth(rig, ROW, 3, yaw=False)              # yaws as nominal: one meeting is exact
-    sol = solve_meetings(rig, meet(rig, truth, TWO_SPOTS[:1]), ROW)
+        assert sol.slots["2L"].yaw_from == "reference" and sol.slots["2R"].yaw_from == "meetings"
+        assert np.allclose(sol.slots["2L"].T_table_base[:2, 3], rig.nominal_pose("2L")[:2, 3])
+    # one meeting: the shift only, 2R's yaw held nominal and said so
+    truth = world(rig, ROW, 3, yaw=False)
+    sol = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A")]), reference="2L")
     assert sol.passed and sol.slots["2R"].yaw_from == "nominal"
-    assert "relative yaw kept nominal" in sol.notes[0]
-    xy, yaw = _pose_err(sol, truth)
-    assert xy < 1e-7 and yaw < 1e-7
+    assert "2R's yaw is nominal: it met at one point only; a second meeting (--yaw) " \
+           "determines it" in sol.notes
+    assert pose_errors(sol, truth)[0] < 1e-7
+
+
+def test_meetings_six_arms(tmp_path, capsys):
+    """The 7 pairs once plus row 2 twice determine every pose and yaw; exact without noise.
+    With 0.3 mrad joint noise the errors grow with the distance from the reference slot 2L
+    (measured 2026-10-08, 5 seeds: 1.74 mm / 3.54 mrad; with every row twice 0.94 mm / 1.58
+    mrad); pinned at 1.5 times the measured."""
+    rig = Rig.load(fresh("config", tmp_path))
+    plans = {"7 pairs + row 2 twice": SEVEN + [("2L", "2R", "B")],
+             "7 pairs + every row twice": SEVEN + [("2L", "2R", "B"), ("1L", "1R", "R1a"),
+                                                   ("3L", "3R", "R3b")]}
+    worst = {k: np.zeros(2) for k in plans}
+    for seed in range(5):
+        truth = world(rig, SIX, seed)
+        for label, pairs in plans.items():
+            sol = solve_meetings(rig, meet(rig, truth, pairs), reference="2L")
+            assert sol.passed, sol.why
+            assert all(f.yaw_from in ("meetings", "reference") for f in sol.slots.values())
+            xy, yaw = pose_errors(sol, truth)
+            assert xy < 1e-7 and yaw < 1e-7
+            noisy = solve_meetings(rig, meet(rig, truth, pairs, 0.3e-3, seed), reference="2L")
+            assert noisy.passed, noisy.why
+            worst[label] = np.maximum(worst[label], pose_errors(noisy, truth))
+    with capsys.disabled():
+        for label, (xy, yaw) in worst.items():
+            print(f"\n  meetings, six arms, {label}, 0.3 mrad joints, worst of 5: x, y "
+                  f"{xy * 1e3:.3f} mm, yaw {yaw * 1e3:.3f} mrad")
+    assert worst["7 pairs + row 2 twice"][0] < 2.6e-3
+    assert worst["7 pairs + row 2 twice"][1] < 5.3e-3
+    assert worst["7 pairs + every row twice"][0] < 1.4e-3
+    assert worst["7 pairs + every row twice"][1] < 2.4e-3
+
+
+def test_meetings_seven_pairs_once_leave_one_yaw(tmp_path):
+    rig = Rig.load(fresh("config", tmp_path))
+    truth = world(rig, SIX, 1)
+    sol = solve_meetings(rig, meet(rig, truth, SEVEN), reference="2L")
+    assert sol.passed, sol.why
+    held = [s for s, f in sol.slots.items() if f.yaw_from == "nominal"]
+    assert len(held) == 1
+    assert any(n.startswith(f"{held[0]}'s yaw is nominal") for n in sol.notes)
+    # in a world where that slot's yaw is in fact nominal, everything else is recovered
+    T = truth[held[0]]
+    T[:3, :3] = _rz(-yaw_between(T[:3, :3], rig.nominal_pose(held[0])[:3, :3])) @ T[:3, :3]
+    sol = solve_meetings(rig, meet(rig, truth, SEVEN), reference="2L")
+    xy, yaw = pose_errors(sol, truth)
+    assert sol.passed and xy < 1e-7 and yaw < 1e-7
 
 
 def test_meetings_refusals_and_server_call(tmp_path):
     from aris.server.meetings import calibrate_from_meetings
-    rig = Rig.load(fresh("config/two_arms", tmp_path))
-    truth = pair_truth(rig, ROW, 5)
-    near = np.array([[0.0, -0.06, 0.06], [0.0, 0.06, 0.06]])
-    r = solve_meetings(rig, meet(rig, truth, near), ROW)
-    assert not r.passed and r.why.startswith("the meetings are 0.12 m apart; yaw needs them far")
-    assert r.why.endswith("use the second spot")
-    m = meet(rig, truth, TWO_SPOTS)
-    m[1]["2R"] = meet(rig, truth, TWO_SPOTS[1] + [0.0, 0.005, 0.0])[0]["2R"]   # not touching
-    r = solve_meetings(rig, m, ROW)
-    assert not r.passed and "do not fit one correction" in r.why
+    rig = Rig.load(fresh("config", tmp_path / "six"))
+    truth = world(rig, SIX, 2)
+    r = solve_meetings(rig, meet(rig, truth, [("1L", "1R", "R1a"), ("1L", "1R", "R1b"),
+                                              ("2L", "2R", "A"), ("2L", "2R", "B")]),
+                       reference="2L")
+    assert not r.passed and r.why == "1L/1R are not linked to 2L by any meeting"
+    r = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A")]), slots=("2L", "2R", "3L"))
+    assert not r.passed and r.why == "3L met no other arm"
+    m = meet(rig, truth, [("2L", "2R", "A"), ("2L", "2R", "B")])
+    m[1] = m[1][:3] + (meet(rig, truth, [("2L", "2R", (0.0, 0.405))])[0][3], "B")
+    r = solve_meetings(rig, m, reference="2L")                 # 2R 5 mm off at B
+    assert not r.passed and "do not fit one layout" in r.why and "wrong slot" not in r.why
     far = {s: T.copy() for s, T in truth.items()}
-    far["2R"][0, 3] += 0.08                                  # 2R 80 mm off: about 40 mm each
-    r = solve_meetings(rig, meet(rig, far, TWO_SPOTS), ROW)
-    assert not r.passed and "wrong slot or wrong robot" in r.why
-    assert "no meetings" in solve_meetings(rig, [], ROW).why
-    assert "exactly 2L and 2R" in solve_meetings(rig, [{"2L": np.zeros(7)}], ROW).why
-    assert "not 7 numbers" in solve_meetings(rig, [{"2L": np.zeros(6), "2R": np.zeros(7)}],
-                                             ROW).why
-    assert "no arm in slot" in solve_meetings(rig, m, ("2L", "3L")).why
-    # the server's one call writes both base parts, method "meetings", no pen part, no marks
-    sol, paths = calibrate_from_meetings(tmp_path, ROW, meet(rig, truth, TWO_SPOTS),
+    far["2R"][0, 3] += 0.06
+    r = solve_meetings(rig, meet(rig, far, [("2L", "2R", "A"), ("2L", "2R", "B")]),
+                       reference="2L")
+    assert not r.passed and r.why.startswith("refused: 2R 0.0") and "wrong slot" in r.why
+    assert solve_meetings(rig, []).why == "no meetings"
+    assert "must be (slot_a" in solve_meetings(rig, [("2L", np.zeros(7))]).why
+    assert "not 7 numbers" in solve_meetings(rig, [("2L", np.zeros(6), "2R", np.zeros(7),
+                                                    "A")]).why
+    assert "cannot meet itself" in solve_meetings(rig, [("2L", np.zeros(7), "2L", np.zeros(7),
+                                                         "A")]).why
+    # the server's one call writes every solved slot, method "meetings", no pen, no marks
+    two = Rig.load(fresh("config/two_arms", tmp_path / "two"))
+    truth = world(two, ROW, 4)
+    sol, paths = calibrate_from_meetings(tmp_path / "two",
+                                         meet(two, truth, [("2L", "2R", "A"), ("2L", "2R", "B")]),
                                          date="2026-10-08")
     assert sol.passed and len(paths) == 2
-    loaded = Rig.load(tmp_path)
+    loaded = Rig.load(tmp_path / "two")
     for s in ROW:
         assert loaded.calibration_status(s)["base"].startswith("applied")
         assert np.allclose(loaded.T_table_base(s), truth[s], atol=1e-7)
-        b = read(tmp_path, s)["base"]
-        assert b["method"] == "meetings" and b["yaw_from"] == "meetings"
-    assert not (tmp_path / "calibration" / "marks.json").exists()
+        b = read(tmp_path / "two", s)["base"]
+        assert b["method"] == "meetings"
+    assert read(tmp_path / "two", "2R")["base"]["yaw_from"] == "meetings"
+    assert not (tmp_path / "two" / "calibration" / "marks.json").exists()

@@ -242,6 +242,7 @@ class Rig:
     marks: dict                        # name -> (nominal xy (2,), the two slots sharing it)
     mark_groups: dict                  # group name -> slots (`aris mark --group`)
     mark_files: dict                   # name -> its calibration/marks.json entry, when there
+    reference_slot: Slot | None = None # the meetings calibration holds this slot at nominal
 
     # ------------------------------------------------------------------ loading
 
@@ -318,6 +319,7 @@ class Rig:
             paper_z=float(cfg["table"]["paper_surface_z_m"]),
             **dict(zip(("marks", "mark_groups", "mark_files"),
                        _marks(cfg, config_dir, tuple(a["slot"] for a in cfg["slots"]["list"])))),
+            reference_slot=cfg.get("marks", {}).get("reference_slot"),
         )
 
     # ------------------------------------------------------------------ arms and frames

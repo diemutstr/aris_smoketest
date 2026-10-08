@@ -173,47 +173,65 @@ it constrains nothing.
 reference point. The protocol runs a touch-off after the mark job, which sets the pen length
 against the paper again. The marks base part keeps the plane job's numbers under `plane`.
 
-## The meetings (base x, y, yaw of a row; 2026-10-08)
+## The meetings (base x, y, yaw of every arm; 2026-10-08)
 
 The site's FR3s can be hand-guided only in Desk's programming mode, which the person switches
-herself. The row is calibrated by making the two arms' pen tips touch in the air.
-- Both arms are guided until their tips meet, once or more. The software reads both arms'
-  joints at standstill.
-- `aris.server.meetings.calibrate_from_meetings(config_dir, (L, R), [{L: q_L, R: q_R}, ...])`
-  solves and, when it passes, writes both base parts with `method: "meetings"`, through
-  `files.write_mark_solution`.
+herself. Pairs of arms that share a spot are guided until their pen tips touch in the air, and
+the software reads both arms' joints at standstill. The pairs are the 7 that rig.json's marks
+define: the three row pairs, at one or two of their spots, and the four column pairs at the
+seam spots.
+- `aris.server.meetings.calibrate_from_meetings(config_dir, meetings)` takes
+  `meetings = [(slot_a, q_a, slot_b, q_b, spot), ...]`.
+- When it passes, it writes every solved slot's base part through `files.write_mark_solution`,
+  with method "meetings" and `yaw_from` per slot.
 - No pen part and no `marks.json` are written. The crosses job stays as a visual check only.
 
 **The model** (`aris/calib/meetings.py`, `solve_meetings`).
 - Each tip comes from forward kinematics with the slot's tool as the rig has it: the
-  touch-off's tip when the pen part applies, else the pen's nominal one.
-- A meeting is one physical point: T_L p_L = T_R p_R. Horizontally,
-  Rz(ψ_R) e_R − Rz(ψ_L) e_L + (t̂_R − t̂_L) + (δ_R − δ_L) = 0, with e = (R̂ p)_xy.
-- Moving or turning both arms together changes no meeting. The frame is therefore the mark
-  job's convention, built into the unknowns: the pair's mean position and mean yaw sit on the
-  nominal mountings, with ψ = c ∓ u and δ = (sum ∓ D)/2.
-- **One meeting** gives the relative shift D only. The relative yaw is kept nominal, marked
-  `yaw_from: "nominal"` in the result and in the file.
-- **Two or more meetings, at least 0.3 m apart** give u and D by least squares: a 1-D
-  Gauss-Newton on u, with D linear in it, and no small-angle approximation. The leftover is the
-  residual.
-- Heights are not solved; they come from the plane job and the pens. How far the two tips
-  disagree in height is reported as a note.
+  touch-off's tip when the pen part applies, else the nominal one.
+- A meeting is one physical point: T_a p_a = T_b p_b. Horizontally,
+  Rz(ψ_a) e_a + t̂_a + δ_a − Rz(ψ_b) e_b − t̂_b − δ_b = 0 (2 equations), with e = (R̂ p)_xy.
+- The unknowns are x, y (δ) and yaw (ψ) for every slot that appears. They are solved by
+  Gauss-Newton with exact rotations (scipy least squares, analytic Jacobian).
+- **The frame.** Moving or turning everything together changes no meeting.
+  - A reference slot is held exactly at its nominal pose: rig.json `marks.reference_slot`,
+    "2L".
+  - If it is not among the solved slots, the first solved slot in rig order is held, and the
+    result says so.
+  - For a row pair this gives the same poses as the earlier pair solve, up to that choice of
+    frame.
+- **Which yaws are solved** (`yaw_from` per slot: "reference", "meetings" or "nominal"):
+  - A slot whose meetings are less than 0.3 m apart keeps its nominal yaw: "1R's yaw is
+    nominal: it met at one point only; a second meeting (--yaw) determines it".
+  - While the Jacobian is short of full rank, the yaw with the largest share in the
+    undetermined direction is held nominal and named. Example: the 7 pairs met once each give
+    14 equations for 15 unknowns, so one yaw is held.
+- Heights are not solved. How far the two tips disagree in height is reported as a note.
 
 | refusal | limit | message |
 |---|---|---|
-| meetings too close (two or more) | 0.3 m | "the meetings are 0.12 m apart; yaw needs them far apart … — use the second spot" |
-| residual (two or more) | 2 mm | the tips were not touching, or an arm moved while being read |
-| pose after the fit | 30 mm, 3 deg from nominal | wrong slot or wrong robot |
-| input | at least one meeting, both slots' 7 joints each, two different mounted slots | — |
+| a slot that met no one (when `slots` is given) | — | "3L met no other arm" |
+| groups not linked | — | "1L/1R are not linked to 2L by any meeting" |
+| residual | 2 mm | names the meeting; the tips were not touching, or an arm moved |
+| pose | 30 mm, 3 deg from nominal | wrong slot or wrong robot |
+| a shift left free | — | the meetings do not hold every slot in place |
+| input | (slot_a, q_a, slot_b, q_b, spot), 7 joints each, two different mounted slots | — |
 
-**Measured.**
-- Synthetic truth: each arm 1–2 cm off in x and y and up to 1 deg in yaw. The meetings are
-  0.7 m apart, 6 cm above the paper.
-- Without noise, two meetings recover both poses to 1e-7 m and 1e-7 rad. One meeting does the
-  same when the yaws are nominal.
-- With 0.3 mrad of joint noise, over 10 seeds, the worst errors are 0.19 mm in x, y and
-  0.71 mrad in yaw.
+**Measured** (synthetic truth: every slot 0.5–1 cm and 0.1–0.4 deg off, then the layout moved
+so that 2L is exactly nominal; meetings 6 cm above each spot; worst of 5 seeds):
+
+| meetings | no noise | 0.3 mrad joint noise: x, y | yaw | seam |
+|---|---|---|---|---|
+| row pair 2L/2R at A and B | exact (1e-7) | — | — | — |
+| 7 pairs + row 2 twice | exact, every yaw solved | 1.74 mm | 3.54 mrad | 0.73 mm |
+| 7 pairs + every row twice | exact | 0.94 mm | 1.58 mrad | 0.79 mm |
+| 7 pairs once | one yaw held nominal and named; the rest exact when that yaw is nominal | — | — | — |
+
+- The pose errors grow with the distance from the reference 2L, through the short baselines
+  (0.36 m) of the end rows' meetings.
+- What a drawing shows is the seam between two neighbours. That is the gap between where both
+  put the pen at their shared spot, and it stays below 0.8 mm.
+- The brief's 0.5 mm / 1 mrad for every arm is not reached at 0.3 mrad of joint noise.
 
 ## The paper surface (the height map)
 
@@ -362,5 +380,5 @@ after (b) with its marks known):
 0.05 mm of touch noise: worst error inside the hull 0.25 mm, RMS 0.05 mm, fit residual 0.01 mm.
 Beyond the hull plus 10 cm the surface is exactly flat.
 
-Tests: `tests/test_calib.py`, 32 tests. 31 quick ones in about 5 s; the noise table is
+Tests: `tests/test_calib.py`, 33 tests. 32 quick ones in about 5 s; the noise table is
 `slow` and takes about 10 s.

@@ -1,7 +1,7 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "84c1defa152186769b93b289",
+  "source_digest": "9e7df4c5cae714323bf7b8dc",
   "mounted": [
    "2L",
    "2R"
@@ -36,6 +36,8 @@
  "marks": {
   "source": "the calibration spots of DESIGN section 6, 'Steps 2 and 3 as built' (decided 2026-10-05; docs/figures/marks_six_slots.png): ten spots, each shared by exactly two neighbouring slots; the row pairs share two spots on the centre line, the column pairs one seam spot each at (+-0.30, +-0.605) (moved out from +-0.20 on 2026-10-05: the end rows' pose error shrinks with the seam baseline, and both sharers keep 0.22-0.36 of the pen orientations there). Nominal positions, table frame; config/calibration/marks.json holds the solved ones.",
   "frame": "anchored on the arms' nominal mountings: a rigid fit (shift and turn) of the solved slot positions onto their nominal ones fixes the three free numbers; the marks are solved wherever they are (drawn by hand, 2-5 cm from their nominal spots). Decided 2026-10-05",
+  "reference_slot": "2L",
+  "reference_slot_note": "the meetings calibration holds this slot exactly at its nominal pose (the gauge); decided 2026-10-08",
   "list": [
    {
     "name": "A",
