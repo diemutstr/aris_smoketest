@@ -118,15 +118,16 @@ def marks_base_part(r: SlotFit, date: str | None = None, before: dict | None = N
         plane = before if before.get("method") == "plane" else before.get("plane")
     return {
         "passed": True, "date": date or datetime.date.today().isoformat(),
-        "method": "marks", "why": "",
+        "method": r.method, "why": "",
         "T_table_base": _list(r.T_table_base, 12),
         "T_table_base_before": _list(r.T_before, 12),
         "convention": MARKS_CONVENTION,
         "measured_with": {"pen": r.pen, "tip_hand_m": _list(r.tip_hand)},
         "shift_from_nominal_mm": _mm(r.shift), "yaw_from_nominal_mrad": round(r.yaw * 1e3, 5),
         "residuals": {"n_points": int(r.n_touches), "rms_mm": _mm(r.rms)},
-        "pivot": {"mark": r.pivot_mark, "spread_deg": _deg(r.pivot.spread),
-                  "residuals_mm": _list(r.pivot.residuals * 1e3, 4)},
+        "pivot": None if r.pivot is None else {
+            "mark": r.pivot_mark, "spread_deg": _deg(r.pivot.spread),
+            "residuals_mm": _list(r.pivot.residuals * 1e3, 4)},
         "plane": plane,
     }
 
@@ -162,16 +163,18 @@ def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> 
 
 def write_mark_solution(rig, solution: MarkSolution, config_dir,
                         date: str | None = None) -> list[Path]:
-    """The mark job's one writer: every slot's base part (method "marks"), every slot's pen
-    part (the pivot's tip, for the pen that is in) and marks.json."""
+    """The mark job's one writer: every slot's base part (method "marks" or "offsets"), every
+    slot's pen part when a pivot measured its tip, and marks.json when marks were solved."""
     if not solution.passed:
         raise ValueError(f"a refused mark solution is not written: {solution.why}")
     out = []
     for slot, f in solution.slots.items():
         out.append(write_base(f, config_dir, date))
-        out.append(write_pen(pen_from_pivot(rig, slot, f.pivot, f.pivot_mark, f.pivot_q),
-                             config_dir, date))
-    out.append(write_marks(solution, config_dir, date))
+        if f.pivot is not None:
+            out.append(write_pen(pen_from_pivot(rig, slot, f.pivot, f.pivot_mark, f.pivot_q),
+                                 config_dir, date))
+    if solution.marks:
+        out.append(write_marks(solution, config_dir, date))
     return out
 
 

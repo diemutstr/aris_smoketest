@@ -173,6 +173,45 @@ it constrains nothing.
 reference point. The protocol runs a touch-off after the mark job, which sets the pen length
 against the paper again. The marks base part keeps the plane job's numbers under `plane`.
 
+## The drawn offsets (base x, y, yaw of a row; 2026-10-08)
+
+The site's FR3s cannot be hand-guided outside Desk's programming mode, so a row is calibrated
+by drawing instead.
+- Both arms of the row draw a small mark at each of their two shared nominal spots: the L arm a
+  cross, the R arm a circle. Each aims with the pose the rig has now.
+- A person measures with a ruler, per spot, R's mark minus L's mark in table axes (x across,
+  y along), in mm.
+- `aris.server.offsets.calibrate_from_offsets(config_dir, (L, R), {spot: (dx, dy) mm})` solves
+  and, when it passes, writes both base parts with `method: "offsets"`, through
+  `files.write_mark_solution`. No pen part is written and no `marks.json` is written: the spots
+  are the nominal ones.
+
+**The model** (`aris/calib/offsets.py`, `solve_offsets`).
+- An arm that aims at S with its believed pose lands at Rz(ψ)(S − t̂) + t̂ + δ, where (δ, ψ) is
+  how far the true pose is from the believed one.
+- The offsets see only how the two arms differ. Moving both together changes no mark against
+  the other; turning both together only turns the small offsets (second order).
+- The frame is therefore the mark job's convention. The pair's mean position and mean yaw are
+  the nominal ones (`rig.nominal_pose`), built into the unknowns: ψ_L, ψ_R = c ∓ u and
+  δ_L, δ_R = (sum ∓ D)/2.
+- That leaves 3 unknowns (u, D) for 4 equations. D is the mean over the spots for a given u,
+  and u is found by a 1-D Gauss-Newton started from a rigid fit. The model is exact: no
+  small-angle approximation.
+- The leftover is the residual: the two offsets disagree about the spots' distance.
+
+| refusal | limit | catches |
+|---|---|---|
+| offset size | 60 mm | "larger than any mounting error; check which mark is whose and the directions" |
+| residual | 2 mm | a misread ruler, or a mark measured from the wrong spot |
+| pose after the fit | 30 mm, 3 deg from nominal | wrong slot or wrong robot |
+| input | two different mounted slots, every spot measured, two spots apart | — |
+
+**Measured.**
+- Synthetic truth: each arm 1–2 cm off in x and y and up to 1 deg in yaw.
+- Exact offsets are recovered to 1e-7 m and 1e-7 rad.
+- With 0.5 mm of ruler noise on each component, over 20 seeds, the worst errors are 0.34 mm in
+  x, y and 0.84 mrad in yaw. The yaw rests on two spots 0.8 m apart, so it is the weak part.
+
 ## The paper surface (the height map)
 
 On site, a fixed 2.1 mm press gave no ink in places and reflex trips in others, because the
@@ -320,5 +359,5 @@ after (b) with its marks known):
 0.05 mm of touch noise: worst error inside the hull 0.25 mm, RMS 0.05 mm, fit residual 0.01 mm.
 Beyond the hull plus 10 cm the surface is exactly flat.
 
-Tests: `tests/test_calib.py`, 29 tests. 28 quick ones in about 5 s; the noise table is
+Tests: `tests/test_calib.py`, 32 tests. 31 quick ones in about 5 s; the noise table is
 `slow` and takes about 10 s.

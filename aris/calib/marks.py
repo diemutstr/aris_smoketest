@@ -55,15 +55,16 @@ class SlotFit:
     slot: Slot
     T_table_base: np.ndarray           # (4,4) solved x, y, yaw; z, roll, pitch as before
     T_before: np.ndarray               # (4,4) the pose the rig had
-    tip_hand: np.ndarray               # (3,) from the pivot
-    pivot: Pivot
+    tip_hand: np.ndarray               # (3,) from the pivot (offsets: the tip the rig has)
+    pivot: Pivot | None                # None for the drawn-offsets method (no pivot, no pen part)
     pivot_mark: str
     shift: float                       # m, solved axis from the nominal one (rig.nominal_pose)
     yaw: float                         # rad, turn about the vertical against the nominal pose
     rms: float                         # m, this slot's touches
     n_touches: int
     pen: str                           # the pen that is in (the pivot measured its tip)
-    pivot_q: np.ndarray                # (7,) the pivot's first touch, for the pen part
+    pivot_q: np.ndarray | None         # (7,) the pivot's first touch, for the pen part
+    method: str = "marks"              # "marks" (hand-guided pivots) or "offsets" (drawn, ruler)
 
 
 @dataclass(frozen=True)

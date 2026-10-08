@@ -3,11 +3,12 @@ docs/modules/calib.md."""
 from aris.calib.files import (base_tips, listing, read, write_base, write_mark_solution,
                               write_marks, write_pen)
 from aris.calib.marks import MarkSolution, Pivot, pivot, solve_marks, touch_point
+from aris.calib.offsets import solve_offsets
 from aris.calib.paper import Surface, build_surface, surface, write_paper
 from aris.calib.pen import PenCalibration, touchoff
 from aris.calib.plane import PlaneCalibration, calibrate_plane, calibration_from_events, fit_plane
 
 __all__ = ["MarkSolution", "PenCalibration", "Pivot", "PlaneCalibration", "Surface", "base_tips",
            "build_surface", "calibrate_plane", "calibration_from_events", "fit_plane", "listing",
-           "pivot", "read", "solve_marks", "surface", "touch_point", "touchoff", "write_base",
-           "write_mark_solution", "write_marks", "write_paper", "write_pen"]
+           "pivot", "read", "solve_marks", "solve_offsets", "surface", "touch_point", "touchoff",
+           "write_base", "write_mark_solution", "write_marks", "write_paper", "write_pen"]
