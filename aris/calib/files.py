@@ -118,7 +118,7 @@ def marks_base_part(r: SlotFit, date: str | None = None, before: dict | None = N
         plane = before if before.get("method") == "plane" else before.get("plane")
     return {
         "passed": True, "date": date or datetime.date.today().isoformat(),
-        "method": r.method, "why": "",
+        "method": r.method, "why": "", "yaw_from": r.yaw_from,
         "T_table_base": _list(r.T_table_base, 12),
         "T_table_base_before": _list(r.T_before, 12),
         "convention": MARKS_CONVENTION,
@@ -163,7 +163,7 @@ def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> 
 
 def write_mark_solution(rig, solution: MarkSolution, config_dir,
                         date: str | None = None) -> list[Path]:
-    """The mark job's one writer: every slot's base part (method "marks" or "offsets"), every
+    """The mark job's one writer: every slot's base part (method "marks" or "meetings"), every
     slot's pen part when a pivot measured its tip, and marks.json when marks were solved."""
     if not solution.passed:
         raise ValueError(f"a refused mark solution is not written: {solution.why}")
