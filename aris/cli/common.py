@@ -79,17 +79,19 @@ def report_lines(rep: dict) -> list[str]:
         for m in rep.get("meetings", []):
             out.append(f"meeting      {'/'.join(m['pair'])} at {m['spot']}: "
                        + ("registered" if len(m.get("q", {})) == 2 else "NOT registered"))
-        for s in rep.get("solved", []):
-            pair = "/".join(s["pair"])
-            if not s.get("passed"):
-                out.append(f"solve        {pair}: not solved: {s.get('why')}")
-                continue
+        s = rep.get("solved") or {}
+        if s and not s.get("passed"):
+            out.append(f"solve        not solved: {s.get('why')}")
+        elif s:
             for slot, e in (s.get("slots") or {}).items():
-                vals = ", ".join(f"{k} {x}" for k, x in e.items()) if isinstance(e, dict) else e
-                out.append(f"slot {slot:<7} {vals}" + ("; yaw nominal (one meeting)"
-                                                       if s.get("yaw") == "nominal" else ""))
+                out.append(f"slot {slot:<7} x {e.get('x_mm')} mm, y {e.get('y_mm')} mm, yaw "
+                           f"{e.get('yaw_mrad')} mrad (moved {e.get('moved_mm')} mm, turned "
+                           f"{e.get('turned_mrad')} mrad)"
+                           + ("; yaw nominal" if e.get("yaw") == "nominal" else ""))
             if s.get("residual_mm") is not None:
-                out.append(f"residual     {pair}: {s['residual_mm']} mm")
+                out.append(f"residual     {s['residual_mm']} mm")
+            if s.get("reference"):
+                out.append(f"reference    {s['reference']}")
     if rep.get("kind") == "touchoff":
         ref = rep.get("reference", {})
         out.append(f"slot         {rep.get('arm')}: touch at {ref.get('xy_table_m')} "

@@ -92,7 +92,7 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 | `POST /arms/{slot}/recover` | — | simulated: `{recovered, why}`; robot: `{queued: command}` |
 | `POST /calibrate/{slot}` | — | `{id, state}` of the plane job; 409 refused |
 | `POST /touchoff/{slot}` | — | `{id, state}` of the touch-off job; 409 refused |
-| `POST /mark` | query `slots=2L,2R` and/or `group=row2`, `yaw=true` (two meetings) | `{id, state}` of the mark job (each row's pen tips brought together; the driver's `instruction` rows on its events); its report: `{pairs, meetings: [{pair, spot, phase, gap_m, hovers, q: {L, R}}], solved: [{pair, passed, why, slots: {slot: {x_mm, y_mm, yaw_mrad, moved_mm, turned_mrad}}, residual_mm, worst_mm, yaw: "solved"\|"nominal", notes, written}]}`; 409 refused |
+| `POST /mark` | query `slots=2L,2R` and/or `group=row2\|rows12\|rows23\|all`, `yaw=true` (a row pair's second spot too) | `{id, state}` of the mark job (one meeting per pair of neighbours, the pen tips brought together; the driver's `instruction` rows on its events); its report: `{pairs: [{slots, spots, kind}], meetings: [{pair, spot, phase, gap_m, hovers, q: {a, b}}], solved: {passed, why, slots: {slot: {x_mm, y_mm, yaw_mrad, moved_mm, turned_mrad, yaw: "reference"\|"meetings"\|"nominal"}}, residual_mm, worst_mm, reference, notes, frame, written}}`; 409 refused |
 | `POST /crosses` | query `slots=2L,2R` and/or `group=row2` | `{id, state}` of the crosses job, the check after `mark` (each row's L slot draws a cross, R slot a circle, at their shared spots); its report: `{spots: [{spot, xy_m, row, cross, circle}], shapes, instruction}`; 409 refused |
 | `POST /grip/{slot}` | JSON `{verb: "home"\|"open"\|"close", width_m?, speed_m_per_s?, force_n?, epsilon_inner_m?, epsilon_outer_m?}` | `{id, state}` of the grip job; its report: `{slot, verb, params, width_before_m, width_after_m, grasped, nothing_to_do}`; 409 refused (no reading, a job running, bad verb, unknown slot) |
 | `POST /drawings` | multipart: `file` (.json or .svg), `width` (m, needed for .svg: else 400 "an SVG needs its width on the table, in metres"), `at` ("x,y" m, .svg; default the area's centre) | `{id, name, kind, stored_at, lines, points, bbox_m, width_m, at_m}`; stored under `out/drawings/`; 400 refused |
@@ -258,16 +258,18 @@ Where each row's two arms hang against each other (x, y, and with `--yaw` the tu
 bringing their pen tips together in the air; no ruler, no marks to hit (`mark.py`). The
 hand-guided mark job lives at b26aecd.
 
-`aris mark [slots | --group row2|rows12|rows23] [--yaw]` (`POST /mark?slots=&group=&yaw=`):
-for every row pair (L, R) that shares spots, in rig order, at its first shared spot (with
-`--yaw` also at its second):
+`aris mark [slots | --group row2|rows12|rows23|all] [--yaw]` (`POST /mark?slots=&group=&yaw=`):
+for every two neighbours of the group that share spots (rig.json `marks` `shared_by`: a row's
+L and R, or two slots along the table such as 1L-2L), pair by pair in rig order, ONE meeting at
+their first shared spot (with `--yaw` also at a row pair's second):
 
 1. every arm parked first (the park job's steps);
 2. "meet A 2L": 2L flies (free motion, checked) from its park to a hover over the spot, pen
-   upright, tip 30 mm above the paper and half a gap toward −x; "meet A 2R": 2R the same
-   toward +x, 2L standing at its hover. The gap is the first of 100, 120, 160, 200, 240,
-   300 mm that both arms reach inside the arm-to-arm clearance (on the two-arm rig 100 mm at
-   A, 240 mm at B); 60 mm is refused everywhere;
+   upright, tip 30 mm above the paper and half a gap back along the pair (from the second
+   slot's axis toward the first's); "meet A 2R": 2R the same the other way, 2L standing at
+   its hover. The gap is the first of 100, 120, 160, 200, 240, 300, 400, 500 mm that both arms
+   reach inside the arm-to-arm clearance (two-arm rig: 100 at A, 240 at B; six-arm rig: 200 at
+   A, R1b, S12L, 300 at B, S12R, 400 at R1a); 60 mm is refused everywhere;
 3. "meet A": both arms active, each a `guide`. At the arms the person switches both to Desk's
    programming mode, brings the two pen tips together in the air, lets go, and switches both
    back to execution mode with FCI on. Each driver answers "check" with the joints at
@@ -276,12 +278,23 @@ for every row pair (L, R) that shares spots, in rig order, at its first shared s
    shown in the GUI's status line as they come;
 4. "park 2L after A", "park 2R after A": home, one arm at a time.
 
-At the end, per pair, `aris.server.meetings.calibrate_from_meetings(config_dir, (L, R),
-[{L: q, R: q}, ...])` (the calib's `solve_meetings`; written with `write_mark_solution` when it
-passes) and the rig reloads. The report lists each meeting (spot, gap, hovers, the two
-registered joints) and per pair the solved x, y, yaw per slot (moved and turned against the
-job's start), the residual, and "yaw nominal" with one meeting. Refused: slots or a group the
-rig does not have, no row pair sharing a spot, `--yaw` with only one shared spot.
+At the end, every registered meeting at once to the graph solve,
+`aris.server.meetings.calibrate_from_meetings(config_dir, [(slot_a, q_a, slot_b, q_b, spot),
+...])` (written when it passes), and the rig reloads. The report lists each meeting (pair,
+spot, gap, hovers, the two registered joints) and the solve: per slot x, y, yaw (moved and
+turned against the job's start) and how its yaw was found ("reference": the slot held at its
+nominal pose; "meetings"; "nominal": not measured), the residual, the reference slot.
+Refused: slots or a group the rig does not have, no two neighbours sharing a spot, `--yaw`
+with a row pair sharing only one spot.
+
+**Retreat** (`retreat.py`). Every job that plans from where the arms stand (park, and through
+it mark and crosses; calibrate and touch-off) first moves apart any arm standing closer to
+another than the arm-to-arm clearance (an interrupted meeting): a phase "retreat <slot>", one
+arm at a time in rig order, one `retreat` motion: the tip 30 mm straight up, then horizontally
+straight away from the nearest other arm's axis until the bodies are the clearance + 20 mm
+apart (IK along the straight tip path, the hand kept, timed at the free speed), checked as a
+retreat (the distance to every other arm never decreases). A drawing is refused instead
+(`too_close`: "run `aris park` first").
 
 `aris crosses [slots | --group row2]` (`POST /crosses`, `crosses.py`) is the visual check
 afterwards: every arm parked, then one arm at a time each row's L slot draws a CROSS (two
@@ -419,7 +432,10 @@ and the GUI route; robot names from the site table; the crosses job on the two-a
 draws both strokes of each cross, 2R each circle, every queued motion checked, both arms home);
 the mark job on the two-arm rig with every base 3 mm / 2 mrad off: two meetings, the true tips
 met, the solved seam within 1.5 mm and 3 mrad of the true one, both arms home; one meeting:
-yaw kept nominal; a single slot refused.
+yaw kept nominal; a single slot refused; `--group rows12` on the six-arm rig: four meetings
+(two row pairs, two column pairs) in rig order, one graph solve, four slots solved; park from
+two tips 20 mm apart: "retreat 2L" (one checked retreat motion), then both parked, and a
+drawing refused as too close before.
 
 This round adds: slots everywhere (queue names, rows, endpoints); the fit about the area's
 centre; the header's pen and note; `--rest-of` (a job stopped midway, its leftovers

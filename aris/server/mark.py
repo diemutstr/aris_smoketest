@@ -33,10 +33,10 @@ from aris.server.steps import Scene, Step, steps_work
 from aris.types import Motion, Piece, Refusal, Trajectory
 
 MEET_HEIGHT = 0.030      # m above the paper: where the tips are brought together
-# m: each tip this far from the spot along x at the hover, the first that both arms reach
-# inside the arm-to-arm clearance (on the two-arm rig: 50 mm at A, 120 mm at B; 30 mm, tips
-# 60 mm apart, is refused everywhere)
-HALF_GAPS = (0.050, 0.060, 0.080, 0.100, 0.120, 0.150)
+# m: each tip this far from the spot along the pair at the hover, the first that both arms
+# reach inside the arm-to-arm clearance (half gaps: two-arm rig 50 mm at A, 120 at B; six-arm rig 100
+# at A, R1b, S12L, 150 at B, S12R, 200 at R1a; 30 mm, tips 60 mm apart, is refused everywhere)
+HALF_GAPS = (0.050, 0.060, 0.080, 0.100, 0.120, 0.150, 0.200, 0.250)
 SPINS = np.deg2rad(np.arange(0.0, 360.0, 15.0))
 Q7_TRIES = np.linspace(-1.2, 1.2, 9)
 
@@ -45,18 +45,28 @@ TO_DO = ("at the two arms: switch BOTH to programming mode in Desk;",
          "switch BOTH back to execution mode with FCI on: the arms then return and park.")
 
 
-def row_pairs(rig, slots) -> list[dict]:
-    """[{slots: (L, R), spots: [spot, ...]}] for every row whose L and R slot are both in
-    `slots` and share spots, in rig order; spots in rig.json order."""
+def neighbour_pairs(rig, slots) -> list[dict]:
+    """[{slots: (a, b), spots: [spot, ...], kind: "row" | "column"}] for every two slots of
+    `slots` that share spots (rig.json `marks` `shared_by`): a row's L and R (L first), or two
+    neighbours along the table (rig order first); in rig order; spots in rig.json order."""
+    order = {x: i for i, x in enumerate(rig.arm_ids)}
     out = {}
     for name, (xy, sharers) in rig.marks.items():
-        s = sorted(sharers)
-        if len(s) == 2 and s[0][0] == s[1][0] and {x[1] for x in s} == {"L", "R"} \
-                and set(s) <= set(slots):
-            pair = tuple(x for side in "LR" for x in s if x[1] == side)
-            out.setdefault(pair, []).append(name)
-    order = {a: i for i, a in enumerate(rig.arm_ids)}
-    return [dict(slots=p, spots=v) for p, v in sorted(out.items(), key=lambda kv: order[kv[0][0]])]
+        s = tuple(sorted(sharers, key=lambda x: order.get(x, 99)))
+        if len(s) != 2 or not set(s) <= set(slots):
+            continue
+        row = s[0][0] == s[1][0]
+        if row:
+            s = tuple(x for side in "LR" for x in s if x[1] == side)
+        out.setdefault(s, dict(slots=s, spots=[], kind="row" if row else "column"))
+        out[s]["spots"].append(name)
+    return sorted(out.values(), key=lambda p: (min(order[x] for x in p["slots"]),
+                                               max(order[x] for x in p["slots"])))
+
+
+def row_pairs(rig, slots) -> list[dict]:
+    """The row pairs among `neighbour_pairs`."""
+    return [p for p in neighbour_pairs(rig, slots) if p["kind"] == "row"]
 
 
 def hover(st, slot, tip_table, guard, q_near) -> np.ndarray | None:
@@ -95,11 +105,12 @@ class MarkPlan:
         return dict(pairs=self.pairs, meetings=self.meetings)
 
 
-def _fly(st, slot, now, spot, side, half_gap) -> tuple | str:
-    """(Step flying `slot` from where it stands to its hover at `spot`, the hover) or why."""
+def _fly(st, slot, now, spot, side, half_gap, along) -> tuple | str:
+    """(Step flying `slot` from where it stands to its hover at `spot`, `side * half_gap` along
+    the unit vector `along` from the spot, the hover, its verdict, its tip) or why."""
     rig = st.rig
-    xy = rig.marks[spot][0]
-    tip = np.array([xy[0] + side * half_gap, xy[1], rig.paper_z + MEET_HEIGHT])
+    xy = np.asarray(rig.marks[spot][0], float) + side * half_gap * np.asarray(along, float)
+    tip = np.array([xy[0], xy[1], rig.paper_z + MEET_HEIGHT])
     obs, standing, phase = Scene(rig).of(slot, now, (slot,), (), f"meet {spot} {slot}")
     h = hover(st, slot, tip, Guard(rig.arm(slot), obs, st.rules.gates), now[slot])
     if h is None:
@@ -128,13 +139,15 @@ def plan_mark(st, where, pairs, yaw: bool) -> MarkPlan:
     out.steps += parking
     now = {a: rig.park_q(a) for a in rig.arm_ids}
     for p in pairs:
-        L, R = p["slots"]
-        for spot in p["spots"][:2 if yaw else 1]:
+        L, R = p["slots"]                       # a row's L and R, or two neighbours in rig order
+        along = rig.T_table_base(R)[:2, 3] - rig.T_table_base(L)[:2, 3]
+        along = along / np.linalg.norm(along)
+        for spot in p["spots"][:2 if yaw and p["kind"] == "row" else 1]:
             got, why = None, ""
             for half in HALF_GAPS:
                 trial, at = {}, dict(now)
                 for slot, side in ((L, -1.0), (R, +1.0)):
-                    f = _fly(st, slot, at, spot, side, half)
+                    f = _fly(st, slot, at, spot, side, half, along)
                     if isinstance(f, str):
                         why = f
                         break
@@ -178,16 +191,16 @@ def group_slots(rig, slots=(), group: str | None = None):
 
 def submit_mark(st, store, slots=(), group: str | None = None, yaw: bool = False):
     """Admit and start the mark job: refused for slots or a group the rig does not have, or
-    without a row pair that shares a spot (and, with yaw, two)."""
+    without two neighbours that share a spot (and, with yaw, a row pair sharing two)."""
     from aris.server import runner
     chosen = group_slots(st.rig, tuple(slots), group)
     if isinstance(chosen, Refusal):
         return chosen
-    pairs = row_pairs(st.rig, chosen)
+    pairs = neighbour_pairs(st.rig, chosen)
     if not pairs:
-        return Refusal("no_pair", f"slots {', '.join(chosen)} hold no row pair (a row's L and "
-                       "R slot) that shares a spot")
-    short = [p for p in pairs if yaw and len(p["spots"]) < 2]
+        return Refusal("no_pair", f"slots {', '.join(chosen)} hold no two neighbours that "
+                       "share a spot")
+    short = [p for p in pairs if yaw and p["kind"] == "row" and len(p["spots"]) < 2]
     if short:
         return Refusal("no_second_spot", f"--yaw needs two shared spots; "
                        f"{'/'.join(short[0]['slots'])} share only {short[0]['spots']}")
@@ -212,17 +225,13 @@ def _report(st, rec, plan, run, planning_s):
         state, why = "failed", run.why
     else:
         state, why = "done", ""
-    solved = []
+    solved = None
     if state == "done":
-        for p in plan.pairs:
-            pair = tuple(p["slots"])
-            qs = [m["q"] for m in meetings if tuple(m["pair"]) == pair and len(m["q"]) == 2]
-            res = solve_pair(st, pair, qs)
-            solved.append(dict(pair=list(pair), meetings=len(qs), **res))
-            if not res.get("passed"):
-                state, why = "failed", f"{'/'.join(pair)}: {res.get('why')}"
-        if all(s.get("passed") for s in solved):
+        solved = solve(st, [m for m in meetings if len(m["q"]) == 2])
+        if solved["passed"]:
             st.reload()
+        else:
+            state, why = "failed", f"the solve: {solved['why']}"
     rep = dict(state=state, why=why, kind="mark", pairs=plan.pairs, meetings=meetings,
                solved=solved, to_do=list(TO_DO),
                phases=[dict(name=n, end_check_passed=bool(p), tightest=t, clearance_m=c)
@@ -231,13 +240,20 @@ def _report(st, rec, plan, run, planning_s):
     return rep, state, why
 
 
-def solve_pair(st, pair, meetings) -> dict:
-    """The calib agent's solver on one pair's meetings -> plain {passed, why, ...}."""
+def solve(st, meetings) -> dict:
+    """Every registered meeting to the calib's solver at once -> plain {passed, why, slots:
+    {slot: {x_mm, y_mm, yaw_mrad, moved_mm, turned_mrad, yaw}}, residual_mm, worst_mm,
+    reference, notes, frame, written}; `aris.server.meetings.calibrate_from_meetings(config_dir,
+    [(slot_a, q_a, slot_b, q_b, spot), ...])`, the graph solve, written when it passes."""
+    from aris.server.meetings import calibrate_from_meetings as solver
     if not meetings:
         return dict(passed=False, why="no meeting was registered")
-    from aris.server.meetings import calibrate_from_meetings
-    sol, written = calibrate_from_meetings(
-        st.config_dir, pair, [{k: np.asarray(v, float) for k, v in m.items()} for m in meetings])
+    q = lambda v: np.asarray(v, float)
+    sol, written = solver(st.config_dir, [(m["pair"][0], q(m["q"][m["pair"][0]]),
+                                           m["pair"][1], q(m["q"][m["pair"][1]]), m["spot"])
+                                          for m in meetings])
+    ref = next((str(s) for s, f in (sol.slots or {}).items()
+                if getattr(f, "yaw_from", "") == "reference"), None)
     slots = {}
     for s, f in (sol.slots or {}).items():
         T, T0 = f.T_table_base, f.T_before
@@ -246,9 +262,9 @@ def solve_pair(st, pair, meetings) -> dict:
                              y_mm=round(1e3 * float(T[1, 3]), 2),
                              yaw_mrad=round(1e3 * yaw, 3),
                              moved_mm=round(1e3 * float(np.linalg.norm(T[:2, 3] - T0[:2, 3])), 2),
-                             turned_mrad=round(1e3 * (yaw - yaw0), 3))
+                             turned_mrad=round(1e3 * (yaw - yaw0), 3),
+                             yaw=getattr(f, "yaw_from", "measured"))
     fin = lambda x: None if x is None or not np.isfinite(x) else round(1e3 * float(x), 3)
     return dict(passed=bool(sol.passed), why=sol.why, slots=slots, residual_mm=fin(sol.rms),
-                worst_mm=fin(sol.max_residual), notes=list(sol.notes or ()), frame=sol.frame,
-                written=[str(p) for p in written],
-                yaw="solved" if len(meetings) >= 2 else "nominal")
+                worst_mm=fin(sol.max_residual), reference=ref,
+                notes=list(sol.notes or ()), frame=sol.frame, written=[str(p) for p in written])

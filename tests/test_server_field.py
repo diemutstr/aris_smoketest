@@ -532,12 +532,38 @@ def test_crosses_on_the_simulated_arms(tmp_path, capsys):
 # --------------------------------------------------------------------------- mark: the meeting
 
 
-def test_the_row_pairs():
+def test_the_neighbour_pairs():
     from aris.server import mark
     rig = Rig.load(ROOT / "config")
-    assert mark.row_pairs(rig, rig.mark_groups["rows12"]) == [
-        dict(slots=("1L", "1R"), spots=["R1a", "R1b"]),
-        dict(slots=("2L", "2R"), spots=["A", "B"])]
+    assert mark.neighbour_pairs(rig, rig.mark_groups["rows12"]) == [
+        dict(slots=("1L", "1R"), spots=["R1a", "R1b"], kind="row"),
+        dict(slots=("1L", "2L"), spots=["S12L"], kind="column"),
+        dict(slots=("1R", "2R"), spots=["S12R"], kind="column"),
+        dict(slots=("2L", "2R"), spots=["A", "B"], kind="row")]
+
+
+def test_a_group_meets_pair_by_pair_and_solves_once(tmp_path, monkeypatch):
+    import shutil
+    import aris.server.meetings as real
+    got, solver = [], real.calibrate_from_meetings
+
+    def spy(config_dir, meetings, *a, **k):            # the real graph solve, watched
+        got.append(meetings)
+        return solver(config_dir, meetings, *a, **k)
+    monkeypatch.setattr(real, "calibrate_from_meetings", spy)
+    cfg = tmp_path / "cfg"
+    shutil.copytree(ROOT / "config", cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False,
+                      sim_base_error=(3.0, 2.0))
+    c = TestClient(create_app(st))
+    v = _wait_report(c, c.post("/mark?group=rows12").json()["id"], 300)
+    assert v["state"] == "done", v["why"]
+    (meetings,) = got
+    assert [(a, b, spot) for a, _, b, _, spot in meetings] == [
+        ("1L", "1R", "R1a"), ("1L", "2L", "S12L"), ("1R", "2R", "S12R"), ("2L", "2R", "A")]
+    s = v["report"]["solved"]
+    assert s["passed"] and set(s["slots"]) == {"1L", "1R", "2L", "2R"} and s["reference"]
 
 
 def test_mark_brings_the_tips_together(tmp_path, capsys):
@@ -563,8 +589,9 @@ def test_mark_brings_the_tips_together(tmp_path, capsys):
         tips = [(true[a] @ np.r_[st.rig.arm(a).tip(np.asarray(m["q"][a])[None])[0], 1.0])[:3]
                 for a in ("2L", "2R")]
         assert np.linalg.norm(tips[0] - tips[1]) < 1.5e-3
-    (s,), = [rep["solved"]]
-    assert s["passed"] and s["yaw"] == "solved" and s["residual_mm"] < 1.0
+    s = rep["solved"]
+    assert s["passed"] and s["slots"]["2R"]["yaw"] == "meetings" and s["residual_mm"] < 1.0
+    assert s["reference"] == "2L" and s["slots"]["2L"]["yaw"] == "reference"
     # the solved seam (2R seen from 2L) is the true one, within the guiding error
     T = {a: st.rig.T_table_base(a) for a in ("2L", "2R")}          # reloaded: solved
     seam = np.linalg.inv(T["2L"]) @ T["2R"]
@@ -587,6 +614,45 @@ def test_mark_with_one_meeting_keeps_the_yaw(tmp_path):
     c = TestClient(create_app(st))
     v = _wait_report(c, c.post("/mark").json()["id"], 120)
     assert v["state"] == "done", v["why"]
-    (s,) = v["report"]["solved"]
-    assert s["yaw"] == "nominal" and len(v["report"]["meetings"]) == 1
+    s = v["report"]["solved"]
+    assert s["slots"]["2R"]["yaw"] == "nominal" and len(v["report"]["meetings"]) == 1
     assert c.post("/mark?slots=2L").json()["refused"] == "no_pair"
+
+
+
+# --------------------------------------------------------------------------- retreat
+
+
+def test_park_retreats_from_touching_tips(tmp_path, capsys):
+    from aris.execute.drivers.sim import SimArm
+    from aris.execute.queue import Queue
+    from aris.sequencer.guard import Guard
+    from aris.server import retreat
+    from aris.server.mark import MEET_HEIGHT, hover
+    from aris.server.steps import Scene
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
+    st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
+    rig = st.rig
+    park = {a: rig.park_q(a) for a in rig.arm_ids}
+    xy = rig.marks["A"][0]
+    q = {}
+    for a, side in (("2L", -1.0), ("2R", 1.0)):        # tips 20 mm apart, each alone in the scene
+        obs, _, _ = Scene(rig).of(a, park, (a,), (), "x")
+        q[a] = hover(st, a, [xy[0] + side * 0.010, xy[1], rig.paper_z + MEET_HEIGHT],
+                     Guard(rig.arm(a), obs, st.rules.gates), park[a])
+        st.drivers[a] = SimArm(a, q[a])
+    assert retreat.gap(rig, "2L", q["2L"], "2R", q["2R"]) < retreat.clearance(rig)
+    c = TestClient(create_app(st))
+    small = json.dumps(dict(units="mm", lines=[dict(id="a", points=[[-300, 100], [-200, 150]])]))
+    assert c.post("/jobs", content=small.encode()).json()["refused"] == "too_close"
+    assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0, capsys.readouterr().out
+    jid = c.get("/jobs").json()[-1]["id"]
+    names = [json.loads(x)["phase"]["name"] if "phase" in json.loads(x) else json.loads(x).get("name")
+             for x in (st.jobs_dir / jid / "phases.jsonl").read_text().splitlines()
+             if x and not json.loads(x).get("end")]
+    assert names == ["retreat 2L", "park 2L", "park 2R"], names
+    got = Queue(st.jobs_dir / jid / "retreat_2L__2L.queue").read()
+    assert [e.motion.kind for e in got] == ["retreat"] and all(e.verdict["passed"] for e in got)
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - rig.park_q(a))) < 1e-6

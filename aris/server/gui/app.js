@@ -270,12 +270,14 @@ function plainReport(rep) {
   } else if (rep.kind === "mark") {
     for (const m of rep.meetings || [])
       out.push(`${m.pair.map(label).join(" and ")} at ${m.spot}: ` + (Object.keys(m.q || {}).length === 2 ? "tips met, registered." : "NOT registered."));
-    for (const s of rep.solved || []) {
-      if (!s.passed) { out.push(`${s.pair.map(label).join("/")}: not solved: ${s.why}`); continue; }
+    const s = rep.solved;
+    if (s && !s.passed) out.push(`not solved: ${s.why}`);
+    else if (s) {
       for (const [sl, e] of Object.entries(s.slots || {}))
         out.push(`${label(sl)}: x ${e.x_mm} mm, y ${e.y_mm} mm, yaw ${e.yaw_mrad} mrad (moved ${e.moved_mm} mm, turned ${e.turned_mrad} mrad)` +
-                 (s.yaw === "nominal" ? "; yaw kept nominal (one meeting)" : ""));
+                 (e.yaw === "nominal" ? "; yaw kept nominal" : ""));
       if (s.residual_mm != null) out.push(`residual ${s.residual_mm} mm`);
+      if (s.reference) out.push(`reference: ${label(s.reference)}`);
     }
   } else if (rep.kind === "crosses") {
     for (const p of rep.spots || [])

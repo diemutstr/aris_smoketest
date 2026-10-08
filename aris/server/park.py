@@ -34,10 +34,13 @@ def plan_park(st, where: dict) -> list[Step]:
     """Steps in the order they run: the pens-down arms' lifts (see steps.lift_pens), then one park phase
     per arm that is not at its park.  `where`: arm id -> where it stands now."""
     rig, rules = st.rig, st.rules
+    from aris.server.retreat import retreats
     now = {a: np.asarray(q, float) for a, q in where.items()}
-    scene, steps = Scene(rig), []
-    down = [a for a in rig.arm_ids if not rig.at_park(a, now[a]) and pen_down(rig, a, now[a])]
-    stuck = set()                                  # pens that stay down
+    scene = Scene(rig)
+    steps, now = retreats(st, now)                 # arms within the clearance move apart first
+    stuck = {s.arm for s in steps if s.why}        # arms that stay where they are
+    down = [a for a in rig.arm_ids if not rig.at_park(a, now[a]) and pen_down(rig, a, now[a])
+            and a not in stuck]
     if down:
         lifts = lift_pens(st, scene, now, down)    # one phase per pen, in rig order
         for s in lifts:

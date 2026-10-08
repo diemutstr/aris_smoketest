@@ -191,7 +191,7 @@ Position comes from the two pens touching each other:
 aris mark
 ```
 
-1. Both arms fly to a spot above the seam and stop, their pen tips 10–25 cm apart in the air
+1. Both arms fly to a spot above the seam and stop, their pen tips 10–50 cm apart in the air
    (the arms are not allowed closer by themselves). The laptop (and the page) say: your turn.
 2. In Desk, in the browser: switch **both** arms to **programming mode** (the arms' lights go
    white).
@@ -208,6 +208,11 @@ apart.
 
 To see the result: `aris crosses` — both arms draw at the same spots, the L arm a cross, the R
 arm a circle; after a good calibration the circle sits on the cross.
+
+If the calibration was interrupted with the two pens still touching, just `aris park`: the
+arms first back away from each other, then park. With four or six arms, `aris mark --group
+rows12` (or `rows23`, `all`) has every pair of neighbours meet once, pair by pair; arm 2L is
+the reference all the others are placed against.
 
 ## 6b. Your buttons: the page in the browser
 

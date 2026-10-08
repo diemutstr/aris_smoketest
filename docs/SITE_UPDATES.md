@@ -23,6 +23,17 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, later — the same, plus: arms back away when too close; groups; 2L the reference
+
+What changed: after a meeting the arms retreat on their own (up, then away); if the job was
+interrupted with the tips touching, `aris park` first moves them apart (a "retreat" motion
+that only ever increases the distance), so nothing gets stuck. `aris mark --group rows12|
+rows23|all` has every pair of neighbours meet once (row pairs at their first spot, column pairs
+at the seam spot), solved together, with 2L held as the reference. The tips start 10–50 cm
+apart, depending on the spot.
+
+What to do: nothing new; install and run `aris mark` as in the entry below.
+
 ## 2026-10-08 — calibration: the two pens meet in the air, Diemut switches the modes
 
 What changed: hand-guiding under FCI did not work (the pilot's enabling button only works in

@@ -34,7 +34,7 @@ def cmd_mark(a, http) -> int:
     if code != 200:
         return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
     from aris.server.mark import TO_DO
-    say(f"job {r['id']}: the two arms of a row fly above a spot, their tips 100 to 300 mm apart; then")
+    say(f"job {r['id']}: each pair of neighbouring arms flies above a spot, their tips 100 to 500 mm apart; then")
     for line in TO_DO:
         say(f"  {line}")
     v = follow(http, r["id"], a.poll, show_rows=("instruction",))

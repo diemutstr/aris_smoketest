@@ -157,10 +157,16 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
     `name`: the phase is "<name> <slot>"; `min_points`: fewer reachable is a refusal."""
     min_points = MIN_CONTACTS if min_points is None else min_points
     rig, rules = st.rig, st.rules
+    from aris.server.retreat import retreats
     now = {b: np.asarray(q, float) for b, q in where.items()}
     scene = Scene(rig)
-    steps, q = [], now[a]
+    steps, now = retreats(st, now)                 # arms within the clearance move apart first
+    q = now[a]
     obs, standing, phase = scene.of(a, now, (a,), (), f"{name} {a}")
+    bad = [s for s in steps if s.why]
+    if bad:
+        return Plan(a, phase, [], np.zeros((0, 2)), [], None, "; ".join(
+            f"{s.arm}: {s.why}" for s in bad))
     if not rig.at_park(a, q) and pen_down(rig, a, q):      # as the park job: lift it first
         up = lift_pens(st, scene, now, [a])[0]
         if up.why:

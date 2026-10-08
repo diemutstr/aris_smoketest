@@ -92,6 +92,14 @@ def submit_draw(st, store: JobStore, lines, name: str = "", note: str = "",
     draw is flown in the air; phases, checker and queues otherwise identical."""
     if st.area_problem:                        # nowhere to draw: the planner would refuse all
         return Refusal("no_drawing_area", st.area_problem)
+    from aris.server.retreat import too_close
+    near = {a: st.positions.known(a)[0] for a in st.rig.arm_ids} if st.remote else \
+        {a: np.asarray(d.state().q, float) for a, d in st.drivers.items()}   # read only
+    near = {a: (q if q is not None else st.rig.park_q(a)) for a, q in near.items()}
+    if set(near) == set(st.rig.arm_ids):
+        why = too_close(st, near)
+        if why:
+            return Refusal("too_close", why)
     if not air_mm >= 0.0:                      # below the paper is a deeper press, not air
         return Refusal("air", f"--air {air_mm} mm is not a height above the paper")
     fitted = drawing.fit(lines, st.drawing_area, st.drawing_centre)
