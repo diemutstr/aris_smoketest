@@ -127,10 +127,12 @@ async function poll(now) {
   S.busyPolling = true;
   try {
     const slow = S.tick++ % SLOW_EVERY === 0 || !S.rig;
-    const [arms, jobs, rig, drawings] = await Promise.all([
+    const [arms, jobs, rig, drawings, pens] = await Promise.all([
       call("GET", "/arms"), call("GET", "/jobs"),
       slow ? call("GET", "/rig") : null, slow ? call("GET", "/drawings") : null,
+      slow || now ? call("GET", "/pens") : null,
     ]);
+    if (pens && pens.ok) S.pens = pens.data;
     S.online = arms.status !== 0;
     S.onlineWhy = arms.ok ? "" : answerText(arms);
     if (arms.ok) { trackMotion(arms.data.arms); S.arms = arms.data.arms; S.code = arms.data.code; }
@@ -338,6 +340,14 @@ function buildCards() {
       el("div", { class: "card-state", id: `state-${slot}` }),
       el("div", { class: "card-small", id: `age-${slot}` }),
       el("div", { class: "card-small", id: `cal-${slot}` }),
+      el("div", { class: "btn-row" }, el("span", { class: "card-small", text: "pen in:" }),
+        (() => {
+          const sel = el("select", { id: `pen-${slot}`, class: "need-idle", "aria-label": `pen in ${slot}` });
+          sel.addEventListener("change", () => act(`${label(slot)}: pen ${sel.value}`, "POST",
+            `/pens/${encodeURIComponent(slot)}`, { name: sel.value }, {
+              ok: () => `${sel.value} is in ${label(slot)} now; touch off its pen before drawing` }));
+          return sel;
+        })()),
       el("div", { class: "btn-row" }, grip("home"), grip("open"), grip("close")),
       el("div", { class: "card-small", id: `grip-${slot}` }),
       el("div", { class: "btn-row" },
@@ -369,11 +379,20 @@ function updateCards() {
       a.source ? "" : "joints read now (driver on this computer)";
     const cal = S.rig && S.rig.arms && S.rig.arms[slot] ? S.rig.arms[slot].calibration : null;
     const calTxt = cal && typeof cal === "object"
-      ? Object.entries(cal).map(([k, v]) => `${k} ${String(v).startsWith("applied") ? "yes" : v === "none" ? "none" : "NOT applied"}`).join(", ")
+      ? Object.entries(cal).map(([k, v]) => `${k} ${String(v).startsWith("applied") ? "yes" : v === "none" ? "none" : "NOT applied: " + v}`).join(", ")
       : cal ? String(cal) : "?";
     const calEl = $(`cal-${slot}`);
     calEl.textContent = `calibration: ${calTxt}`;
     calEl.title = cal ? JSON.stringify(cal) : "";
+    const sel = $(`pen-${slot}`), pens = S.pens || {};
+    if (sel && document.activeElement !== sel) {
+      const names = pens.table && pens.table.length ? pens.table : [((pens.pens_in || {})[slot]) || "?"];
+      if (sel.dataset.names !== names.join(",")) {
+        sel.replaceChildren(...names.map((n) => el("option", { value: n, text: n })));
+        sel.dataset.names = names.join(",");
+      }
+      sel.value = (pens.pens_in || {})[slot] || "";
+    }
     const g = S.grip[slot];
     $(`grip-${slot}`).textContent = !g ? "gripper: not used since the server started" :
       g.state !== "done" ? `gripper ${g.verb} ${g.state}: ${g.why || ""}` :

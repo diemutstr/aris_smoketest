@@ -375,6 +375,28 @@ def test_the_pen_follows_a_measured_paper(rig, rules):
     assert np.abs(tips[:, 2] - want).max() < 0.2e-3                 # and the tip follows them
 
 
+@pytest.mark.slow  # 10 to 20 s
+def test_each_arm_draws_with_its_own_pen(rig, rules):
+    from dataclasses import replace
+    from aris.sequencer.drag import pulled_shares
+    from aris.types import DrawPlan
+    pens = {"1R": replace(rules, press=0.0016),
+            "2L": replace(rules, press=0.0025, drag_only=True)}
+    lines = _small()
+    tagged, left, rep = plan_detailed(rig, lines, rules, settings=COARSE, workers=2,
+                                      rules_by_slot=pens)
+    account(lines, tagged, left, rules.min_piece)
+    draws = [(a, m) for _, a, m in tagged if m.kind == "draw"]
+    assert {a for a, _ in draws} == {"1R", "2L"}
+    for a, m in draws:
+        tip = rig.to_table(a, m.tip_base)
+        assert np.allclose(tip[:, 2], rig.paper_z - pens[a].press, atol=1e-5), a
+        if pens[a].drag_only:                     # the drag-only pen is pulled, never pushed
+            plan = DrawPlan(m.piece, m.traj.q, np.zeros(len(m.traj.q)), m.tip_base, 0.0, 0.0)
+            pulled, _ = pulled_shares(rig.arm(a), plan, rig.paper(a).normal)
+            assert pulled > 0.99, pulled
+
+
 @pytest.mark.slow
 def test_word_across_the_middle_arms_through_the_checker(rig, tmp_path_factory):
     import system_cases as sc

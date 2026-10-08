@@ -153,7 +153,8 @@ def test_rig_and_arms_endpoints(station):
     assert set(r["arms"]) == {"1R", "1L", "2R", "2L", "3R", "3L"}
     assert r["arms"]["2R"]["calibration"] == {"base": "none", "pen": "none"}
     assert r["uncalibrated"] is True and "tracking" not in r
-    assert r["pen_in"]["name"] == station.rig.pen()["name"] and len(r["drawing_area_centre_m"]) == 2
+    assert r["pens_in"]["1L"]["name"] == station.pen("1L")["name"]
+    assert len(r["drawing_area_centre_m"]) == 2
     assert np.allclose(r["arms"]["2L"]["park_q"], station.rig.park_q("2L"))
     assert len(r["rig_digest"]) == 24 and len(r["calibration_digest"]) == 24
     assert 1.0 < r["drawing_area_m"][0] < 1.8 and 3.0 < r["drawing_area_m"][1] < 3.7
@@ -291,7 +292,7 @@ def test_outside_the_area_is_scaled_and_a_stop_leaves_leftovers(station, tmp_pat
                                                              abs=st.rules.min_piece)
     head = json.loads((st.jobs_dir / rid / "job.json").read_text())
     assert head["note"] == "4H on 120 g paper" and "tracking" not in head
-    assert head["pen"]["name"] == st.rig.pen()["name"] and head["rest_of"] == jid
+    assert head["pens"]["1L"]["name"] == st.pen("1L")["name"] and head["rest_of"] == jid
     assert c.post(f"/jobs?rest_of={rid}").json()["refused"] == "nothing_left"
     # a refused drawing is a FAIL of `aris draw`
     bad = tmp_path / "bad.json"

@@ -117,7 +117,7 @@ def plan_retreat(st, a, now) -> Motion | str:
         path = np.vstack([path, more[1:]])
     else:
         return f"{a} cannot get {want * 1e3:.0f} mm from {other} within {MAX_AWAY:g} m"
-    res = retime_detailed(JointPath(path), rig.arm(a).limits, st.rules, smooth=True,
+    res = retime_detailed(JointPath(path), rig.arm(a).limits, st.rules_for(a), smooth=True,
                           tip_of=rig.arm(a).tip)
     if not hasattr(res, "traj"):
         return f"the retreat cannot be timed: {res.reason} {res.detail}"
@@ -150,7 +150,7 @@ def joint_retreat(st, a, q) -> Motion | str | None:
     # jerks as they are): the retimer refuses a start outside the box, and the joint only
     # moves inward from there
     box = replace(lim, q_min=np.minimum(lo, q - 1e-3), q_max=np.maximum(hi, q + 1e-3))
-    res = retime_detailed(JointPath(path), box, st.rules)
+    res = retime_detailed(JointPath(path), box, st.rules_for(a))
     if not hasattr(res, "traj"):
         return f"the joint retreat cannot be timed: {res.reason} {res.detail}"
     return Motion("retreat", res.traj)

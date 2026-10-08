@@ -76,6 +76,14 @@ the pen tip where the points are and know nothing about pens. The real paper sta
 that the links and the holder must clear, and the plane from which the lifts are measured. The
 drawable maps are computed with the pen tip on that surface too.
 
+**A pen per slot.** `plan(..., rules_by_slot={slot: DrawRules})` gives each arm its own pen's
+rules: its press (the depth of its drawing surface), its speed on the paper and whether it
+may only be pulled (`drag_only`). A slot left out uses `rules`. The maps and the allocation use
+`rules` (a line goes to the arm that reaches it; that arm's pen then decides depth and
+direction), so the map digests do not change. Tested: two arms, presses 1.6 and 2.5 mm, one
+drag-only; each arm's tips lie at its own depth, and the drag-only pen is pulled on every
+step.
+
 **A measured paper.** `plan(..., surface=)` takes the paper as measured (`calib.paper.surface`,
 anything with `z(x, y)` in the table frame). Each line then goes to its arm with points at most
 1 cm apart (`Settings.surface_step`), each at `surface.z(x, y) − press`, and the arm's pieces

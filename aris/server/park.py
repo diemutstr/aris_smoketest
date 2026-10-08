@@ -33,7 +33,7 @@ __all__ = ["submit_park", "plan_park", "Step", "pen_down", "LIFT_EXTRA"]
 def plan_park(st, where: dict) -> list[Step]:
     """Steps in the order they run: the pens-down arms' lifts (see steps.lift_pens), then one park phase
     per arm that is not at its park.  `where`: arm id -> where it stands now."""
-    rig, rules = st.rig, st.rules
+    rig = st.rig
     from aris.server.retreat import retreats
     now = {a: np.asarray(q, float) for a, q in where.items()}
     scene = Scene(rig)
@@ -56,7 +56,8 @@ def plan_park(st, where: dict) -> list[Step]:
         if a in stuck:
             continue                               # its pen could not rise; it stays
         obs, standing, phase = scene.of(a, now, (a,), (), f"park {a}")
-        m = free_plan(rig.arm(a), now[a], rig.park_q(a), obs, rules, seed_extra=b"park")
+        m = free_plan(rig.arm(a), now[a], rig.park_q(a), obs, st.rules_for(a),
+                      seed_extra=b"park")
         if isinstance(m, Refusal):
             steps.append(Step(a, phase, why=f"free-space planner: {m.reason}: {m.detail}"))
             continue

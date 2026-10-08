@@ -250,18 +250,20 @@ def test_the_copy_survives_a_link_that_keeps_dropping(rig, tmp_path):
         job.queue("phase 1", "2L").path.read_bytes()
 
 
-@pytest.mark.parametrize("in_header", [True, False])
-def test_the_job_headers_pen_is_recorded(rig, tmp_path, in_header):
-    """The header's `pen` is recorded in the first row (its press is the plan's); an old
-    header without it falls back to this PC's rig file, and the row says so."""
+@pytest.mark.parametrize("shape", ["pens", "pen", None])
+def test_the_job_headers_pen_is_recorded(rig, tmp_path, shape):
+    """Each slot's pen from the header's `pens: {slot: pen}` is recorded in the first row (its
+    press is the plan's); an older header's one `pen` is every slot's; a header without either
+    falls back to this PC's rig file, and the row says so."""
     server_dir = tmp_path / "server"
     server_dir.mkdir()
     header = _header(rig)
+    header.pop("pen", None)
     other = dict(rig.pen(), press_m=0.002)
-    if in_header:
+    if shape == "pens":
+        header["pens"] = {"2L": other, "2R": dict(rig.pen(), press_m=0.009)}
+    elif shape == "pen":
         header["pen"] = other
-    else:
-        header.pop("pen")
     job = Job.create(server_dir / "pen", header)
     app = create_app(server_dir)
     arm = Recording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
@@ -270,8 +272,10 @@ def test_the_job_headers_pen_is_recorded(rig, tmp_path, in_header):
         res = run_job(Remote(srv.url), "pen", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
     first = app.state.received["pen"][0]
-    assert first["pen"] == (other if in_header else rig.pen())
-    assert first["pen_from"] == ("job header" if in_header else "rig file")
+    want = rig.pen() if shape is None else other
+    assert first["pens"] == {"2L": want} and first["pen"] == want
+    assert first["pen_from"] == {"2L": {"pens": "job header", "pen": "job header (one pen)",
+                                        None: "rig file"}[shape]}
 
 
 class ModeRecording(Recording):

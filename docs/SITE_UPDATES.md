@@ -23,6 +23,19 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, late night — a pen per arm
+
+What changed: each arm has its own pen (gel in the back row, pencils in the middle row, on one
+server). `aris pen` lists what is in; `aris pen 1L gel_g2` puts a pen in a slot (also on the
+page, per arm card). Press, speed and the pull-only rule follow the pen in that arm; the job
+header and the report say which pen each arm had. `aris draw --pen` is gone. The pen that is in
+is kept in `config/<rig>/pens.json` next to the calibration files (per rig, like them).
+
+What to do: install; on the rows12 server `aris pen 1L gel_g2`, `aris pen 1R gel_g2`,
+`aris pen 2L graphite_4h`, `aris pen 2R graphite_4h` (or whatever is in); then `aris touchoff`
+for each arm (the pen part is per pen: a touch-off made with the other pen is ignored and the
+status says so); then as before.
+
 ## 2026-10-08, night — one server for rows 1 and 2 (`config/rows12`)
 
 `aris mark --group rows12` needs the four arms on ONE server. The config is `config/rows12`

@@ -326,9 +326,6 @@ def test_aris_import_and_draw_an_svg(tmp_path, capsys):
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
     c = TestClient(create_app(st))
-    assert cli.main(["draw", str(f), "--width", "0.3", "--pen", "gel_g2"],
-                    http=ClientHttp(c)) == 1
-    assert "the pen in is" in capsys.readouterr().out
     cli.main(["draw", str(f), "--width", "0.3", "--at", "-0.3", "0.1", "--poll", "0.05"],
              http=ClientHttp(c))
     jid = c.get("/jobs").json()[-1]["id"]
@@ -741,3 +738,71 @@ def test_a_calibration_measured_on_another_robot_is_refused(tmp_path):
         "calibration/2L.json was measured on fr3-97, but 2L is fr3-71 today: recalibrate, or "
         "rename the files if the slots were renamed")
     assert c.post("/grip/2L", json=dict(verb="open")).status_code == 200   # no geometry
+
+
+# --------------------------------------------------------------------------- pens per slot
+
+
+def test_pens_per_slot(tmp_path, capsys):
+    """Gel in 2L, graphite in 2R: each arm draws at its own pen's press, the gel pull-only."""
+    import shutil
+    from aris.execute.queue import Queue
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2)
+    c = TestClient(create_app(st))
+    assert cli.main(["pen", "2L", "gel_g2"], http=ClientHttp(c)) == 0, capsys.readouterr().out
+    assert c.get("/pens").json()["pens_in"] == {"2L": "gel_g2", "2R": st.rig.pen_name}
+    assert c.post("/pens/2L", json=dict(name="crayon")).json()["refused"] == "no_pen"
+    press = {a: st.rules_for(a).press for a in ("2L", "2R")}
+    assert press["2L"] != press["2R"] and st.rules_for("2L").drag_only
+    # strokes under each arm, both ways and across: each drawn at its own pen's press
+    lines = []
+    for a, x in (("2L", 700), ("2R", -700)):
+        lines += [dict(id=f"{a}x", points=[[x - 60, 150], [x + 60, 150]]),
+                  dict(id=f"{a}y", points=[[x, 100], [x, 220]]),
+                  dict(id=f"{a}d", points=[[x + 40, 300], [x - 40, 240]])]   # straight strokes
+    jid = c.post("/jobs", content=json.dumps(dict(units="mm", lines=lines)).encode()).json()["id"]
+    v = _wait_report(c, jid, 180)
+    assert v["state"] == "done", v["why"]
+    head = json.loads((st.jobs_dir / jid / "job.json").read_text())
+    assert head["pens"]["2L"]["name"] == "gel_g2" and v["report"]["pens"]["2L"] == "gel_g2"
+    for a in ("2L", "2R"):
+        draws = [e.motion for f in (st.jobs_dir / jid).glob(f"*__{a}.queue")
+                 for e in Queue(f).read() if e.motion.kind == "draw"]
+        assert draws, a
+        z = np.concatenate([st.rig.to_table(a, m.tip_base)[:, 2] for m in draws])
+        assert np.allclose(z, st.rig.paper_z - press[a], atol=2e-4), a
+    # the gel pen is pulled: along every drawn step its tip trails (no step along the lean)
+    arm, n = st.rig.arm("2L"), st.rig.paper("2L").normal / np.linalg.norm(st.rig.paper("2L").normal)
+    pushed = total = 0.0
+    for f in (st.jobs_dir / jid).glob("*__2L.queue"):
+        for e in Queue(f).read():
+            if e.motion.kind != "draw":
+                continue
+            tip = e.motion.tip_base
+            lean = arm.pen_axis(np.asarray(e.motion.traj.q)[:len(tip)])
+            lean = lean - (lean @ n)[:, None] * n
+            step = np.diff(tip, axis=0)
+            along = np.einsum("ij,ij->i", step, 0.5 * (lean[:-1] + lean[1:]))
+            ln = np.linalg.norm(step, axis=1)
+            pushed += float(ln[along > 1e-6].sum())
+            total += float(ln.sum())
+    assert total > 0.1 and pushed <= 0.02 * total, (pushed, total)
+
+
+def test_the_parts_written_carry_the_robot(tmp_path):
+    import shutil
+    from aris.calib import files
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False,
+                      sim_base_error=(3.0, 2.0), site=ROOT / "site" / "aris_2026-10.json")
+    c = TestClient(create_app(st))
+    v = _wait_report(c, c.post("/mark").json()["id"], 120)
+    assert v["state"] == "done", v["why"]
+    for a in ("2L", "2R"):
+        assert files.read(cfg, a)["base"]["robot"] == st.robots[a]
+    assert c.post("/park").status_code == 200                   # today's robots: not refused

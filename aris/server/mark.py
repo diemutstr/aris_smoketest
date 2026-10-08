@@ -75,7 +75,7 @@ def row_pairs(rig, slots) -> list[dict]:
 def hover(st, slot, tip_table, guard, q_near) -> np.ndarray | None:
     """The joints that hold the pen upright with its tip at `tip_table`, inside the gates,
     nearest `q_near` over the hand's turns about the pen and the arm's shapes."""
-    rig, gates = st.rig, st.rules.gates
+    rig, gates = st.rig, st.rules_for(slot).gates
     arm, paper = rig.arm(slot), rig.paper(slot, for_planning=True)
     T = rig.T_base_table(slot)
     p = T[:3, :3] @ np.asarray(tip_table, float) + T[:3, 3]
@@ -115,10 +115,10 @@ def _fly(st, slot, now, spot, side, half_gap, along) -> tuple | str:
     xy = np.asarray(rig.marks[spot][0], float) + side * half_gap * np.asarray(along, float)
     tip = np.array([xy[0], xy[1], rig.paper_z + MEET_HEIGHT])
     obs, standing, phase = Scene(rig).of(slot, now, (slot,), (), f"meet {spot} {slot}")
-    h = hover(st, slot, tip, Guard(rig.arm(slot), obs, st.rules.gates), now[slot])
+    h = hover(st, slot, tip, Guard(rig.arm(slot), obs, st.rules_for(slot).gates), now[slot])
     if h is None:
         return f"{slot}: no upright pen pose over {spot} inside the gates"
-    m = free_plan(rig.arm(slot), now[slot], h, obs, st.rules, seed_extra=b"meet")
+    m = free_plan(rig.arm(slot), now[slot], h, obs, st.rules_for(slot), seed_extra=b"meet")
     if isinstance(m, Refusal):
         return f"{slot}: no way to its hover over {spot}: {m.reason}: {m.detail}"
     v = check(st.config_dir, slot, m, phase, now[slot], standing=standing)
@@ -319,9 +319,11 @@ def solve(st, meetings) -> dict:
     if not meetings:
         return dict(passed=False, why="no meeting was registered")
     q = lambda v: np.asarray(v, float)
+    from aris.server.robots import today
+    robot = {a: today(st, a) for a in st.rig.arm_ids if today(st, a)}
     sol, written = solver(st.config_dir, [(m["pair"][0], q(m["q"][m["pair"][0]]),
                                            m["pair"][1], q(m["q"][m["pair"][1]]), m["spot"])
-                                          for m in meetings])
+                                          for m in meetings], robot=robot or None)
     ref = next((str(s) for s, f in (sol.slots or {}).items()
                 if getattr(f, "yaw_from", "") == "reference"), None)
     slots = {}

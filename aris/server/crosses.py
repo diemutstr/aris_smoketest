@@ -83,7 +83,7 @@ def plan_crosses(st, where, slots, spots) -> CrossPlan:
     from aris import arm_planner
     from aris.server.park import plan_park
     from aris.server.verify import CheckVerify
-    rig, rules = st.rig, st.rules
+    rig = st.rig
     out = CrossPlan(spots=spots)
     parking = plan_park(st, where)
     bad = [s for s in parking if s.why and s.why != "already at its park"]
@@ -98,6 +98,7 @@ def plan_crosses(st, where, slots, spots) -> CrossPlan:
         mine = [(s, SHAPE[a[1]]) for s in spots if a in (s["cross"], s["circle"])]
         if not mine:
             continue
+        rules = st.rules_for(a)                  # its pen's press
         lines = []
         for s, shape in mine:
             x, y = s["xy_m"]

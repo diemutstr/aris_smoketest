@@ -7,7 +7,7 @@ Arms are named by their slot on the frame ("1L" .. "3R").
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +41,16 @@ def _tolerances(cfg) -> Tolerances:
 
 
 @dataclass(frozen=True)
+class Pen:
+    """One pen of rig.json `pens.table`."""
+    name: str
+    press: float                   # m, the drawing surface lies this far below the paper
+    speed: float                   # m/s on the paper
+    length: float                  # m, nominal length (where no measured tip applies)
+    radius: float                  # m, its capsule's radius
+
+
+@dataclass(frozen=True)
 class SlotMount:
     slot: str
     T_table_base: np.ndarray       # (4,4), the calibrated pose when the base part passed
@@ -48,6 +58,7 @@ class SlotMount:
     tip_hand: np.ndarray | None    # calibrated pen tip in the hand frame, or None (nominal)
     calibration: str               # what was used, in words
     notes: tuple = ()              # what fell back to nominal, and why
+    pen: Pen | None = None         # the pen in this slot (pens.json, else pens.current)
 
 
 @dataclass(frozen=True)
@@ -61,11 +72,11 @@ class RigData:
     box_hi: np.ndarray             # (B,3)
     clearance: dict                # the demanded clearances, metres
     paper_z: float                 # the real paper: what links, tool and lifted pen clear
-    draw_speed: float              # m/s on the paper, the current pen's speed_m_per_s
+    # The pen of the arm being judged: rig.json `pens.current` as read; `for_slot` puts the
+    # slot's own pen here (pens.json).
+    draw_speed: float              # m/s on the paper, the pen's speed_m_per_s
     press: float                   # m, the drawing surface lies this far below the paper
-    pen: str                       # the pen that is in (rig.json pens.current)
-    pen_length: float              # m, its nominal length (where no measured tip applies)
-    pen_radius: float              # m, its capsule's radius
+    pen: str                       # the pen's name
     notes: tuple = ()              # anything the verdict should say about how rig.json was read
     fences: tuple = ()             # (name, point, unit normal), table frame: planes every arm
                                    # stays on the normal's side of, in every phase (rig.json)
@@ -73,6 +84,11 @@ class RigData:
     paper_map: PaperMap | None = None       # calibration/paper.json; None: the flat paper
     limit_gate: float = 0.15                # rad, rig.json gates.limit_margin_rad: the planners'
                                             # distance to a joint limit (a retreat recovers it)
+
+    def for_slot(self, slot) -> "RigData":
+        """The rig as the arm in `slot` sees it: its own pen's press and speed."""
+        p = self.mounts[slot].pen
+        return replace(self, draw_speed=p.speed, press=p.press, pen=p.name)
 
     def surface_at(self, x, y) -> np.ndarray:
         """Where the drawing's points lie at table (x, y): the paper (its height map where
@@ -102,7 +118,11 @@ def read_rig(config_dir) -> RigData:
     install); the callers turn that into a failed verdict."""
     config_dir = Path(config_dir)
     cfg = json.loads((config_dir / "rig.json").read_text())
-    pen_name, pen, notes = _current_pen(cfg)
+    pens, pen_notes = _pens(cfg)
+    current = pens[str(cfg["pens"]["current"])]
+    pens_in = _pens_in(config_dir, pens)
+    in_use = {current.name, *(p.name for p in pens_in.values())}
+    notes = [n for name, n in pen_notes if name in in_use]
     mounts = {}
     names, lo, hi, owner = [], [], [], []
     for a in cfg["slots"]["list"]:
@@ -113,10 +133,11 @@ def read_rig(config_dir) -> RigData:
         _need_rigid(T_nom, f"slot {slot} in rig.json")
         T = T_nom
         if a.get("mounted", True):
+            pen = pens_in.get(slot, current)
             T, tip, used, why = _calibration(config_dir / "calibration" / f"{slot}.json",
-                                             slot, T_nom, pen_name)
+                                             slot, T_nom, pen.name)
             mounts[slot] = SlotMount(slot, T, np.asarray(a["park_q_rad"], float), tip,
-                                     used, why)
+                                     used, why, pen)
         # The hanger is on the frame whether or not an arm hangs from it; the arm is bolted to
         # its plate, so the hanger follows the calibrated axis across the table (shifted, not
         # turned: the boxes stay axis aligned, and a few mrad of turn moves a plate corner well
@@ -139,14 +160,6 @@ def read_rig(config_dir) -> RigData:
         clearance["tool_to_paper_m"] = clearance["body_to_paper_m"]
         notes.append("rig.json has no clearances.tool_to_paper_m: the tool keeps "
                      "body_to_paper_m")
-    speed = pen.get("speed_m_per_s")
-    if speed is None:
-        speed = cfg["drawing"]["draw_speed_m_per_s"]
-        notes.append(f"pen {pen_name} has no speed_m_per_s: drawing speed from "
-                     f"drawing.draw_speed_m_per_s ({float(speed) * 1e3:.1f} mm/s)")
-    press = float(pen["press_m"])
-    if not 0.0 <= press < 0.02:
-        raise ValueError(f"rig.json: pen {pen_name} press_m {press} is not a press")
     fences = []
     for f in cfg.get("fences", {}).get("planes", ()):
         n = np.asarray(f["normal"], float)
@@ -154,22 +167,43 @@ def read_rig(config_dir) -> RigData:
     paper_z = float(cfg["table"]["paper_surface_z_m"])
     return RigData(mounts, tuple(names), tuple(owner),
                    tuple(cfg["hanger"].get("exempt_links", ())), lo, hi, clearance,
-                   paper_z, float(speed), press, pen_name,
-                   float(pen["tip_length_nominal_m"]), float(pen["capsule_radius_m"]),
-                   tuple(notes), tuple(fences), _tolerances(cfg),
+                   paper_z, current.speed, current.press, current.name, tuple(notes), tuple(fences), _tolerances(cfg),
                    read_paper(config_dir / "calibration" / "paper.json", paper_z),
                    float(cfg.get("gates", {}).get("limit_margin_rad", 0.15)))
 
 
-def _current_pen(cfg):
-    """(name, the pen's entry, notes): rig.json `pens.current` names the pen that is in,
-    `pens.table` holds every pen by name."""
-    pens = cfg["pens"]
-    name = str(pens["current"])
-    table = pens["table"]
-    if name not in table:
-        raise ValueError(f"rig.json: pens.current names {name!r}, which is not in the table")
-    return name, table[name], []
+def _pens(cfg):
+    """({name: Pen} for every pen of rig.json `pens.table`, [(pen name, note)]).  A pen without a speed
+    draws at drawing.draw_speed_m_per_s, and a note says so."""
+    out, notes = {}, []
+    for name, p in cfg["pens"]["table"].items():
+        speed = p.get("speed_m_per_s")
+        if speed is None:
+            speed = cfg["drawing"]["draw_speed_m_per_s"]
+            notes.append((name, f"pen {name} has no speed_m_per_s: drawing speed from "
+                                f"drawing.draw_speed_m_per_s ({float(speed) * 1e3:.1f} mm/s)"))
+        press = float(p["press_m"])
+        if not 0.0 <= press < 0.02:
+            raise ValueError(f"rig.json: pen {name} press_m {press} is not a press")
+        out[str(name)] = Pen(str(name), press, float(speed), float(p["tip_length_nominal_m"]),
+                             float(p["capsule_radius_m"]))
+    if str(cfg["pens"]["current"]) not in out:
+        raise ValueError(f"rig.json: pens.current names {cfg['pens']['current']!r}, which is "
+                         f"not in the table")
+    return out, notes
+
+
+def _pens_in(config_dir: Path, pens) -> dict:
+    """{slot: Pen} from `pens.json` ({"in": {slot: pen name}}) next to rig.json; a slot not
+    listed (or no file) has rig.json's `pens.current`."""
+    path = config_dir / "pens.json"
+    if not path.exists():
+        return {}
+    named = json.loads(path.read_text()).get("in", {})
+    unknown = sorted({str(n) for n in named.values()} - set(pens))
+    if unknown:
+        raise ValueError(f"{path}: pens {unknown} are not in rig.json pens.table")
+    return {str(s): pens[str(n)] for s, n in named.items()}
 
 
 def _need_rigid(T, what):

@@ -144,12 +144,12 @@ def touch_point(rig, slot: Slot, q, tip) -> np.ndarray:
 
 def pen_from_pivot(rig, slot: Slot, pv: Pivot, mark: str, q0) -> PenCalibration:
     """The pivot's tip as the slot's pen part (a measured tip, for the pen that is in)."""
-    nom, before = rig.nominal_tip(), rig.arm(slot).tool.tip_hand.copy()
+    nom, before = rig.nominal_tip(slot), rig.arm(slot).tool.tip_hand.copy()
     u = rig.arm(slot).tool.pen_axis_hand
     tip = pv.tip_hand
     nan = float("nan")
     return PenCalibration(
-        slot=slot, pen=rig.pen_name, passed=pv.passed, why=pv.why, tip_hand=tip,
+        slot=slot, pen=rig.pen_name_in(slot), passed=pv.passed, why=pv.why, tip_hand=tip,
         tip_hand_nominal=nom, tip_hand_before=before,
         correction=nan if tip is None else float((tip - nom) @ u),
         change=nan if tip is None else float((tip - before) @ u),
@@ -291,7 +291,7 @@ def _result(rig, obs, pose, xy, r, frame, pivots, by_mark, fixed, base_tips, pai
         yaw = planar.yaw_between(T[:3, :3], Tn[:3, :3])
         slots[s] = SlotFit(s, T, T0, pv.tip_hand, pv, first, shift, yaw,
                            float(np.sqrt(np.mean(r[mine] ** 2))), int(mine.sum()),
-                           rig.pen_name, q0)
+                           rig.pen_name_in(s), q0)
         if shift > POSE_SHIFT_MAX or abs(yaw) > POSE_YAW_MAX:
             why.append(f"refused: {s} {shift:.3f} m and {np.rad2deg(yaw):+.2f} deg from its "
                        f"nominal pose — wrong slot or wrong robot?")

@@ -118,7 +118,7 @@ def lift_pens(st, scene, now, down) -> list[Step]:
 
 def _lift_one(st, scene_of, q, a) -> Step:
     obs, standing, phase = scene_of
-    rig, rules, got = st.rig, st.rules, None
+    rig, rules, got = st.rig, st.rules_for(a), None
     for gates in (rules.gates, replace(rules.gates, limit_margin=RECOVERY_LIMIT_MARGIN)):
         got = _rise_from(rig, a, obs, q, replace(rules, gates=gates))
         if not isinstance(got, str):

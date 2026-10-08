@@ -52,7 +52,7 @@ def assumptions_line(a: dict) -> str:
     return (f"rig {a.get('rig_digest')}, calibration {a.get('calibration_digest')} "
             f"({applied} of {len(cal)} slots calibrated, base and pen"
             f"{'; UNCALIBRATED: nominal poses' if a.get('uncalibrated') else ''}), "
-            f"pen {a.get('pen')}, "
+            f"pens {', '.join(f'{k} {v}' for k, v in (a.get('pens') or {}).items())}, "
             f"driver {a.get('driver')}, speed {a.get('speed')}")
 
 

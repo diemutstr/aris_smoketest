@@ -58,7 +58,7 @@ def touchoff(rig, slot: Slot, contact_q, reference_xy_table, pen_name: str) -> P
     q = np.asarray(contact_q, float).reshape(-1)
     ref = np.asarray(reference_xy_table, float).reshape(-1)[:2]
     arm = rig.arm(slot)
-    tip_nom, tip_before = rig.nominal_tip(), arm.tool.tip_hand.copy()
+    tip_nom, tip_before = rig.nominal_tip(slot), arm.tool.tip_hand.copy()
     base = rig.calibration_status(slot)["base"]
     out = dict(slot=slot, pen=pen_name, tip_hand_nominal=tip_nom, tip_hand_before=tip_before,
                reference_xy_table=ref, q=q.copy(), base_status=base)
@@ -73,9 +73,10 @@ def touchoff(rig, slot: Slot, contact_q, reference_xy_table, pen_name: str) -> P
     if not base.startswith("applied"):
         return refuse(f"the paper under {slot} is not measured ({base}): run the plane job "
                       f"first")
-    if pen_name != rig.pen_name:
-        return refuse(f"the touch-off is for pen {pen_name!r} but the rig has {rig.pen_name!r} "
-                      f"in: fix rig.json pens.current or the request")
+    if pen_name != rig.pen_name_in(slot):
+        return refuse(f"the touch-off is for pen {pen_name!r} but {slot} has "
+                      f"{rig.pen_name_in(slot)!r} "
+                      f"in: fix the slot's pen in rig.json or the request")
     if q.shape != (7,) or not np.all(np.isfinite(q)) or ref.shape != (2,):
         return refuse(f"the touch needs 7 joint readings and an x, y reference, got "
                       f"{q.shape[0]} and {ref.shape[0]}")

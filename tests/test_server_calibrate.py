@@ -120,7 +120,7 @@ def test_calibrate_against_a_low_tilted_paper_then_draw(tmp_path, capsys):
     assert abs(rep["touchoff"]["correction_mm"]) < 0.05       # the simulated pen is nominal
     both = json.loads((cfg / "calibration" / "2R.json").read_text())
     assert both["base"] == written["base"] and both["pen"]["passed"]
-    assert both["pen"]["pen"] == st.rig.pen_name
+    assert both["pen"]["pen"] == st.pen_name("2R")
     assert both["pen"]["reference_touch"]["xy_table_m"] == pytest.approx(
         rep["reference"]["xy_table_m"])
     assert st.rig.calibrated("2R") and not st.rig.calibrated("2L")

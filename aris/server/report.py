@@ -92,7 +92,7 @@ def draw_report(st, rec, job: Job, out, run, done: dict | None, first_s, state: 
     rep = dict(state=state, why=why, kind="draw", name=rec.name, note=rec.note,
                air_mm=rec.air_mm,
                paper_under_drawing=paper_mod.under(st.surface, rec.lines),
-               rest_of=rec.rest_of, pen=st.pen().get("name"),
+               rest_of=rec.rest_of, pens={a: p.get("name") for a, p in st.pens().items()},
                drawing=dict(lines=len(rec.lines), scale=rec.fit.scale if rec.fit else 1.0,
                             bbox_in=rec.fit.bbox_in if rec.fit else None,
                             bbox=rec.fit.bbox_out if rec.fit else None),

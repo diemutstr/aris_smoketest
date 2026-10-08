@@ -156,9 +156,12 @@ consecutive samples, then a ball per capsule, then the exact distance.
   configuration, `mounted`, `hanger`). A slot whose arm is not mounted keeps its hanger steel and
   nothing else, unless it has none (`"hanger": false`: a floor arm or an empty slot). Parked arms appear in the verdict as `parked2R:link3.0`, hanger boxes as `strut2R_plus_x`,
   `plate2R`, `clamp2R`.
+- Pens are per slot: `pens.json` next to rig.json (`{"in": {slot: pen name}}`) says which pen
+  of `pens.table` is in each slot; a slot not listed has `pens.current`. A slot's press, speed
+  on the paper, nominal tip and pen capsule all come from its own pen, and the verdict names it.
 - The calibration file `config/calibration/<slot>.json` has two parts, each applied on its own:
   `base` (the slot's pose) when it passed; `pen` (the measured tip in the hand frame) when it
-  passed **and** names the pen that is in (`pens.current`). Otherwise the nominal value, and a
+  passed **and** names the pen that is in that slot. Otherwise the nominal value, and a
   note in the verdict. A file written for another slot, or a pose that is not rigid, is a broken
   install: every verdict fails "well formed".
 - The pen: without a measured tip the model's tip moves along the pen axis by the current pen's

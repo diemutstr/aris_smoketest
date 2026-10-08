@@ -1,7 +1,8 @@
 """The rig: what the installation looks like, and the one place that turns table-frame things
 into one arm's base frame.
 
-Reads `config/rig.json` and, when present, `config/calibration/<slot>.json`.  Nothing else in
+Reads `config/rig.json` and, when present, `config/pens.json` (which pen is in which slot) and
+`config/calibration/<slot>.json`.  Nothing else in
 the package reads `config/`; nothing here reads `site/` (which robot hangs in which slot is the
 robot side's business).  Everything handed out is in one arm's base frame (obstacles, lines,
 planes) except `wall_between`, which is a table-frame thing by nature: it belongs to two arms at
@@ -14,7 +15,9 @@ the reader from the frame calls would give two files that only make sense togeth
 from __future__ import annotations
 
 import json
+import os
 import re
+from datetime import datetime
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -95,8 +98,8 @@ def _read_calibration(path: Path, slot: Slot, T_nominal: np.ndarray, pen_name: s
     if pen is not None and not pen.get("passed", False):
         status["pen"] = f"pen part not applied: it did not pass ({_why(pen)})"
     elif pen is not None and pen.get("pen") != pen_name:
-        status["pen"] = (f"pen part not applied: it was measured for pen {pen.get('pen')!r}, "
-                         f"the pen in is {pen_name!r}")
+        status["pen"] = (f"pen part not applied: measured for {pen.get('pen')}, "
+                         f"{pen_name} is in")
     elif pen is not None:
         tip = np.asarray(pen["tip_hand_m"], float)
         if tip.shape != (3,) or not np.all(np.isfinite(tip)):
@@ -161,13 +164,18 @@ def _check_slots(slots: list[dict]) -> None:
         raise ValueError(f"rig.json: rows are not numbered along y: {by_y}")
 
 
-def _pen(cfg: dict) -> tuple[str, dict]:
-    """The pen that is in.  A pen without its own speed on the paper draws at
-    drawing.draw_speed_m_per_s (the checker reads it the same way)."""
+def _pen(cfg: dict, name: str | None = None) -> tuple[str, dict]:
+    """The pen `name` (default: pens.current, the pen of every slot pens.json does not list).
+    A pen without its own speed on the paper draws at drawing.draw_speed_m_per_s (the checker
+    reads it the same way)."""
     pens = cfg["pens"]
-    name = pens["current"]
-    if name not in pens["table"]:
-        raise ValueError(f"rig.json: pens.current {name!r} is not in pens.table")
+    if name is None:
+        name = pens["current"]
+        if name not in pens["table"]:
+            raise ValueError(f"rig.json: pens.current {name!r} is not in pens.table")
+    elif name not in pens["table"]:
+        raise ValueError(f"no pen {name!r} in rig.json pens.table; pens are "
+                         f"{tuple(pens['table'])}")
     pen = pens["table"][name]
     need = ("press_m", "tip_length_nominal_m", "capsule_radius_m")
     if any(k not in pen for k in need):
@@ -179,6 +187,27 @@ def _pen(cfg: dict) -> tuple[str, dict]:
                              "draw_speed_m_per_s")
         pen["speed_m_per_s"] = float(cfg["drawing"]["draw_speed_m_per_s"])
     return name, pen
+
+
+PENS_FILE = "pens.json"
+
+
+def _read_pens_in(path: Path, cfg: dict) -> tuple[dict, str | None]:
+    """-> ({slot: pen name} as `pens.json` lists it, its date); ({}, None) without the file.  A file naming a pen not
+    in pens.table, or a slot that is no slot name, is a broken install: raise.  A slot of the
+    frame without an arm today is kept (the file outlives a rig.json change)."""
+    if not path.exists():
+        return {}, None
+    d = json.loads(path.read_text())
+    named = d.get("in") if isinstance(d, dict) else None
+    if not isinstance(named, dict):
+        raise ValueError(f"{path}: no \"in\": {{slot: pen name}}")
+    bad = [s for s in named if not is_slot(s)]
+    unknown = sorted({str(n) for n in named.values()} - set(cfg["pens"]["table"]))
+    if bad or unknown:
+        raise ValueError(f"{path}: slots {bad} are no slot names, pens {unknown} are not in "
+                         "rig.json pens.table")
+    return {str(s): str(n) for s, n in named.items()}, d.get("date")
 
 
 def _marks(cfg: dict, config_dir: Path, slots: tuple):
@@ -223,7 +252,7 @@ class Rig:
     gate_cfg: dict                     # rig.json "gates", as read
     drawing_cfg: dict                  # rig.json "drawing", as read
     execution_cfg: Execution
-    pen_name: str                      # rig.json pens.current
+    pen_name: str                      # rig.json pens.current: the default pen (`pen_name_in`)
     pen_cfg: dict                      # its pens.table entry, notes and source left out
     shoulder_below_base: float
     body_reach: float                  # from the shoulder, see rig.json "reach"
@@ -252,6 +281,9 @@ class Rig:
         cfg = json.loads((config_dir / "rig.json").read_text())
         pen_name, pen = _pen(cfg)
         _check_slots(cfg["slots"]["list"])
+        pens_file = config_dir / PENS_FILE
+        named, pens_date = _read_pens_in(pens_file, cfg)
+        slot_pens = {}                 # slot -> (name, entry), mounted slots, when pens.json is
         mounts, hangers = {}, []
         for a in cfg["slots"]["list"]:
             slot = a["slot"]
@@ -268,11 +300,14 @@ class Rig:
             if not _rot_ok(T[:3, :3]):
                 raise ValueError(f"slot {slot}: R_table_base is not a rotation")
             T_nominal = T.copy()
+            name, entry = _pen(cfg, named[slot]) if slot in named else (pen_name, pen)
+            if pens_file.exists():
+                slot_pens[slot] = (name, entry)
             T, tip, status = _read_calibration(config_dir / "calibration" / f"{slot}.json", slot,
-                                               T, pen_name)
+                                               T, name)
             # The arm is bolted to its plate: the hanger goes where the calibrated axis is.
             hangers += _hanger_boxes(slot, T[:2, 3], cfg["hanger"])
-            tool = _pen_tool(pen, tip)
+            tool = _pen_tool(entry, tip)
             mounts[slot] = Mount(slot, axis, T, np.asarray(a["park_q_rad"], float), tool,
                                  tool.tip_hand.copy(), status, T_nominal)
         if not mounts:
@@ -293,8 +328,12 @@ class Rig:
                     raise ValueError(f"rig.json: slot {slot} stands behind fence {name}")
         num = lambda d: {k: float(v) for k, v in d.items() if k.endswith("_m")}
         canvas = cfg["canvas"]
-        return Rig(
-            mounts=mounts, slot_names=tuple(a["slot"] for a in cfg["slots"]["list"]),
+        # Without pens.json the rig is a plain Rig and digests exactly as before the file
+        # existed; with it, a RigPensIn whose extra fields carry every slot's pen, so the rig
+        # digest in a job header follows the file.
+        extra = {} if not pens_file.exists() else dict(slot_pens=slot_pens, pens_date=pens_date)
+        rig = (RigPensIn if extra else Rig)(
+            **extra, mounts=mounts, slot_names=tuple(a["slot"] for a in cfg["slots"]["list"]),
             steel=tuple(cage + hangers),
             clearance=num(cfg["clearances"]), allowance=num(cfg["planning_allowance"]),
             gate_cfg={k: float(v) for k, v in cfg["gates"].items() if not isinstance(v, str)},
@@ -321,6 +360,10 @@ class Rig:
                        _marks(cfg, config_dir, tuple(a["slot"] for a in cfg["slots"]["list"])))),
             reference_slot=cfg.get("marks", {}).get("reference_slot"),
         )
+        # Every pen of pens.table, for `pen_table`: an attribute, not a field, so that the rig
+        # digest (which walks the fields) does not move with it.
+        object.__setattr__(rig, "_pen_table", {n: _pen(cfg, n)[1] for n in cfg["pens"]["table"]})
+        return rig
 
     # ------------------------------------------------------------------ arms and frames
 
@@ -350,7 +393,8 @@ class Rig:
 
     def calibration_status(self, slot: Slot) -> dict:
         """{"base": s, "pen": s}, each "none" (no such part), "applied: ..." or
-        "<part> part not applied: <why>"."""
+        "<part> part not applied: <why>" (a pen part for another pen than the slot's: "pen part
+        not applied: measured for graphite_4h, gel_g2 is in")."""
         return dict(self._mount(slot).calibration)
 
     def calibrated(self, slot: Slot) -> bool:
@@ -359,7 +403,7 @@ class Rig:
 
     def arm(self, slot: Slot):
         """The arm model with this slot's tool (the measured pen tip when the pen part applies,
-        else the current pen's nominal length)."""
+        else the nominal length of the slot's pen)."""
         return Arm(self._mount(slot).tool)
 
     def nominal_pose(self, slot: Slot) -> np.ndarray:
@@ -367,13 +411,14 @@ class Rig:
         calibration solvers measure their refusals against."""
         return self._mount(slot).T_nominal.copy()
 
-    def nominal_tool(self) -> Tool:
-        """The holder with the current pen at its nominal length, before any calibration."""
-        return _pen_tool(self.pen_cfg, None)
+    def nominal_tool(self, slot: Slot | None = None) -> Tool:
+        """The holder with the slot's pen at its nominal length, before any calibration (the
+        measured tip is `arm(slot).tool`).  Without a slot: the default pen (pens.current)."""
+        return _pen_tool(self._slot_pen(slot)[1], None)
 
-    def nominal_tip(self) -> np.ndarray:
-        """(3,) the current pen's nominal tip in the hand frame."""
-        return self.nominal_tool().tip_hand.copy()
+    def nominal_tip(self, slot: Slot | None = None) -> np.ndarray:
+        """(3,) the nominal tip of the slot's pen (no slot: the default pen), hand frame."""
+        return self.nominal_tool(slot).tip_hand.copy()
 
     def to_base(self, slot: Slot, line: Line) -> Line:
         if line.frame != "table":
@@ -417,11 +462,14 @@ class Rig:
     def execution(self) -> Execution:
         return self.execution_cfg
 
-    def rules(self) -> DrawRules:
-        """The drawing rules, all from rig.json, with `gates()` inside; the press and the speed
-        on the paper are the current pen's.  The one source every planner uses."""
-        d, p = self.drawing_cfg, self.pen_cfg
+    def rules(self, slot: Slot | None = None) -> DrawRules:
+        """The drawing rules for the arm in `slot`, all from rig.json, with `gates()` inside;
+        the press, the speed on the paper and drag_only are the slot's pen's.  The one source
+        every planner uses.  Without a slot: the default pen's (pens.current), which is the
+        pen of a slot only when pens.json does not list it."""
+        d, p = self.drawing_cfg, self._slot_pen(slot)[1]
         return DrawRules(draw_speed=float(p["speed_m_per_s"]), press=float(p["press_m"]),
+                         drag_only=bool(p.get("drag_only", False)),
                          landing_speed=d.get("landing_speed_m_per_s", 0.010),
                          lean_max=float(np.deg2rad(self.gate_cfg["pen_lean_max_deg"])),
                          min_piece=d["min_piece_m"], speed_fraction=d["speed_fraction"],
@@ -434,10 +482,58 @@ class Rig:
         start tolerance, rig.json `execution`, is a different, larger number)."""
         return float(np.max(np.abs(np.asarray(q, float) - self.park_q(slot)))) <= self.AT_PARK_RAD
 
-    def pen(self) -> dict:
-        """The pen that is in, as plain data: its pens.table entry plus "name".  The server
-        copies it into every job header."""
-        return dict(self.pen_cfg, name=self.pen_name)
+    def pen(self, slot: Slot | None = None) -> dict:
+        """The pen in `slot`, as plain data: its pens.table entry plus "name".  The server
+        copies it into every job header.  Without a slot: the default pen (pens.current), the
+        pen of every slot pens.json does not list."""
+        name, entry = self._slot_pen(slot)
+        return dict(entry, name=name)
+
+    @property
+    def pen_table(self) -> dict:
+        """{name: entry} of every pen in rig.json pens.table (notes and source left out),
+        whether or not any slot has it: the pens `aris pen <slot> <name>` may put in."""
+        table = getattr(self, "_pen_table", {self.pen_name: self.pen_cfg})
+        return {n: dict(e) for n, e in table.items()}
+
+    def pen_name_in(self, slot: Slot) -> str:
+        """The name of the pen in `slot` (`pen_name` is the default pen's)."""
+        return self._slot_pen(slot)[0]
+
+    @property
+    def pens_in(self) -> dict:
+        """{slot: pen name} for every mounted slot."""
+        return {s: self.pen_name_in(s) for s in self.arm_ids}
+
+    def _slot_pen(self, slot: Slot | None) -> tuple[str, dict]:
+        """(name, entry) of the pen in `slot`; the default pen for None.  A plain Rig has no
+        pens.json: every slot has the default pen (RigPensIn overrides this)."""
+        if slot is not None:
+            self._mount(slot)
+        return self.pen_name, self.pen_cfg
+
+    @staticmethod
+    def write_pens_in(config_dir, pens: dict) -> dict:
+        """Put pen `name` in slot `slot` for each {slot: name}: writes config_dir/pens.json,
+        keeping the slots it already lists and the others not given, dated now.  Refuses
+        (ValueError, nothing written) a pen not in rig.json pens.table or a slot with no arm.
+        -> {slot: name} for every mounted slot after the write.  `aris pen <slot> <name>`."""
+        config_dir = Path(config_dir)
+        cfg = json.loads((config_dir / "rig.json").read_text())
+        mounted = [a["slot"] for a in cfg["slots"]["list"] if a.get("mounted", True)]
+        bad = [s for s in pens if s not in mounted]
+        unknown = [n for n in pens.values() if n not in cfg["pens"]["table"]]
+        if bad or unknown:
+            raise ValueError(f"cannot put a pen in slots {bad} (mounted: {mounted}) or pens "
+                             f"{unknown} (pens: {list(cfg['pens']['table'])})")
+        path = config_dir / PENS_FILE
+        named = dict(_read_pens_in(path, cfg)[0], **{str(s): str(n) for s, n in pens.items()})
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"in": dict(sorted(named.items())),
+                                   "date": datetime.now().isoformat(timespec="seconds")},
+                                  indent=1) + "\n")
+        os.replace(tmp, path)
+        return Rig.load(config_dir).pens_in
 
     # ------------------------------------------------------------------ walls
 
@@ -578,3 +674,17 @@ class Rig:
         if self.mark_state(name) == "solved":
             return self.mark_files[name]["xy_m"].copy()
         return self.marks[name][0].copy()
+
+
+@dataclass(frozen=True)
+class RigPensIn(Rig):
+    """A rig with a pens.json: which pen is in which slot.  A subclass rather than a field of
+    Rig so that a rig without the file digests exactly as before (the digest walks the fields)."""
+    slot_pens: dict = None             # slot -> (pen name, its pens.table entry), mounted slots
+    pens_date: str | None = None       # pens.json "date"
+
+    def _slot_pen(self, slot: Slot | None) -> tuple[str, dict]:
+        if slot is None:
+            return self.pen_name, self.pen_cfg
+        self._mount(slot)
+        return self.slot_pens[slot]

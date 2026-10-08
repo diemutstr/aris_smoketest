@@ -115,7 +115,7 @@ def test_recovers_tilt_and_height(rigs, cfg, slot, tilt_deg, dz, spin):
     seed = ord(slot[0]) + ord(slot[1])
     r = calibrate_plane(rig, slot, touches(rig, slot, T_true, spin, 0.5e-3, seed))
     assert r.passed, r.why
-    assert r.n_points == 25 and r.slot == slot and r.pen == rig.pen_name
+    assert r.n_points == 25 and r.slot == slot and r.pen == rig.pen_name_in(slot)
     assert abs(np.rad2deg(r.roll) - tilt_deg[0]) < 0.05
     assert abs(np.rad2deg(r.pitch) - tilt_deg[1]) < 0.05
     assert abs(r.height_change - dz) < 0.2e-3
@@ -236,7 +236,7 @@ def test_base_file_loads_through_rig(rigs, tmp_path):
     assert b["passed"] is True and b["why"] == "" and b["method"] == "plane"
     assert b["residuals"]["n_points"] == 25 and len(b["height_map_table_m"]) == 25
     assert abs(b["height_change_mm"] - 12.0) < 0.2 and b["residuals"]["rms_mm"] < 0.5
-    assert b["measured_with"]["pen"] == rig.pen_name
+    assert b["measured_with"]["pen"] == rig.pen_name_in("2L")
 
     loaded = Rig.load(cfg)
     st = loaded.calibration_status("2L")
@@ -280,7 +280,7 @@ def plane_then_pen(src, dst, slot, tilt, dz, pen_at_plane, pen_now, ref_offset=(
     ref = rig.T_table_base(slot)[:2, 3] + np.asarray(ref_offset)
     q = touch_q(true_arm(pen_now), T_true, ref, 0.3, rig.paper_z)[0]
     q = q + noise * np.random.default_rng(seed).standard_normal(7)
-    return rig, touchoff(rig, slot, q, ref, rig.pen_name), cfg
+    return rig, touchoff(rig, slot, q, ref, rig.pen_name_in(slot)), cfg
 
 
 def test_touchoff_finds_a_longer_pen(tmp_path):
@@ -308,14 +308,14 @@ def test_touchoff_refusals(rigs, tmp_path):
     assert r.passed
     rig = Rig.load(tmp_path / "b")
     far = rig.T_table_base("2L")[:2, 3] + [0.1 + 0.04, 0.05]
-    r2 = touchoff(rig, "2L", r.q, far, rig.pen_name)
+    r2 = touchoff(rig, "2L", r.q, far, rig.pen_name_in("2L"))
     assert not r2.passed and "from the reference point" in r2.why
     r3 = touchoff(rig, "2L", r.q, far, "gel_07")
     assert not r3.passed and "'gel_07'" in r3.why
-    r4 = touchoff(rig, "2L", r.q[:6], far, rig.pen_name)
+    r4 = touchoff(rig, "2L", r.q[:6], far, rig.pen_name_in("2L"))
     assert not r4.passed and "7 joint readings" in r4.why
     # no base part: the plane must be known first
-    r5 = touchoff(rigs["config/two_arms"], "2L", r.q, far, rig.pen_name)
+    r5 = touchoff(rigs["config/two_arms"], "2L", r.q, far, rig.pen_name_in("2L"))
     assert not r5.passed and "run the plane job first" in r5.why
 
 
@@ -340,7 +340,7 @@ def test_two_parts_written_independently(tmp_path):
     cal = read(cfg, "2L")
     assert cal["base"] == before
     p = cal["pen"]
-    assert p["passed"] is True and p["pen"] == rig.pen_name and p["date"] == "2026-10-03"
+    assert p["passed"] is True and p["pen"] == rig.pen_name_in("2L") and p["date"] == "2026-10-03"
     assert p["robot"] == "fr3-71" and "robot" not in cal["base"]
     assert p["reference_touch"]["q"] == pytest.approx(list(r.q))
     assert abs(p["correction_mm"] - 1.3) < 0.05
@@ -356,7 +356,7 @@ def test_two_parts_written_independently(tmp_path):
     assert loaded.calibrated("2L") and not loaded.calibrated("2R")
     assert np.allclose(loaded.arm("2L").tool.tip_hand, r.tip_hand, atol=1e-9)
     ls = {f["slot"]: f for f in listing(cfg)}
-    assert ls["2L"]["pen"]["passed"] and ls["2L"]["pen"]["pen"] == rig.pen_name
+    assert ls["2L"]["pen"]["passed"] and ls["2L"]["pen"]["pen"] == rig.pen_name_in("2L")
 
     # another pen in: the pen part stays on disk but is not applied
     other = fresh(cfg, tmp_path / "other", pen="gel_07")
@@ -441,7 +441,7 @@ def make_truth(src, root, slots, seed=0, big=None):
         T0, T = rn.T_table_base(s), truth[s]
         _write(root / "true" / "calibration" / f"{s}.json", {
             "slot": s, "base": {"passed": True, "method": "truth", "T_table_base": T.tolist()},
-            "pen": {"passed": True, "pen": rn.pen_name, "tip_hand_m": tip.tolist()}})
+            "pen": {"passed": True, "pen": rn.pen_name_in(s), "tip_hand_m": tip.tolist()}})
         Tp = T0.copy()                  # the plane job: smallest tilt, height with nominal pen
         Tp[:3, :3] = P._rotvec_to_matrix(_horizontal_turn(T0[:3, :3] @ T[:3, :3].T[:, 2])) \
             @ T0[:3, :3]
@@ -933,3 +933,22 @@ def test_meetings_refusals_and_server_call(tmp_path):
         assert b["method"] == "meetings"
     assert read(tmp_path / "two", "2R")["base"]["yaw_from"] == "meetings"
     assert not (tmp_path / "two" / "calibration" / "marks.json").exists()
+
+
+def test_pens_are_per_slot(tmp_path):
+    """The pen in each slot (`rig.pen_name_in`), not the rig's default, is what the plane job
+    records and what a touch-off is checked against."""
+    cfg = fresh("config/two_arms", tmp_path)
+    rj = json.loads((cfg / "rig.json").read_text())
+    rj["pens"]["table"]["gel_07"] = dict(rj["pens"]["table"][rj["pens"]["current"]])
+    (cfg / "rig.json").write_text(json.dumps(rj))
+    Rig.write_pens_in(cfg, {"2R": "gel_07"})
+    rig = Rig.load(cfg)
+    assert rig.pen_name_in("2R") == "gel_07" and rig.pen_name != "gel_07"
+    plane = calibrate_plane(rig, "2R", touches(rig, "2R", rig.T_table_base("2R"), 0.0))
+    assert plane.passed and plane.pen == "gel_07"
+    write_base(plane, cfg, date="2026-10-08")
+    rig = Rig.load(cfg)
+    assert read(cfg, "2R")["base"]["measured_with"]["pen"] == "gel_07"
+    r = touchoff(rig, "2R", np.zeros(7), (0.3, 0.0), rig.pen_name)    # the default's name
+    assert not r.passed and "but 2R has 'gel_07'" in r.why

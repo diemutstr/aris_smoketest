@@ -64,9 +64,22 @@ class Station:
         c = getattr(self.rig, "drawing_area_centre_m", None)
         return (0.0, 0.0) if c is None else tuple(float(x) for x in np.asarray(c).reshape(2))
 
-    def pen(self) -> dict:
-        """The pen that is in, as the rig has it (`rig.pen()`: its table entry and its name)."""
-        return dict(self.rig.pen()) if hasattr(self.rig, "pen") else {}
+    def pen(self, slot=None) -> dict:
+        """The pen that is in `slot` (`rig.pen(slot)`: its pens.table entry and its name; the
+        default pen without a slot)."""
+        return dict(self.rig.pen(slot))
+
+    def pens(self) -> dict:
+        """{slot: the pen entry that is in it}."""
+        return {a: self.pen(a) for a in self.rig.arm_ids}
+
+    def rules_for(self, slot):
+        """The drawing rules of the arm in `slot`: its pen's press, speed and drag_only."""
+        return self.rig.rules(slot)
+
+    def pen_name(self, slot) -> str:
+        """The name of the pen in `slot` (`rig.pen_name` is the default pen's)."""
+        return self.rig.pen_name_in(slot)
 
     def reload(self) -> None:
         """Read the rig again (after a calibration file was written)."""
@@ -96,7 +109,7 @@ class Station:
         cal = self.calibration()
         return dict(self.digests(), calibration=cal, uncalibrated=self.uncalibrated,
                     driver=self.driver_kind, speed=self.speed,
-                    pen=self.pen().get("name"),
+                    pens={a: p.get("name") for a, p in self.pens().items()},
                     note=("UNCALIBRATED: every arm runs on its nominal pose and pen"
                           if self.uncalibrated else "calibrated"))
 

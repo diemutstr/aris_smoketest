@@ -220,8 +220,8 @@ def _result(rig, order, ref, free, delta, psi, res, rows, notes) -> MarkSolution
         mine = [k for k, (a, b, _) in enumerate(rows) if s in (a, b)]
         yaw_from = "reference" if s == ref else "meetings" if s in free else "nominal"
         fits[s] = SlotFit(s, T, T0, rig.arm(s).tool.tip_hand.copy(), None, "", shift, ynom,
-                          float(np.sqrt(np.mean(res[mine] ** 2))), len(mine), rig.pen_name,
-                          None, "meetings", yaw_from)
+                          float(np.sqrt(np.mean(res[mine] ** 2))), len(mine),
+                          rig.pen_name_in(s), None, "meetings", yaw_from)
         if shift > POSE_SHIFT_MAX or abs(ynom) > POSE_YAW_MAX:
             why.append(f"refused: {s} {shift:.3f} m and {np.rad2deg(ynom):+.2f} deg from its "
                        f"nominal pose — wrong slot or wrong robot?")

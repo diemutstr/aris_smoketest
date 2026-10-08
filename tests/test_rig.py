@@ -844,3 +844,106 @@ def test_the_hanger_turned_180_degrees(rig):
         lo = next(b for b in rig.steel if b.name == f"strut{slot}_minus_x").lo_table[0]
         hi = next(b for b in rig.steel if b.name == f"strut{slot}_plus_x").hi_table[0]
         assert abs((ax - lo) - 0.22205) < 1e-12 and abs((hi - ax) - 0.17175) < 1e-12
+
+
+# --------------------------------------------------------------------------- pens per slot
+
+
+def _two_pen_rig(tmp_path, pens_in, longer_gel=True):
+    """rig.json with a gel pen 5 mm longer than the graphite, plus pens.json (when given)."""
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    if longer_gel:
+        cfg["pens"]["table"]["gel_g2"]["tip_length_nominal_m"] = 0.025
+    (tmp_path / "rig.json").write_text(json.dumps(cfg))
+    if pens_in is not None:
+        (tmp_path / "pens.json").write_text(json.dumps({"in": pens_in, "date": "2026-10-08"}))
+
+
+def test_two_pens_in_two_slots(tmp_path, rig):
+    from aris.execute.queue import digest
+    _two_pen_rig(tmp_path, {"1L": "gel_g2", "1R": "gel_g2"})
+    r = Rig.load(tmp_path)
+    assert r.pens_in == {"1L": "gel_g2", "1R": "gel_g2", "2L": "graphite_4h",
+                         "2R": "graphite_4h", "3L": "graphite_4h", "3R": "graphite_4h"}
+    assert r.pen_name_in("1L") == r.pen("1L")["name"] == "gel_g2"
+    assert r.pen("1L")["drag_only"] is True and "drag_only" not in r.pen("2L")
+    gel, graphite = r.rules("1L"), r.rules("2L")
+    assert gel.press == 0.0025 and gel.drag_only and graphite.press == 0.0016 \
+        and not graphite.drag_only
+    assert r.rules() == rig.rules() and r.pen() == rig.pen()          # no slot: the default
+    tool0 = default_tool()
+    np.testing.assert_allclose(r.arm("1L").tool.tip_hand,
+                               tool0.tip_hand + 0.005 * tool0.pen_axis_hand, atol=1e-15)
+    np.testing.assert_array_equal(r.arm("2L").tool.tip_hand, tool0.tip_hand)
+    np.testing.assert_array_equal(r.nominal_tip("1L"), r.arm("1L").tool.tip_hand)
+    np.testing.assert_array_equal(r.nominal_tip("2L"), tool0.tip_hand)
+    np.testing.assert_array_equal(r.nominal_tip(), tool0.tip_hand)
+    with pytest.raises(KeyError):
+        r.pen("4L")
+    assert digest(r) != digest(rig)                    # the job header's rig digest follows
+
+
+def test_pen_part_for_the_other_pen_is_ignored_per_slot(tmp_path):
+    _two_pen_rig(tmp_path, {"2R": "gel_g2"})
+    tip = default_tool().tip_hand + TIP_SHIFT
+    (tmp_path / "calibration").mkdir()
+    for slot, pen_name in (("2R", "graphite_4h"), ("2L", "graphite_4h")):
+        (tmp_path / "calibration" / f"{slot}.json").write_text(json.dumps({"slot": slot, "pen": {
+            "passed": True, "date": "2026-10-07", "pen": pen_name, "tip_hand_m": list(tip)}}))
+    r = Rig.load(tmp_path)
+    assert r.calibration_status("2R")["pen"] == \
+        "pen part not applied: measured for graphite_4h, gel_g2 is in"
+    np.testing.assert_array_equal(r.arm("2R").tool.tip_hand, r.nominal_tip("2R"))
+    assert r.calibration_status("2L")["pen"].startswith("applied: 2L.json pen graphite_4h")
+    np.testing.assert_array_equal(r.arm("2L").tool.tip_hand, tip)
+
+
+def test_write_pens_in_round_trip(tmp_path):
+    _two_pen_rig(tmp_path, None)
+    assert set(Rig.load(tmp_path).pens_in.values()) == {"graphite_4h"}
+    out = Rig.write_pens_in(tmp_path, {"1L": "gel_g2"})
+    assert out["1L"] == "gel_g2" and out["2L"] == "graphite_4h"
+    out = Rig.write_pens_in(tmp_path, {"1R": "gel_g2"})                 # keeps 1L
+    d = json.loads((tmp_path / "pens.json").read_text())
+    assert d["in"] == {"1L": "gel_g2", "1R": "gel_g2"} and re.fullmatch(r"\d{4}-.*", d["date"])
+    r = Rig.load(tmp_path)
+    assert r.pens_in == out and r.pens_date == d["date"] and r.rules("1R").drag_only
+    Rig.write_pens_in(tmp_path, {"1L": "graphite_4h"})
+    assert Rig.load(tmp_path).pens_in["1L"] == "graphite_4h"
+
+
+def test_unknown_pens_and_slots_are_refused(tmp_path):
+    _two_pen_rig(tmp_path, None)
+    for bad in ({"1L": "biro"}, {"4L": "gel_g2"}, {"2L": "gel_g2", "1R": "nonesuch"}):
+        with pytest.raises(ValueError):
+            Rig.write_pens_in(tmp_path, bad)
+        assert not (tmp_path / "pens.json").exists()                     # nothing written
+    _two_pen_rig(tmp_path, {"1L": "biro"})
+    with pytest.raises(ValueError, match="biro"):
+        Rig.load(tmp_path)
+    two = tmp_path / "two"
+    two.mkdir()
+    shutil.copy(CONFIG / "two_arms" / "rig.json", two / "rig.json")
+    with pytest.raises(ValueError):                                      # no arm in 1L there
+        Rig.write_pens_in(two, {"1L": "gel_g2"})
+
+
+def test_no_pens_file_is_the_default_everywhere_and_digests_as_before(rig):
+    """Without pens.json the rig is a plain Rig with the fields it had before pens.json existed,
+    so the rig digest (job headers, recheck) does not move."""
+    from dataclasses import fields
+    assert type(rig) is Rig and not (CONFIG / "pens.json").exists()
+    assert "slot_pens" not in {f.name for f in fields(rig)}
+    assert rig.pens_in == {s: "graphite_4h" for s in SLOTS}
+    for s in SLOTS:
+        assert rig.rules(s) == rig.rules() and rig.pen(s) == rig.pen()
+        np.testing.assert_array_equal(rig.nominal_tip(s), rig.nominal_tip())
+
+
+def test_pen_table_has_every_pen(rig):
+    from aris.execute.queue import digest
+    cfg = json.loads((CONFIG / "rig.json").read_text())
+    assert set(rig.pen_table) == set(cfg["pens"]["table"])
+    assert rig.pen_table["gel_g2"]["drag_only"] is True
+    assert rig.pen_table[rig.pen_name] == rig.pen_cfg
+    assert digest(rig) == digest(Rig.load(CONFIG))     # an attribute, not a digested field

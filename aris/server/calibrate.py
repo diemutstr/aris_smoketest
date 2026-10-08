@@ -156,7 +156,7 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
     `points`: (N,2) table xy to touch instead of the grid (the touch-off: one point);
     `name`: the phase is "<name> <slot>"; `min_points`: fewer reachable is a refusal."""
     min_points = MIN_CONTACTS if min_points is None else min_points
-    rig, rules = st.rig, st.rules
+    rig, rules = st.rig, st.rules_for(a)
     from aris.server.retreat import retreats
     now = {b: np.asarray(q, float) for b, q in where.items()}
     scene = Scene(rig)

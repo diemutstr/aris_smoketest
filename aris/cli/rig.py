@@ -32,6 +32,28 @@ def cmd_arms(a, http) -> int:
                    f"no reading for {', '.join(unknown)}")
 
 
+def cmd_pen(a, http) -> int:
+    """`aris pen`: the pens in; `aris pen 1L gel_g2`: put that pen into 1L."""
+    import json
+    if _assume(http) is None:
+        return verdict(False, "the server does not answer")
+    if a.slot and a.name:
+        code, r = http.post(f"/pens/{a.slot}", json.dumps(dict(name=a.name)).encode())
+        if code != 200:
+            return verdict(False, f"refused: {r.get('refused')}: {r.get('detail')}")
+    elif a.slot or a.name:
+        return verdict(False, "give a slot and a pen name (or neither, to list the pens in)")
+    else:
+        code, r = http.get("/pens")
+        if code != 200:
+            return verdict(False, f"{r}")
+    for slot, name in r["pens_in"].items():
+        say(f"{slot:<4} {name}")
+    if r.get("table"):
+        say(f"pens: {', '.join(r['table'])}")
+    return verdict(True, f"{a.slot} has {a.name} in" if a.slot else "pens listed")
+
+
 def cmd_rig(a, http) -> int:
     r = _assume(http)
     if r is None:
@@ -39,7 +61,8 @@ def cmd_rig(a, http) -> int:
     c = r.get("drawing_area_centre_m") or [0.0, 0.0]
     say(f"drawing area {r['drawing_area_m'][0]:.3f} x {r['drawing_area_m'][1]:.3f} m around "
         f"({c[0]:+.3f}, {c[1]:+.3f}), canvas {r['canvas_m'][0]:.3f} x {r['canvas_m'][1]:.3f} m")
-    say(f"pen {(r.get('pen_in') or {}).get('name')}")
+    say("pens   " + ", ".join(f"{a} {(p or {}).get('name')}"
+                               for a, p in (r.get("pens_in") or {}).items()))
     files = r.get("calibration_files", {})
     for aid, arm in r["arms"].items():
         T = arm["T_table_base"]

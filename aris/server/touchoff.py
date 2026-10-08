@@ -91,7 +91,7 @@ def solve(st, rec, plan, run, ref, source):
         why = run.why if run.status != "done" else "the touch met no paper"
         return "failed", f"no contact at {ref}: {why}", None, None
     q = np.asarray(contacts[-1]["q"], float)
-    result = solver(st.rig, slot, q, np.asarray(ref, float), st.rig.pen_name)
+    result = solver(st.rig, slot, q, np.asarray(ref, float), st.pen_name(slot))
     if not result.passed:
         return "failed", f"the touch-off did not pass: {result.why}", result, None
     from aris.server.robots import write_kwargs

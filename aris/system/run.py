@@ -30,6 +30,7 @@ class ArmJob:
     q_start: np.ndarray
     q_end: np.ndarray
     verify: object = None       # verify(motion, q_before) -> dict, picklable; None: unchecked
+    rules: DrawRules | None = None   # this arm's rules (its pen); None: the phase's
 
 
 def stream(rig, job: ArmJob, rules: DrawRules, cache_dir, local_workers: int):
@@ -37,7 +38,8 @@ def stream(rig, job: ArmJob, rules: DrawRules, cache_dir, local_workers: int):
     st = arm_planner.PlanStats()
     kw = {} if job.verify is None else dict(verify=job.verify)
     gen = arm_planner.plan(rig.arm(job.arm_id), list(job.lines), job.obstacles, job.q_start,
-                           rules, job.q_end, local_workers, cache_dir, stats=st, **kw)
+                           job.rules or rules, job.q_end, local_workers, cache_dir, stats=st,
+                           **kw)
     while True:
         try:
             yield "motion", next(gen)

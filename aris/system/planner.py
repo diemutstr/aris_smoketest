@@ -117,10 +117,12 @@ def start_configs(rig, arm_configs, first_active) -> dict:
 
 def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir=None,
          workers: int = 1, settings: Settings | None = None, report: Report | None = None,
-         verify=None, surface=None):
+         verify=None, surface=None, rules_by_slot: dict | None = None):
     """Yields (phase name, arm id, Motion) as the arm planners produce them; returns the
     leftovers.
-    `rules`: default `rig.rules()`, the only source.
+    `rules`: default `rig.rules()`, the only source; the maps and the allocation use it.
+    `rules_by_slot`: {slot: DrawRules}, each arm's own (its pen: press, speed on the paper,
+    drag only); a slot left out uses `rules`.
     `lines`: table-frame Lines with distinct ids.  `arm_configs`: arm id -> where it
     stands (default: its park).  `cache_dir`: where the drawable maps and the local planner's
     kinematic table are kept.  `workers`: processes (map building, arms of a phase).
@@ -164,7 +166,8 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
             rep.skipped.append((ph.name, "nothing allocated to it"))
             continue
         pool, final = yield from _phase(rig, phases, k, todo, mine, pool, q_now, rules,
-                                        cfg, cache_dir, workers, rep, w0, verify, surface)
+                                        cfg, cache_dir, workers, rep, w0, verify, surface,
+                                        rules_by_slot or {})
         left += final
         for a in todo:
             q_now[a] = rig.park_q(a)
@@ -174,7 +177,7 @@ def plan(rig, lines, rules: DrawRules | None = None, arm_configs=None, cache_dir
 
 
 def _phase(rig, phases, k, todo, mine, pool, q_now, rules, cfg, cache_dir, workers, rep,
-           w0, verify, surface):
+           w0, verify, surface, by_slot):
     """Runs phase k.  Yields the tagged motions; returns (the pool for the phases after,
     leftovers)."""
     ph = phases[k]
@@ -183,7 +186,7 @@ def _phase(rig, phases, k, todo, mine, pool, q_now, rules, cfg, cache_dir, worke
     t0 = time.perf_counter()
     jobs = {a: (rig.obstacles_for(a, ph), mine[a], q_now[a]) for a in todo}
     back, final = yield from _run(rig, ph, jobs, pr, rules, cache_dir, workers, rep, t0, w0,
-                                  verify, surface, cfg)
+                                  verify, surface, cfg, by_slot)
     pr.wall = time.perf_counter() - t0
     for a in [a for a, r in pr.arms.items() if r.motions == 0]:     # lesson L82: no EMPTY rows
         pr.idle[a] = pr.arms.pop(a)
@@ -204,7 +207,7 @@ def on_surface(line: Line, z: float) -> Line:
 
 
 def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify,
-         surface=None, cfg: Settings | None = None):
+         surface=None, cfg: Settings | None = None, by_slot: dict | None = None):
     """The arm planners of `jobs` {slot: (obstacles, stretches, q_start)}, in parallel, each
     back to its park, each with `verify` bound to its slot and the phase.  Yields the tagged
     motions; returns (handed back, leftovers)."""
@@ -212,12 +215,15 @@ def _run(rig, ph, jobs: dict, pr, rules, cache_dir, workers, rep, t0, w0, verify
     for a, (obs, sts, q0) in jobs.items():
         pr.arms[a] = ArmReport(a, len(sts), float(sum(s.length for s in sts)))
         base = []
+        own = (by_slot or {}).get(a, rules)
         for i, st in enumerate(sts):
-            line, arcs = _on_paper(st, f"{st.line_id}#{i}", surface, rules.press, cfg)
+            line, arcs = _on_paper(st, f"{st.line_id}#{i}", surface, own.press, cfg,
+                                   rig.paper_z if own.press != rules.press else None)
             subs[(a, line.id)] = (st, arcs)
             base.append(rig.to_base(a, line))
         bound = None if verify is None else partial(verify, a, ph)
-        arm_jobs.append(ArmJob(a, tuple(base), obs, q0, rig.park_q(a), bound))
+        arm_jobs.append(ArmJob(a, tuple(base), obs, q0, rig.park_q(a), bound,
+                               None if own is rules else own))
     back, final = [], []
     for a, kind, payload in run_phase(rig, arm_jobs, rules, cache_dir, workers):
         ar = pr.arms[a]
@@ -264,13 +270,20 @@ def _retag(m: Motion, subs: dict, arm_id: Slot) -> Motion:
     return replace(m, piece=Piece(s.line_id, a, b))
 
 
-def _on_paper(st: Stretch, line_id: str, surface, press: float, cfg):
+def _on_paper(st: Stretch, line_id: str, surface, press: float, cfg, paper_z=None):
     """The stretch as the line its arm planner draws.  Without a surface: as it is (every point
-    at paper_z - press).  With one: points at most `cfg.surface_step` apart along it, each at
-    `surface.z(x, y) - press`, and the arc lengths (along this line, along the drawing) that
-    take the planner's pieces back to the drawing's own arc length.  -> (Line, arcs or None)."""
+    at paper_z - the planner's press), or, with `paper_z` (an arm whose pen presses otherwise),
+    at paper_z - `press`.  With a surface: points at most `cfg.surface_step` apart along it,
+    each at `surface.z(x, y) - press`, and the arc lengths (along this line, along the drawing)
+    that take the planner's pieces back to the drawing's own arc length.
+    -> (Line, arcs or None)."""
     if surface is None:
-        return st.as_line(line_id), None
+        line = st.as_line(line_id)
+        if paper_z is None:
+            return line, None
+        p = np.array(line.points, float)
+        p[:, 2] = paper_z - press
+        return replace(line, points=p), None
     u, p = st.samples(cfg.surface_step)
     p = p.copy()
     p[:, 2] = np.asarray(surface.z(p[:, 0], p[:, 1]), float) - press
@@ -284,18 +297,19 @@ def _flat(st: Stretch, arcs, s_line: float) -> float:
 
 
 def plan_all(rig, lines, rules, arm_configs=None, cache_dir=None, workers=1, settings=None,
-             verify=None, surface=None):
+             verify=None, surface=None, rules_by_slot=None):
     """-> ([(phase name, arm id, Motion)], leftovers)."""
     motions, left, _ = plan_detailed(rig, lines, rules, arm_configs, cache_dir, workers, settings,
-                                     verify, surface)
+                                     verify, surface, rules_by_slot)
     return motions, left
 
 
 def plan_detailed(rig, lines, rules, arm_configs=None, cache_dir=None, workers=1, settings=None,
-                  verify=None, surface=None):
+                  verify=None, surface=None, rules_by_slot=None):
     """`plan_all`, plus the Report (maps, per phase and arm: times, lengths, what came back)."""
     rep = Report()
-    gen = plan(rig, lines, rules, arm_configs, cache_dir, workers, settings, rep, verify, surface)
+    gen = plan(rig, lines, rules, arm_configs, cache_dir, workers, settings, rep, verify, surface,
+               rules_by_slot)
     out = []
     while True:
         try:

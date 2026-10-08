@@ -80,7 +80,7 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 |---|---|---|
 | `GET /` , `GET /gui` | — | redirect to `/gui/` |
 | `GET /gui/{file}` | — | the GUI's static files from `aris/server/gui/` (`index.html` for `/gui/`); 404 if missing |
-| `GET /rig` | — | `{arms: {slot: {T_table_base, park_q, calibration, robot (from the site table given to `aris serve --site`, else null)}}, mark_groups: {name: [slots]}, marks: {spot: {xy_m, shared_by}}, drawing_area_m, drawing_area_centre_m, drawing_area_from_maps_m, drawing_area_problem (null or why drawing is refused), canvas_m, pen_in, calibration_files, paper_surface {exists, points, z_min_m, z_max_m, date}, code {commit, dirty, digest}, rig_digest, calibration_digest, calibration, uncalibrated, driver, speed, note}` |
+| `GET /rig` | — | `{arms: {slot: {T_table_base, park_q, calibration, robot (from the site table given to `aris serve --site`, else null)}}, mark_groups: {name: [slots]}, marks: {spot: {xy_m, shared_by}}, drawing_area_m, drawing_area_centre_m, drawing_area_from_maps_m, drawing_area_problem (null or why drawing is refused), canvas_m, pens_in: {slot: pen entry}, calibration_files, paper_surface {exists, points, z_min_m, z_max_m, date}, code {commit, dirty, digest}, rig_digest, calibration_digest, calibration, uncalibrated, driver, speed, note}` |
 | `GET /arms` | — | `{arms: {slot: ...}, code: {same (true/false/null), line, server, operator_pc, operator_pc_reported_at}}`; per slot with simulated arms `{robot, q, qd, ok, flags, at_park}`, with the robot `{robot (as the operator PC names it, else the site table's), q (null: no reading), reading ("fresh" or why not), at_park (null without reading), reported_at, age_s, source, job}` |
 | `GET /jobs` | — | every job of this server run: `[{id, kind, name, state, why, ...}]` |
 | `POST /jobs` | body: the drawing JSON; query `name`, `note`, `air_mm`; or `drawing=<id>` (an uploaded drawing, no body); or `rest_of=<job id>` (no body) | `{id, state, why}`; 400 bad file, 404 unknown drawing id, 409 refused (`{refused, detail}`) |
@@ -95,6 +95,8 @@ Also in `aris/server/API.md` (the same table, for the GUI).
 | `POST /mark` | query `slots=2L,2R` and/or `group=row2\|rows12\|rows23\|all`, `yaw=true` (a row pair's second spot too) | `{id, state}` of the mark job (one meeting per pair of neighbours, the pen tips brought together; the driver's `instruction` rows on its events); its report: `{pairs: [{slots, spots, kind}], meetings: [{pair, spot, phase, gap_m, hovers, q: {a, b}}], solved: {passed, why, slots: {slot: {x_mm, y_mm, yaw_mrad, moved_mm, turned_mrad, yaw: "reference"\|"meetings"\|"nominal"}}, residual_mm, worst_mm, reference, notes, frame, written}}`; 409 refused |
 | `POST /crosses` | query `slots=2L,2R` and/or `group=row2` | `{id, state}` of the crosses job, the check after `mark` (each row's L slot draws a cross, R slot a circle, at their shared spots); its report: `{spots: [{spot, xy_m, row, cross, circle}], shapes, instruction}`; 409 refused |
 | `POST /grip/{slot}` | JSON `{verb: "home"\|"open"\|"close", width_m?, speed_m_per_s?, force_n?, epsilon_inner_m?, epsilon_outer_m?}` | `{id, state}` of the grip job; its report: `{slot, verb, params, width_before_m, width_after_m, grasped, nothing_to_do}`; 409 refused (no reading, a job running, bad verb, unknown slot) |
+| `GET /pens` | — | `{pens_in: {slot: pen name}, table: [pen names]}` |
+| `POST /pens/{slot}` | JSON `{name}` | puts that pen into the slot's holder (`Rig.write_pens_in`, the rig reloads); the new `/pens`; 409 while a job runs, for a pen not in the table, or `not_built` without pens per slot |
 | `POST /drawings` | multipart: `file` (.json or .svg), `width` (m, needed for .svg: else 400 "an SVG needs its width on the table, in metres"), `at` ("x,y" m, .svg; default the area's centre) | `{id, name, kind, stored_at, lines, points, bbox_m, width_m, at_m}`; stored under `out/drawings/`; 400 refused |
 | `GET /drawings` | — | every stored drawing's `{id, name, kind, lines, points, ...}`, oldest first |
 | `GET /calibration` | — | `{arms, files: [...], status: {slot: ...}}` |
@@ -497,3 +499,15 @@ operator_pc, operator_pc_reported_at}}`; `aris arms` prints the line — "operat
 — update both machines to the same commit" — and ends FAIL when they differ. Every job is
 then refused at its start (`wrong_code`); an operator PC that has not reported its code yet is
 not refused. Each job's report records both (`code: {server, operator_pc}`).
+
+## Pens per slot
+
+Each slot has its own pen (`config/<rig>/pens.json`, the rig's `pen(slot)`, `rules(slot)`):
+gel in one row, pencils in another. Every job header carries `pens: {slot: pen entry}` and
+every report `pens: {slot: name}`. Every planner gets the rules of the arm it plans for
+(`st.rules_for(slot)`): park, lifts, retreats, calibrate, touch-off, crosses, mark; the system
+planner gets `rules_by_slot` when the pens differ, each arm drawing on the paper (or its map)
+less its own pen's press. `aris pen` lists the pens in; `aris pen 1L gel_g2` (`POST
+/pens/{slot}`) puts another in (between jobs) and reloads the rig; the GUI's arm cards have a
+pen selector. The touch-off writes the pen part with that slot's pen name; the calibration
+line shows the rig's status ("pen part measured for X, Y is in"). `aris draw --pen` is gone.

@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from aris.calib import files as calib_files
 from aris.server import paper as paper_mod
-from aris.server import drawing, drawings, grip, operator, remote, runner
+from aris.server import drawing, drawings, grip, operator, pens, remote, runner
 from aris.server import park as park_job
 from aris.server.jobs import JobStore, view
 from aris.types import Refusal
@@ -64,7 +64,7 @@ def rig_view(st) -> dict:
         marks={str(k): dict(xy_m=[float(x) for x in xy], shared_by=list(by))
                for k, (xy, by) in rig.marks.items()},
         drawing_area_m=list(st.drawing_area), drawing_area_centre_m=list(st.drawing_centre),
-        canvas_m=rig.canvas_size, pen_in=st.pen(),
+        canvas_m=rig.canvas_size, pens_in=st.pens(),
         calibration_files={f["slot"]: f for f in calib_files.listing(st.config_dir)
                            if f.get("slot")},                  # the slots' files, not paper.json
         drawing_area_from_maps_m=list(st.maps_area),
@@ -166,6 +166,21 @@ def create_app(st) -> FastAPI:
         if isinstance(rec, Refusal):
             return _refused(409, rec)
         return plain(dict(id=rec.id, state=rec.state))
+
+    @app.get("/pens")
+    def pens_in():
+        return plain(pens.view(st))
+
+    @app.post("/pens/{slot}")
+    async def pen_into(slot: str, request: Request):
+        try:
+            body = json.loads(await request.body() or b"{}")
+        except ValueError as e:
+            return _refused(400, Refusal("not_json", str(e)))
+        got = pens.put_in(st, store, slot, str((body or {}).get("name", "")))
+        if isinstance(got, Refusal):
+            return _refused(409, got)
+        return plain(got)
 
     @app.post("/drawings")
     async def upload(file: UploadFile, width: float | None = Form(None),

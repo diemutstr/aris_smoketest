@@ -64,9 +64,10 @@ class Clearance:
 
 
 def model_of(rig: RigData, slot: str) -> ArmModel:
-    """The slot's arm with the pen that is in: its measured tip where the slot's calibration has
-    one for this pen, else the pen's nominal length; the pen's capsule radius."""
-    return load_model(rig.mounts[slot].tip_hand, rig.pen_length, rig.pen_radius)
+    """The slot's arm with its own pen in: the measured tip where the slot's calibration has one
+    for this pen, else the pen's nominal length; the pen's capsule radius."""
+    m = rig.mounts[slot]
+    return load_model(m.tip_hand, m.pen.length, m.pen.radius)
 
 
 def build_scene(rig: RigData, slot: str, walls, parked, drawing: bool,

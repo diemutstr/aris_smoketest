@@ -39,11 +39,20 @@ class Outcome:
 # --------------------------------------------------------------------------- the stream
 
 
-def job_rules(st, rec):
-    """The drawing rules of this job: rig.json's, with the drawing surface raised `air_mm`
-    above the paper for an air run (a negative press: every draw flown that high, no contact)."""
+def job_rules(st, rec, slot=None):
+    """The drawing rules of this job (of the arm in `slot`: its pen's press and speed), with
+    the drawing surface raised `air_mm` above the paper for an air run (a negative press: every
+    draw flown that high, no contact)."""
     air = float(getattr(rec, "air_mm", 0.0) or 0.0)
-    return st.rules if air <= 0.0 else replace(st.rules, press=-air * 1e-3)
+    r = st.rules if slot is None else st.rules_for(slot)
+    return r if air <= 0.0 else replace(r, press=-air * 1e-3)
+
+
+def rules_by_slot(st, rec) -> dict | None:
+    """{slot: rules} when the arms carry different pens (the rig keeps pens per slot), for the
+    system planner's per-arm planners; None when one rule set holds for all."""
+    per = {a: job_rules(st, rec, a) for a in st.rig.arm_ids}
+    return per if len({repr(r) for r in per.values()}) > 1 else None
 
 
 def surface_z(st, rec) -> float | None:
@@ -53,10 +62,12 @@ def surface_z(st, rec) -> float | None:
     return None if air <= 0.0 else st.rig.paper_z + air * 1e-3
 
 
-def _pump(st, lines, arm_configs, rep, stop, box, verify, rules) -> None:
+def _pump(st, lines, arm_configs, rep, stop, box, verify, rules, by_slot=None) -> None:
     """The planner, in its own thread: every item goes into `box`, then ("end", value)."""
     try:
         kw = {} if st.surface is None else dict(surface=st.surface)
+        if by_slot is not None:
+            kw["rules_by_slot"] = by_slot
         gen = system_plan(st.rig, lines, rules, arm_configs, st.cache_dir, st.workers,
                           st.settings, rep, verify, **kw)
         while True:
@@ -93,7 +104,7 @@ def plan_into(st, job, lines, arm_configs, rec, on_first=lambda: None) -> Outcom
     t0 = time.perf_counter()
     verify = CheckVerify(Path(st.config_dir), job.dir / "refused", surface_z(st, rec))
     pump = threading.Thread(target=_pump, args=(st, lines, arm_configs, rep, stop, box, verify,
-                                                job_rules(st, rec)),
+                                                job_rules(st, rec), rules_by_slot(st, rec)),
                             daemon=True, name=f"planner {rec.id}")
     pump.start()
     phase, queues = None, {}

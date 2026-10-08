@@ -3,7 +3,8 @@
     aris serve  [--host --port --driver sim --speed --uncalibrated --cache --jobs]
     aris draw   <drawing.json> [--note ..] [--server URL]   submit, follow, report; exit
                                                      0 on PASS; --rest-of <job> draws its leftovers
-    aris draw <file.svg> --width M [--at X Y] [--pen NAME]
+    aris draw <file.svg> --width M [--at X Y]
+    aris pen [<slot> <pen name>]                     the pens in (per slot), or put one in
     aris import <file.svg> --width M [--at X Y] [-o out.json]
     aris status | stop | park | rig | arms   [--server URL]
     aris calibrate <slot>                            touch the paper on a grid: the base part
@@ -33,7 +34,7 @@ from aris.cli.common import (CONFIG, DEFAULT_SERVER, Http, _summary, assumptions
                              job_passed, report_lines, say, verdict)
 from aris.cli.jobs import (cmd_check, cmd_draw, cmd_import, cmd_park, cmd_plan, cmd_status,
                            cmd_stop)
-from aris.cli.rig import cmd_arms, cmd_rig, cmd_serve
+from aris.cli.rig import cmd_arms, cmd_pen, cmd_rig, cmd_serve
 
 __all__ = ["main", "parser", "Http", "job_passed", "report_lines", "follow", "say", "verdict",
            "assumptions_line", "_summary"]
@@ -91,8 +92,9 @@ def parser() -> argparse.ArgumentParser:
         s.add_argument("--rest-of", default=None, metavar="JOB",
                        help="draw what that finished job left over")
         svg_args(s)
-        s.add_argument("--pen", default=None, help="the pen you put in: refused if the rig "
-                       "has another in (its length and press are planned with)")
+    s = sub.add_parser("pen", help="the pens in, per slot; or put a pen into a slot")
+    s.add_argument("slot", nargs="?", default=None)
+    s.add_argument("name", nargs="?", default=None, help="the pen's name in the rig's table")
     s = sub.add_parser("import", help="an SVG as a drawing file (JSON); nothing is drawn")
     s.add_argument("svg")
     s.add_argument("-o", "--out", default=None, help="the JSON to write (default: beside it)")
@@ -123,7 +125,7 @@ def parser() -> argparse.ArgumentParser:
                    help="a second meeting at the other shared spot: the yaw too")
     for s in (sub.choices[n] for n in ("draw", "status", "stop", "park", "rig", "arms",
                                        "calibrate",
-                                       "touchoff", "recover", "mark", "grip", "crosses")):
+                                       "touchoff", "recover", "mark", "grip", "crosses", "pen")):
         s.add_argument("--server", default=DEFAULT_SERVER)
         s.add_argument("--poll", type=float, default=0.5, help=argparse.SUPPRESS)
     s = sub.add_parser("plan", help="plan and check a drawing; no server, no arms")
@@ -144,7 +146,7 @@ COMMANDS = {"import": cmd_import, "arms": cmd_arms, "serve": cmd_serve, "draw": 
             "plan": cmd_plan, "check": cmd_check, "calibrate": cmd_calibrate,
             "recover": cmd_recover, "touchoff": cmd_touchoff, "mark": cmd_mark,
             "crosses": cmd_crosses,
-            "grip": cmd_grip}
+            "grip": cmd_grip, "pen": cmd_pen}
 
 
 def main(argv=None, http=None) -> int:

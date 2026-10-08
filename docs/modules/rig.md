@@ -6,7 +6,7 @@ table-frame things into one arm's base frame. Every planner below the system pla
 base-frame geometry, and all of it comes from here.
 
 **In.** `config/rig.json`, plain data with a source note on every block, and optionally
-`config/calibration/<slot>.json` per slot. Nothing else in the package reads `config/` (the
+`config/pens.json` (which pen is in which slot) and `config/calibration/<slot>.json` per slot. Nothing else in the package reads `config/` (the
 checker has its own reader, on purpose). The rig does not read `site/`: which robot hangs in
 which slot is the robot side's business.
 
@@ -17,10 +17,14 @@ like `"2R"`.
 |---|---|
 | `arm_ids`, `slot_names` | the mounted slots; every slot of the frame, mounted or not (both in `rig.json` order) |
 | `T_table_base(a)`, `T_base_table(a)`, `park_q(a)` | the arm's pose (calibrated when its base part applies) and its park |
-| `arm(a)` | the arm model with this slot's tool: the measured pen tip when the pen part applies, else the current pen's nominal length |
+| `arm(a)` | the arm model with this slot's tool: the measured pen tip when the pen part applies (for the slot's pen), else the nominal length of the slot's pen |
 | `calibration_status(a)`, `calibrated(a)` | `{"base": ..., "pen": ...}`, each `"none"`, `"applied: ..."` or `"<part> part not applied: <why>"`; whether both parts applied |
-| `pen()` | the pen that is in: its `pens.table` entry plus `"name"`. The server copies it into every job header |
-| `rules()` | the drawing rules (`DrawRules`), all from `rig.json`, with `gates()` inside; press and speed on the paper are the pen's |
+| `pen_table` | `{name: entry}` of every pen in `pens.table`, in a slot or not (not a dataclass field: the digest does not move) |
+| `pen(a)`, `pen_name_in(a)`, `pens_in` | the pen in slot `a`: its `pens.table` entry plus `"name"`; its name; `{slot: name}` for every mounted slot |
+| `rules(a)` | the drawing rules (`DrawRules`) for slot `a`, all from `rig.json`, with `gates()` inside; press, speed on the paper and `drag_only` are the slot's pen's |
+| `nominal_tool(a)`, `nominal_tip(a)` | the holder with the slot's pen at its nominal length, before any calibration |
+| `Rig.write_pens_in(config_dir, {a: name})` | writes `pens.json` (`aris pen <slot> <name>`); refuses a pen not in `pens.table` or a slot with no arm |
+| `pen()`, `rules()`, `nominal_tool()`, `pen_name` | without a slot: the default pen (`pens.current`); the server uses the per-slot calls |
 | `to_base(a, line)`, `to_table(a, points)` | lines and points moved between the frames |
 | `paper(a)` | the paper as a plane in `a`'s base frame, free side up, with three margins: links, lifted pen, rest of the tool |
 | `wall_between(a, b)`, `wall_in_base(a, wall)` | a wall in the table frame, and as a plane for one arm |
@@ -268,8 +272,25 @@ The second pen, `gel_g2`, presses 0.0025 at 0.015 m/s with the same length, caps
 block, and carries `"drag_only": true`: a gel pen in the lateral holder skids when pushed and
 draws when pulled, and the planner uses the flag to draw it only pulled.
 
-`pen()` returns the current entry (notes and source left out) plus `"name"`; the server copies it
-into every job header. The drawing file stays pen-agnostic.
+**Pen per slot.** The pen is per slot (the artist runs gel pens in one row and pencils in another
+on one server). `pens.current` is the default; `config/pens.json`, optional, says which pen is in
+which slot, and a slot it does not list has the default:
+
+```
+{"in": {"1L": "gel_g2", "1R": "gel_g2"}, "date": "2026-10-08T14:02:11"}
+```
+
+`Rig.write_pens_in(config_dir, {slot: name})` writes it (the server, from `aris pen <slot>
+<name>`): the given slots replace theirs, the others are kept, the date is now; a pen not in
+`pens.table` or a slot with no arm is refused and nothing is written. On load, a pen not in the
+table or a key that is no slot name stops the load. `pen(a)` returns the slot's entry (notes and
+source left out) plus `"name"`; the server copies it into every job header. The drawing file
+stays pen-agnostic.
+
+Without `pens.json` the load gives a plain `Rig` with the fields it always had, so the rig digest
+in job headers does not move; with it, a `RigPensIn` (a subclass with `slot_pens` and
+`pens_date`), so the digest follows the file. The checker's reader (`aris/check/config.py`)
+reads the same file.
 
 The old `drawing.draw_speed_m_per_s` is gone from `rig.json`. It is still read as a fallback for
 a pen that has no `speed_m_per_s` (the checker's reader does the same); a pen with neither is a
@@ -291,12 +312,12 @@ broken install and stops the load.
   the slot's nominal pose when it passed. The paper plane, the parked body and the hanger move
   with it; walls do not.
 - `pen` (a one-touch touch-off; redone after every pen switch or handling of the pencil) replaces
-  the tip when it passed **and** names the pen that is in (`pens.current`). The pen capsule moves
+  the tip when it passed **and** names the pen that is in that slot. The pen capsule moves
   onto the line through the new tip and ends exactly at it (5.6e-17 m in the test). Otherwise the
   tip comes from the pen's nominal length.
 - Each part is applied on its own; either may be missing. `calibration_status(a)` reports both,
   for instance `{"base": "applied: 2R.json base (2026-10-02, plane)", "pen": "pen part not
-  applied: it was measured for pen 'gel_06', the pen in is 'graphite_4h'"}`. `calibrated(a)` is
+  applied: measured for graphite_4h, gel_g2 is in"}`. `calibrated(a)` is
   true when both applied.
 - A file for another slot, a pose that is not a rigid transform, or a tip that is not three
   numbers stops the load with an error. The old one-part format is not read.

@@ -60,7 +60,7 @@ def job_header(st, rec, extra) -> dict:
     # its name and press) and the person's note (the material, ...).  The
     # operator PC applies the header's values.
     h.update(code=st.code, operator_pc_code=st.operator.code if st.remote else None,
-             pen=st.pen(), note=rec.note, kind=rec.kind, name=rec.name,
+             pens=st.pens(), note=rec.note, kind=rec.kind, name=rec.name,
              uncalibrated=st.uncalibrated, driver=st.driver_kind, speed=str(st.speed), **extra)
     return h
 

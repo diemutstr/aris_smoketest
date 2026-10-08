@@ -21,9 +21,10 @@ and the arm holds.
 The arms follow every motion under joint position control (one tracking mode, 2026-10-07);
 a header asking for another (`tracking` other than "position") was planned for something
 this PC cannot fly, and is refused.  The collision thresholds are raised for the job and
-restored after.  The "runner started" row carries the job's pen (its
-`press_m` is for the record: the plan already runs that far below the paper; a header
-without a pen falls back to this PC's rig file) and, per slot, the robot the site table names
+restored after.  The "runner started" row carries each slot's pen (`pens`, from the header's
+`pens: {slot: pen}`, or an older header's one `pen` for every slot; its `press_m` is for the
+record: the plan already runs that far below the paper; a header without one falls back to
+this PC's rig file) and, per slot, the robot the site table names
 and whether it was verified.
 
 Nothing here depends on what a job draws: a park job (one arm per phase, free motions) runs
@@ -182,6 +183,22 @@ class Mirror:
         self.stop.set()
 
 
+def _pens(header: dict, rig, drivers: dict) -> tuple[dict, dict]:
+    """Each slot's pen: the header's `pens: {slot: pen entry}`; an older header's one `pen`
+    is every slot's (accepted for one version, 2026-10-08); without either, this PC's rig
+    file.  -> ({slot: pen}, {slot: where it came from})."""
+    per_slot, one = header.get("pens") or {}, header.get("pen")
+    pens, src = {}, {}
+    for a in drivers:
+        if per_slot.get(a):
+            pens[a], src[a] = per_slot[a], "job header"
+        elif one:
+            pens[a], src[a] = one, "job header (one pen)"
+        else:
+            pens[a], src[a] = rig.pen(), "rig file"
+    return pens, src
+
+
 def _job_settings(header: dict, rig, drivers: dict, robots: dict | None):
     """What the job's header says, checked and given to the drivers; or a Refusal.  `robots`:
     slot -> {"robot", "identity"} (site.identity); a slot whose robot is not the one the site
@@ -194,13 +211,15 @@ def _job_settings(header: dict, rig, drivers: dict, robots: dict | None):
            if a in drivers and str(r.get("identity", "")).startswith("mismatch")}
     if bad:
         return Refusal("wrong_robot", "; ".join(f"slot {a}: {w}" for a, w in bad.items()))
-    pen, pen_from = (header["pen"], "job header") if header.get("pen") else (rig.pen(), "rig file")
+    pens, pen_from = _pens(header, rig, drivers)
     tol = (header.get("execution") or {}).get("start_tolerance_rad")
     tol = float(tol) if tol is not None else float(rig.execution().start_tolerance)
     for drv in drivers.values():
         if hasattr(drv, "start_tol"):
             drv.start_tol = tol
-    return dict(pen=pen, pen_from=pen_from, tracking=tracking, robots=robots or {},
+    same = [p for p in pens.values()]
+    pen = same[0] if same and all(p == same[0] for p in same) else None
+    return dict(pens=pens, pen=pen, pen_from=pen_from, tracking=tracking, robots=robots or {},
                 start_tolerance=tol)
 
 

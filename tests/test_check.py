@@ -833,6 +833,40 @@ def test_paper_height_map(tmp_path):
     assert abs(flat.get("tip on paper").value - height) < 5e-4
 
 
+def test_pens_per_slot(good_draw, tmp_path):
+    """Pens are per slot (`pens.json` {"in": {slot: pen}}; a slot not listed has pens.current):
+    each slot's press, speed, nominal tip and capsule come from its own pen, and a pen part of
+    its calibration applies only if it was measured for that pen.  2R's line, planned on its
+    graphite's surface, fails 'tip on paper' when 2R is given a pen with another press, while
+    2L keeps the current pen."""
+    def gel(cfg, pen):
+        cfg["pens"]["table"]["gel_06"] = dict(pen, press_m=PRESS + 0.0015, speed_m_per_s=0.02,
+                                              capsule_radius_m=0.004)
+    other = dict(_pen_part("gel_06"), tip_hand_m=(MINE_MODEL.tip_hand + 0.001).tolist())
+    cfg = _config_copy(tmp_path, gel, calibration={
+        "2R": {"slot": "2R", "pen": _pen_part(MINE.pen)},
+        "2L": {"slot": "2L", "pen": other}})
+    (cfg / "pens.json").write_text(json.dumps({"in": {"2R": "gel_06"}}))
+    mine = read_rig(cfg)
+    r, l = mine.mounts["2R"], mine.mounts["2L"]
+    assert r.pen.name == "gel_06" and l.pen.name == mine.pen
+    assert r.pen.press == PRESS + 0.0015 and l.pen.press == PRESS
+    assert r.tip_hand is None and f"touched off with {MINE.pen}" in " ".join(r.notes)
+    assert l.tip_hand is None and "gel_06" in " ".join(l.notes)   # 2L's part is for gel_06
+    assert np.isclose(model_of(mine, "2R").radius[model_of(mine, "2R").is_pen][0], 0.004)
+    v = check(cfg, "2R", good_draw, phase_of("2R"), good_draw.q_start)
+    print(f"\n2R with gel_06: {v.get('tip on paper').value * 1e3:.2f} mm "
+          f"({v.get('tip on paper').detail}); limit {v.get('tip speed').limit * 1e3:.1f} mm/s")
+    _fails(v, "tip on paper")
+    assert abs(v.get("tip on paper").value - 0.0015) < 2e-4
+    assert "gel_06" in v.get("tip on paper").detail
+    assert abs(v.get("tip speed").limit - 0.0206) < 1e-12
+    (cfg / "pens.json").write_text(json.dumps({"in": {"2L": "gel_06"}}))
+    mine = read_rig(cfg)
+    assert np.array_equal(mine.mounts["2L"].tip_hand, np.asarray(other["tip_hand_m"]))
+    assert np.array_equal(mine.mounts["2R"].tip_hand, TIP_CAL)        # its part is for this pen
+
+
 def test_press_is_where_the_tip_draws(good_draw, tmp_path):
     """The drawing's points lie the press below the paper: a drawing motion whose tip runs the
     pen's press below the paper (3.5 mm when written, 1.6 mm since) passes 'tip on paper' with

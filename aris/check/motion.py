@@ -58,6 +58,8 @@ def check(config_dir, slot: Slot, motion: Motion, phase: Phase, q_before=None, s
             problem = f"cannot read the rig: {e}"
     if problem is None:
         problem = _wrong_phase(rig, slot, phase) or _bad_standing(rig, slot, standing)
+    if problem is None:
+        rig = rig.for_slot(slot)             # this arm's own pen: its press and speed
     if problem is None and surface_z is not None and not np.isfinite(surface_z):
         problem = "surface_z is not a number"
     if problem is not None:

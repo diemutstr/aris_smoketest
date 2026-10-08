@@ -7,15 +7,16 @@ standstill.
 from __future__ import annotations
 
 
-def calibrate_from_meetings(config_dir, meetings, slots=None, date=None):
+def calibrate_from_meetings(config_dir, meetings, slots=None, date=None, robot=None):
     """Solve every slot that met from `meetings` ([(slot_a, q_a, slot_b, q_b, spot), ...],
     joints in rad) and, when it passes, write every solved slot's base part
     (`files.write_mark_solution`, method "meetings").  `slots`: the slots that must take part
-    (each must meet someone).  -> (MarkSolution, written paths)."""
+    (each must meet someone).  `robot`: {slot: robot} stamped on the parts written.
+    -> (MarkSolution, written paths)."""
     from aris.calib.files import write_mark_solution
     from aris.calib.meetings import solve_meetings
     from aris.rig import Rig
     rig = Rig.load(config_dir)
     sol = solve_meetings(rig, meetings, slots)
-    paths = write_mark_solution(rig, sol, config_dir, date) if sol.passed else []
+    paths = write_mark_solution(rig, sol, config_dir, date, robot=robot) if sol.passed else []
     return sol, paths

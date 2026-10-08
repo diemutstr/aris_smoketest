@@ -144,7 +144,7 @@ def calibrate_plane(rig, slot: Slot, contacts_q) -> PlaneCalibration:
     were planned and are read with it.  Never raises on bad data: too few touches, unreadable
     joints or touches on a line come back as a refusal (`passed` False, `why` set, the pose the
     rig has kept)."""
-    return replace(_fit(rig, slot, contacts_q), pen=rig.pen_name,
+    return replace(_fit(rig, slot, contacts_q), pen=rig.pen_name_in(slot),
                    tip_hand=rig.arm(slot).tool.tip_hand.copy())
 
 

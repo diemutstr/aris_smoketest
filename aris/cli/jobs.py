@@ -28,9 +28,6 @@ def cmd_draw(a, http) -> int:
     rig = _assume(http)
     if rig is None:
         return verdict(False, "the server does not answer")
-    if a.pen and a.pen != (rig.get("pen_in") or {}).get("name"):     # its length and press
-        return verdict(False, f"the pen in is {(rig.get('pen_in') or {}).get('name')!r}, not "
-                       f"{a.pen!r}: change pens.current in rig.json and restart the server")
     if path.suffix.lower() == ".svg":
         d = _svg(a, path, rig.get("drawing_area_centre_m") or (0.0, 0.0))
         if isinstance(d, str):
