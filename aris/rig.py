@@ -147,14 +147,14 @@ def _hanger_boxes(slot: Slot, axis_xy: np.ndarray, h: dict) -> list[SteelBox]:
 
 
 def _check_slots(slots: list[dict]) -> None:
-    """Slot names are well formed, unique, and say where the axis is: L at -x, R at +x, rows
-    numbered in the order of y."""
+    """Slot names are well formed, unique, and say where the axis is: L at +x (Diemut's left,
+    seen from her desk at the +y end; renamed 2026-10-08), R at -x, rows numbered along y."""
     names = [s["slot"] for s in slots]
     bad = [n for n in names if not is_slot(n)]
     if bad or len(set(names)) != len(names):
         raise ValueError(f"rig.json: slot names {names}; each must be one of 1L .. 3R, once")
     for s in slots:
-        if (s["axis_xy_m"][0] < 0.0) != (s["slot"][1] == "L"):
+        if (s["axis_xy_m"][0] > 0.0) != (s["slot"][1] == "L"):
             raise ValueError(f"rig.json: slot {s['slot']} at x = {s['axis_xy_m'][0]}")
     by_y = [s["slot"][0] for s in sorted(slots, key=lambda s: s["axis_xy_m"][1])]
     if by_y != sorted(by_y):

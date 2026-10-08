@@ -30,7 +30,7 @@ DEPLOY = Path(__file__).resolve().parents[1]
 
 # Solve-rate floors on the fixed set, reached 2026-09-29 (see docs/modules/free.md).
 # 2026-10-02: the set rebuilt on the rig of that day (slots, 22 mm lift-offs, walls 40 mm, fences)
-FLOOR = {"2L": 998, "1L": 998}       # each: 2 refused "no_free_path" (was 1000 of 1000)
+FLOOR = {"2R": 998, "1R": 998}       # each: 2 refused "no_free_path" (was 1000 of 1000)
 
 
 @pytest.fixture(scope="module")
@@ -81,7 +81,7 @@ def spread(n_per_group: int):
 
 def test_motions_are_free_timed_and_exact(scenes, cases):
     rows = []
-    for a in ("2L", "1L"):
+    for a in ("2R", "1R"):
         arm, obs, rules = scenes[a]
         d = cases[a]
         for i in spread(2):
@@ -97,10 +97,10 @@ def test_motions_are_free_timed_and_exact(scenes, cases):
 
 
 def test_lift_keeps_the_hand_and_rises_along_the_normal(scenes, cases):
-    arm, obs, rules = scenes["2L"]
+    arm, obs, rules = scenes["2R"]
     paper = paper_plane(obs)
     done = 0
-    for q in cases["2L"]["q_start"][:20]:
+    for q in cases["2R"]["q_start"][:20]:
         path = lift_path(arm, q, paper, 0.06)
         if path is None:
             continue
@@ -143,8 +143,8 @@ def _digest(m: Motion) -> str:
 
 
 def test_same_question_same_answer_in_any_process(scenes, cases):
-    arm, obs, rules = scenes["2L"]
-    d = cases["2L"]
+    arm, obs, rules = scenes["2R"]
+    d = cases["2R"]
     i = next(i for i in spread(4) if plan_detailed(arm, d["q_start"][i], d["q_goal"][i], obs,
                                                    rules)[1].rounds > 0)
     first = plan(arm, d["q_start"][i], d["q_goal"][i], obs, rules)
@@ -152,7 +152,7 @@ def test_same_question_same_answer_in_any_process(scenes, cases):
     assert _digest(first) == _digest(again)
     env = dict(os.environ, PYTHONHASHSEED="12345")
     out = subprocess.run([sys.executable, "-c", _DIGEST_SCRIPT.format(
-        tests=str(DEPLOY / "tests"), arm="2L", i=i)], env=env, capture_output=True, text=True,
+        tests=str(DEPLOY / "tests"), arm="2R", i=i)], env=env, capture_output=True, text=True,
         cwd=DEPLOY, check=True)
     assert out.stdout.strip() == _digest(first)
     other = plan(arm, d["q_start"][i], d["q_goal"][i], obs, rules, seed_extra=b"another")
@@ -184,8 +184,8 @@ def fence(gap: float = 0.2, z_split: float = 0.5, margin: float = 0.05) -> tuple
 
 
 def test_refusals(rig, scenes, cases):
-    arm, obs, rules = scenes["2L"]
-    d = cases["2L"]
+    arm, obs, rules = scenes["2R"]
+    d = cases["2R"]
     q0, q1 = d["q_start"][0], d["q_goal"][0]
 
     # the start inside an obstacle: a box around the pen holder
@@ -209,8 +209,8 @@ def test_refusals(rig, scenes, cases):
     assert isinstance(r, Refusal) and r.reason == "bad_input"
 
     # two ends on either side of a wall with no way round
-    walled = Obstacles(rig.obstacles("2L").boxes + fence(), rig.obstacles("2L").planes)
-    q, _, _ = free_cases.pool(rig, "2L", 7)
+    walled = Obstacles(rig.obstacles("2R").boxes + fence(), rig.obstacles("2R").planes)
+    q, _, _ = free_cases.pool(rig, "2R", 7)
     q = q[collide.clearance_q(collide.arm_tables(arm), q, walled) >= 0.0]
     side = arm.tip(q)[:, 1]
     a, b = q[side < -0.2][0], q[side > 0.2][0]

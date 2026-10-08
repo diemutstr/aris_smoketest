@@ -96,7 +96,7 @@ def _write_json(path: Path, data: dict) -> Path:
     return path
 
 
-def _write_part(config_dir, slot: Slot, name: str, make) -> Path:
+def _write_part(config_dir, slot: Slot, name: str, make, robot: str | None = None) -> Path:
     """Read the slot's file (if any), replace one part with `make(old part or None)`, write it
     back whole.  A file that is not this slot's calibration file is a broken install: raise
     rather than lose the other part."""
@@ -106,7 +106,10 @@ def _write_part(config_dir, slot: Slot, name: str, make) -> Path:
         cal = json.loads(path.read_text())
         if not isinstance(cal, dict) or cal.get("slot") != slot:
             raise ValueError(f"{path} is not the calibration file of slot {slot}")
-    cal[name] = make(cal.get(name))
+    part = make(cal.get(name))
+    if robot is not None:
+        part["robot"] = str(robot)          # the server refuses a part measured on another robot
+    cal[name] = part
     return _write_json(path, cal)
 
 
@@ -132,13 +135,15 @@ def marks_base_part(r: SlotFit, date: str | None = None, before: dict | None = N
     }
 
 
-def write_base(result, config_dir, date: str | None = None) -> Path:
+def write_base(result, config_dir, date: str | None = None, robot: str | None = None) -> Path:
     """Write a plane result (`PlaneCalibration`) or one slot of a mark solution (`SlotFit`) as
-    the `base` part of its slot's file; the `pen` part stays."""
+    the `base` part of its slot's file; the `pen` part stays.  `robot` (e.g. "fr3-71"), when
+    given, is written into the part."""
     if isinstance(result, SlotFit):
         return _write_part(config_dir, result.slot, "base",
-                           lambda old: marks_base_part(result, date, old))
-    return _write_part(config_dir, result.slot, "base", lambda old: base_part(result, date))
+                           lambda old: marks_base_part(result, date, old), robot)
+    return _write_part(config_dir, result.slot, "base", lambda old: base_part(result, date),
+                       robot)
 
 
 def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> Path:
@@ -161,26 +166,31 @@ def write_marks(solution: MarkSolution, config_dir, date: str | None = None) -> 
     return _write_json(path, {"frame": solution.frame, "marks": marks})
 
 
-def write_mark_solution(rig, solution: MarkSolution, config_dir,
-                        date: str | None = None) -> list[Path]:
+def write_mark_solution(rig, solution: MarkSolution, config_dir, date: str | None = None,
+                        robot: dict | None = None) -> list[Path]:
     """The mark job's one writer: every slot's base part (method "marks" or "meetings"), every
-    slot's pen part when a pivot measured its tip, and marks.json when marks were solved."""
+    slot's pen part when a pivot measured its tip, and marks.json when marks were solved.
+    `robot`: {slot: robot} written into each slot's parts."""
     if not solution.passed:
         raise ValueError(f"a refused mark solution is not written: {solution.why}")
+    robot = robot or {}
     out = []
     for slot, f in solution.slots.items():
-        out.append(write_base(f, config_dir, date))
+        out.append(write_base(f, config_dir, date, robot.get(slot)))
         if f.pivot is not None:
             out.append(write_pen(pen_from_pivot(rig, slot, f.pivot, f.pivot_mark, f.pivot_q),
-                                 config_dir, date))
+                                 config_dir, date, robot.get(slot)))
     if solution.marks:
         out.append(write_marks(solution, config_dir, date))
     return out
 
 
-def write_pen(result: PenCalibration, config_dir, date: str | None = None) -> Path:
-    """Write the touch-off result as the `pen` part of its slot's file; the `base` part stays."""
-    return _write_part(config_dir, result.slot, "pen", lambda old: pen_part(result, date))
+def write_pen(result: PenCalibration, config_dir, date: str | None = None,
+              robot: str | None = None) -> Path:
+    """Write the touch-off result as the `pen` part of its slot's file; the `base` part stays.
+    `robot`, when given, is written into the part."""
+    return _write_part(config_dir, result.slot, "pen", lambda old: pen_part(result, date),
+                       robot)
 
 
 def _summary(part) -> dict | None:

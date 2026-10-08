@@ -214,8 +214,9 @@ def steps_work(plan, report):
     return work
 
 
-def queue_steps(job, rec, steps, note: str) -> bool:
-    """-> whether anything moves.  Steps with a `why` are not queued."""
+def add_steps(job, rec, steps) -> bool:
+    """The steps' phases and queues added to the job (the phase list left open for more).
+    -> whether anything moves.  Steps with a `why` are not queued."""
     moving = [s for s in steps if s.motions and not s.why]
     for name in dict.fromkeys(s.phase.name for s in moving):        # phases in order
         these = [s for s in moving if s.phase.name == name]
@@ -227,8 +228,14 @@ def queue_steps(job, rec, steps, note: str) -> bool:
                     q.append(m, v)
                     rec.count_queued(name, arm)
             q.close()
-    job.end_phases(note)
     return bool(moving)
+
+
+def queue_steps(job, rec, steps, note: str) -> bool:
+    """`add_steps`, then the phase list ended.  -> whether anything moves."""
+    moving = add_steps(job, rec, steps)
+    job.end_phases(note)
+    return moving
 
 
 def run_queued(st, rec, job, moving: bool, where: dict):

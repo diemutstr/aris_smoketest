@@ -150,11 +150,11 @@ def test_the_report_reasons_are_the_shared_ones():
 def test_rig_and_arms_endpoints(station):
     c = TestClient(create_app(station))
     r = c.get("/rig").json()
-    assert set(r["arms"]) == {"1L", "1R", "2L", "2R", "3L", "3R"}
-    assert r["arms"]["2L"]["calibration"] == {"base": "none", "pen": "none"}
+    assert set(r["arms"]) == {"1R", "1L", "2R", "2L", "3R", "3L"}
+    assert r["arms"]["2R"]["calibration"] == {"base": "none", "pen": "none"}
     assert r["uncalibrated"] is True and "tracking" not in r
     assert r["pen_in"]["name"] == station.rig.pen()["name"] and len(r["drawing_area_centre_m"]) == 2
-    assert np.allclose(r["arms"]["2R"]["park_q"], station.rig.park_q("2R"))
+    assert np.allclose(r["arms"]["2L"]["park_q"], station.rig.park_q("2L"))
     assert len(r["rig_digest"]) == 24 and len(r["calibration_digest"]) == 24
     assert 1.0 < r["drawing_area_m"][0] < 1.8 and 3.0 < r["drawing_area_m"][1] < 3.7
     assert r["drawing_area_m"] == [1.56, 3.56]
@@ -188,12 +188,12 @@ def test_small_drawing_runs_to_done_and_a_second_job_is_refused(station, tmp_pat
     assert rep["checker"]["all_queued_checked"] and rep["passed"]
     assert all(e.verdict["passed"] for e in
                __import__("aris.execute", fromlist=["Job"]).Job(tmp_path / jid)
-               .queue("phase 1", "1L").read())
+               .queue("phase 1", "1R").read())
     assert rep["drawing"]["scale"] == 1.0 and all(rep["at_park"].values())
     assert rep["assumptions"]["uncalibrated"] is True
     assert all(p["end_check_passed"] for p in rep["phases"])
     rows = {(r["phase"], r["arm"]): r for r in v["arms"]}
-    assert rows[("phase 1", "1L")]["done"] == rows[("phase 1", "1L")]["queued"] == 5
+    assert rows[("phase 1", "1R")]["done"] == rows[("phase 1", "1R")]["queued"] == 5
     states = [e["state"] for e in c.get(f"/jobs/{jid}/events").json()
               if e["event"] == "job state"]
     assert states == ["received", "fitted", "planning", "drawing", "done"]
@@ -304,7 +304,7 @@ def test_park_all_arms_from_near_their_parks(station, tmp_path, capsys):
     rng = np.random.default_rng(3)
     rig = station.rig
     q0 = {a: rig.park_q(a) + rng.uniform(-0.05, 0.05, 7) for a in rig.arm_ids}
-    q0["3R"] = rig.park_q("3R")                         # one already parked: left alone
+    q0["3L"] = rig.park_q("3L")                         # one already parked: left alone
     st = _with_arms(station, tmp_path, speed=math.inf, q=q0)
     c = TestClient(create_app(st))
     t = time.process_time()
@@ -315,10 +315,10 @@ def test_park_all_arms_from_near_their_parks(station, tmp_path, capsys):
         assert np.max(np.abs(d.state().q - rig.park_q(a))) < 1e-9, a
     jid = c.get("/jobs").json()[-1]["id"]
     rep = c.get(f"/jobs/{jid}").json()["report"]
-    assert rep["arms"]["3R"]["result"] == "already at its park"
+    assert rep["arms"]["3L"]["result"] == "already at its park"
     assert rep["checker"]["checked"] == rep["checker"]["passed"] == 5
     assert [p["name"] for p in rep["phases"]] == ["park 1L", "park 1R", "park 2L", "park 2R",
-                                                   "park 3L"]
+                                                   "park 3R"]      # rig order (by slot name)
     # every park queue checks again from the job directory, footprints included
     assert cli.main(["check", str(tmp_path / jid), "--check-workers", "4"]) == 0
 
@@ -380,23 +380,23 @@ def test_the_verify_keeps_a_refused_motion_and_pickles(station, tmp_path):
     from aris.server.verify import CheckVerify
     from aris.types import JointPath, Motion, Piece
     rig = station.rig
-    p, arm = rig.park_q("1L"), rig.arm("1L")
+    p, arm = rig.park_q("1R"), rig.arm("1R")
     traj = retime(JointPath(np.array([p, p + 0.05])), arm.limits, rig.rules())
     motion = Motion("free", traj, Piece("x", 0.0, 0.1))
     verify = pickle.loads(pickle.dumps(CheckVerify(CONFIG, tmp_path / "refused")))
-    ok = verify("1L", rig.phase(1), motion, p)
+    ok = verify("1R", rig.phase(1), motion, p)
     assert ok["passed"] and "refused_file" not in ok and not (tmp_path / "refused").exists()
     for n in range(2):                             # q_before is not where it starts: refused
-        bad = verify("1L", rig.phase(1), motion, p + 0.01)
-        assert not bad["passed"] and bad["refused_file"] == f"phase_1__1L__{n}.npz"
-    with np.load(tmp_path / "refused" / "phase_1__1L__1.npz") as z:
+        bad = verify("1R", rig.phase(1), motion, p + 0.01)
+        assert not bad["passed"] and bad["refused_file"] == f"phase_1__1R__{n}.npz"
+    with np.load(tmp_path / "refused" / "phase_1__1R__1.npz") as z:
         assert np.array_equal(z["q"], traj.q) and np.array_equal(z["t"], traj.t)
         assert np.array_equal(z["qd"], traj.qd) and np.allclose(z["q_before"], p + 0.01)
         assert str(z["kind"]) == "free" and json.loads(str(z["piece"])) == ["x", 0.0, 0.1]
         assert "starts at q_before" in str(z["failed"]) and float(z["intensity"]) == 1.0
     # the queue takes the checker's word the motion carries, and nothing unchecked
     from aris.execute.queue import Queue
-    q = Queue(tmp_path / "a.queue", "phase 1", "1L")
+    q = Queue(tmp_path / "a.queue", "phase 1", "1R")
     assert q.append(motion).reason == "unchecked"
     assert q.append(replace(motion, checked=bad)).reason == "failed_check"
     assert q.append(replace(motion, checked=ok)) == 0

@@ -175,7 +175,7 @@ def test_pen_speed_along_the_rim(k):
     from pathlib import Path
     from aris.rig import Rig
     d = np.load(Path(__file__).parent / "data" / f"arm_speed_31_lines_{k}.npz")
-    arm = Rig.load(Path(__file__).parents[1] / "config").arm("2L")
+    arm = Rig.load(Path(__file__).parents[1] / "config").arm("2R")
     s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(d["tip_base"], axis=0), axis=1))])
     r = retime_detailed(JointPath(d["q"]), arm.limits, RULES, s=s, tip_of=arm.tip)
     assert not isinstance(r, Refusal), r

@@ -4,11 +4,13 @@ A "touch" motion (aris.types.Motion, kind "touch") is a checked down-and-up from
 onto the nominal paper.  The arm flies its descent half with the stock joint-trajectory
 controller, at the motion's own (slow) timing, and watches its force estimate:
 
-  arming    the detector arms only once the descent runs at constant speed (its acceleration
-            ramp over, plus `arm_after_s`); it then averages `arm_tare_readings` readings
-            for its zero.  A trip before that is the descent's own acceleration (it tripped
-            60 mm above the paper on 2026-10-07), not the paper: the descent goes on
-  contact   the force above that zero over `contact_n` (3 N) for `contact_ticks` (15)
+  zero      the mean of `tare_readings` (20) readings standing still at the hover, before the
+            descent starts (2026-10-08: a zero taken during the descent included the press
+            when the paper was higher than planned, and every touch ran into the cap)
+  arming    the detector arms `arm_after_s` (0.1 s, planned time) into each flight: a trip
+            before that is the flight's own start jolt (it tripped 60 mm above the paper on
+            2026-10-07), not the paper: the flight goes on
+  contact   the force above the zero over `contact_n` (3 N) for `contact_ticks` (15)
             readings in a row: the trajectory is cancelled; the joints of the first of those
             readings are the touch (DESIGN 6 step 1: the encoders say where the paper is, the
             force only when)
@@ -16,8 +18,11 @@ controller, at the motion's own (slow) timing, and watches its force estimate:
             the motion's `extra_depth` (at most `extra_max`), at `extra_speed`, the hand
             keeping its orientation (joints by the arm's IK, as the planner made the
             descent); this flight arms itself the same way
-  cap       the force over the air zero taken standing at the hover above `cap_n` (6 N) at
-            any reading, armed or not: stop and hold where it is, report; no way back is flown
+  cap       the force over the zero above `cap_n` (6 N): stop.  Armed, that is a CONTACT
+            found by the cap (a steep rise): the touch is the first reading of the last run
+            over `contact_n` in the kept history (the last `history_s` of readings), with a
+            row saying how fast the force rose; the way back is flown.  Before arming (the
+            first 0.1 s) it is a failure: stop and hold where it is, no way back is flown
   back      after a contact, or none: back to the hover along the path flown, reversed
 
 `touch` drives anything with the small `PositionArm` interface: the real arm (driver.py, the
@@ -58,9 +63,10 @@ class TouchSettings:
     cap_n: float = 6.0             # N above the hover's air zero at any reading: stop, hold
     extra_speed: float = 0.002     # m/s past the planned end (the one speed setting: the
                                    # planned descent is timed by the planner)
-    arm_after_s: float = 0.1       # the detector arms this long after the descent reaches
-                                   # its constant speed (the acceleration transient is over)
-    arm_tare_readings: int = 20    # readings averaged, once armed, for the zero it compares to
+    arm_after_s: float = 0.1       # s of planned flight time before the detector arms (the
+                                   # start jolt)
+    tare_readings: int = 20        # readings at the hover averaged for the zero
+    history_s: float = 1.0         # s of readings kept, to backdate a contact found by the cap
     extra_max: float = 0.03        # m, the most a touch may go past its planned end
     step: float = 0.001            # m between IK samples of that extension
     tare_s: float = 0.2
@@ -95,8 +101,9 @@ class TouchResult:
     q_contact: np.ndarray | None = None
     depth_past_end: float = 0.0    # m beyond the planned end at contact (0: within the plan)
     held: bool = False             # stopped where it was (force cap): no way back flown
-    air_zero: float = 0.0          # N, standing at the hover
-    armed_zero: float | None = None   # N, at constant speed, what contact was judged against
+    air_zero: float = 0.0          # N, standing at the hover: what contact is judged against
+    armed_zero: float | None = None   # the same (kept for the report's readers)
+    by_cap: str = ""               # a contact found by the cap: how the force rose
     early_trips: int = 0           # readings over the threshold before arming (the transient)
 
 
@@ -197,63 +204,67 @@ class Kinematics:
         return Kinematics(rig.arm(arm_id), rig.rules(), np.asarray(rig.paper(arm_id).normal))
 
 
-def arming_depth(traj, kin, after_s: float, rate: float = 250.0) -> float:
-    """How deep (m along `kin.down` from the flight's start) the tip is when the flight has
-    run at its constant speed for `after_s`: the end of its acceleration ramp plus `after_s`.
-    A flight that never reaches that point arms at its end (the next flight arms itself)."""
+def _planned_clock(traj, kin, rate: float = 250.0):
+    """Q -> planned time into the flight, from how deep the tip is along `kin.down` (the
+    flight goes down monotonically), so the watch needs no timestamps on the readings."""
     from aris.kernel.retime import sample
-    t = np.arange(traj.t[0], traj.t[-1], 1.0 / rate)
-    if len(t) < 3:
-        return float("inf")
-    tips = kin.tip(sample(traj, t)[0])
-    depth = (tips - tips[0]) @ kin.down
-    v = np.gradient(depth, t)
-    i = int(np.argmax(v >= 0.98 * v.max()))
-    t_arm = t[i] + after_s
-    return float(np.interp(t_arm, t, depth)) if t_arm <= t[-1] else float(depth[-1])
+    t = np.arange(traj.t[0], traj.t[-1] + 0.5 / rate, 1.0 / rate)
+    tips = kin.tip(sample(traj, np.minimum(t, traj.t[-1]))[0])
+    depth = np.maximum.accumulate((tips - tips[0]) @ kin.down)
+    t0 = float(traj.t[0])
+
+    def clock(q):
+        d = float((kin.tip(q)[0] - tips[0]) @ kin.down)
+        i = int(np.searchsorted(depth, d, side="left"))
+        return float(t[min(i, len(t) - 1)] - t0) if d < depth[-1] else float(t[-1] - t0)
+    return clock
 
 
 class _Watch:
-    """Reads the force during a flight.  The cap counts from the first reading, against the air
-    zero taken standing at the hover.  The contact detector arms only once the flight runs at
-    constant speed (`arming_depth`): it then averages `arm_tare_readings` readings for its own
-    zero and looks for `contact_n` above it over `contact_ticks` readings.  A trip before it is
-    armed is the descent's own acceleration, not the paper: the descent goes on."""
+    """Reads the force during a flight against the zero taken standing at the hover.  The
+    detector arms `arm_after_s` into each flight (planned time); before that a reading over
+    the threshold is the start jolt.  Contact: `contact_n` over `contact_ticks` readings.  The
+    cap: armed, a contact found by the cap, backdated to the first reading of the last run over
+    the threshold in the kept history; unarmed, a failure."""
 
-    def __init__(self, s: TouchSettings, hover_zero: float, kin: Kinematics):
-        self.s, self.hover_zero, self.kin = s, hover_zero, kin
-        self.contact_q, self.over, self.early_trips = None, "", 0
-        self.zero, self.armed_at = None, None
+    def __init__(self, s: TouchSettings, zero: float, kin: Kinematics):
+        self.s, self.zero, self.kin = s, zero, kin
+        self.contact_q, self.over, self.by_cap, self.early_trips = None, "", "", 0
+        self.history = []                       # (planned t, q, force over the zero)
 
     def start(self, traj) -> None:
-        """A new flight: its own ramp, its own arming."""
-        self.origin = self.kin.tip(traj.q[0])[0]
-        self.arm_at = arming_depth(traj, self.kin, self.s.arm_after_s)
-        self.phase, self.tare_readings, self.run, self.first_q = "ramp", [], 0, None
+        """A new flight: its own start jolt, its own arming."""
+        self.clock = _planned_clock(traj, self.kin)
+        self.t_offset = self.history[-1][0] + 0.004 if self.history else 0.0
+        self.run, self.first_q, self.t_flight0 = 0, None, None
 
     def __call__(self, q, F) -> bool:
         q = np.asarray(q, float)
-        f = normal_force(F, self.kin.normal, self.s.sign)
-        if f - self.hover_zero > self.s.cap_n:
-            self.over = f"pen force {f - self.hover_zero:.2f} N above the cap {self.s.cap_n} N"
+        f = normal_force(F, self.kin.normal, self.s.sign) - self.zero
+        t_in = self.clock(q)
+        t = self.t_offset + t_in
+        self.history.append((t, q, f))
+        while self.history and self.history[0][0] < t - self.s.history_s:
+            self.history.pop(0)
+        armed = t_in >= self.s.arm_after_s - 1e-9
+        if f > self.s.cap_n:
+            if not armed:
+                self.over = (f"pen force {f:.2f} N above the cap {self.s.cap_n} N in the first "
+                             f"{self.s.arm_after_s:g} s of the flight, before the detector armed")
+                return True
+            k = len(self.history) - 1
+            while k > 0 and self.history[k - 1][2] > self.s.contact_n:
+                k -= 1
+            before = self.history[k - 1] if k > 0 else self.history[k]
+            self.contact_q = self.history[k][1]
+            self.by_cap = (f"contact found by the cap: the force rose {before[2]:.1f} \u2192 "
+                           f"{f:.1f} N within {t - before[0]:.2f} s")
             return True
-        depth = float((self.kin.tip(q)[0] - self.origin) @ self.kin.down)
-        if self.phase == "ramp":
-            if f - self.hover_zero > self.s.contact_n:
-                self.early_trips += 1           # the start transient: not a contact
-            if depth >= self.arm_at - 1e-9:
-                # the zero is taken once, in the first flight that arms (an extension starts
-                # where the descent ended, maybe already on the paper: it keeps that zero)
-                self.phase = "tare" if self.zero is None else "armed"
-        if self.phase == "tare":
-            self.tare_readings.append(f)
-            if len(self.tare_readings) >= self.s.arm_tare_readings:
-                self.zero = float(np.mean(self.tare_readings))
-                self.armed_at, self.phase = depth, "armed"
+        if not armed:
+            if f > self.s.contact_n:
+                self.early_trips += 1           # the start jolt: not a contact
             return False
-        if self.phase != "armed":
-            return False
-        if f - self.zero > self.s.contact_n:
+        if f > self.s.contact_n:
             self.first_q = q if self.run == 0 else self.first_q
             self.run += 1
             if self.run >= self.s.contact_ticks:
@@ -268,7 +279,8 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
     if motion.extra_depth > s.extra_max:
         return TouchResult(False, f"extra depth {motion.extra_depth * 1000:.0f} mm is more "
                                   f"than the cap {s.extra_max * 1000:.0f} mm")
-    zero = tare([normal_force(F, kin.normal, s.sign) for F in pos.forces(s.tare_s)])
+    at_hover = [normal_force(F, kin.normal, s.sign) for F in pos.forces(s.tare_s)]
+    zero = tare(at_hover[-s.tare_readings:])
     if isinstance(zero, Refusal):
         return TouchResult(False, f"{zero.reason}: {zero.detail}")
     descent, tips = descent_half(motion, kin)
@@ -291,7 +303,7 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
         if status == "" and watch.contact_q is None and not watch.over:
             status = (f"no contact within {motion.extra_depth * 1000:.0f} mm past the planned "
                       f"end")
-    out.early_trips, out.armed_zero = watch.early_trips, watch.zero
+    out.early_trips, out.armed_zero, out.by_cap = watch.early_trips, watch.zero, watch.by_cap
     if watch.over:
         out.why, out.held = watch.over, True
         return out

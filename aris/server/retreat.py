@@ -66,8 +66,11 @@ def nearest(rig, a, now) -> tuple[str | None, float]:
 
 
 def _track(rig, a, q0, tips) -> np.ndarray | str:
-    """Joints along the table-frame tip path `tips`, the hand's orientation kept."""
+    """Joints along the table-frame tip path `tips`, the hand's orientation kept (joint 7 free
+    within ±0.05 rad per sample), never closer to a joint limit than the gates' margin (or
+    than the start, if that is closer)."""
     arm = rig.arm(a)
+    floor = min(float(rig.gates().limit_margin), float(arm.limit_margin(np.asarray(q0)[None])[0]))
     T_tb = rig.T_base_table(a)
     T0 = arm.fk(np.asarray(q0, float)[None])[0]
     tip_hand = arm.tool.tip_hand
@@ -79,6 +82,7 @@ def _track(rig, a, q0, tips) -> np.ndarray | str:
         q7s = q[6] + np.linspace(-0.05, 0.05, 5)
         Q, ok = arm.ik(np.repeat(T[None], len(q7s), axis=0), q7s)
         flat, good = Q.reshape(-1, 7), ok.reshape(-1)
+        good = good & (arm.limit_margin(np.nan_to_num(flat)) >= floor - 1e-9)
         if not good.any():
             return "no arm configuration follows the retreat"
         d = np.where(good, np.abs(np.nan_to_num(flat - q, nan=1e9)).max(axis=1), np.inf)
@@ -152,46 +156,62 @@ def joint_retreat(st, a, q) -> Motion | str | None:
     return Motion("retreat", res.traj)
 
 
-def retreats(st, now) -> tuple[list, dict]:
-    """Steps "retreat <slot>" for every arm, in rig order, standing with a joint inside the
-    gates' limit margin (the joint move first) or within the clearance of another arm (then the
-    up-and-away), and where everything stands after them.  A refused retreat is a Step with
-    why."""
+def _one(st, a, now):
+    """Arm a's retreat from where everything stands: a Step (with why when refused), or None
+    when it needs none."""
     from aris.server.steps import Scene, Step
     rig = st.rig
+    obs, standing, phase = Scene(rig).of(a, now, (a,), (), f"retreat {a}")
+    motions, q = [], now[a]
+    joints = joint_retreat(st, a, q)
+    if isinstance(joints, str):
+        return Step(a, phase, why=f"retreat from the joint limits: {joints}")
+    if joints is not None:
+        motions.append(joints)
+        q = joints.q_end
+    b, g = nearest(rig, a, {**now, a: q})
+    if b is not None and g < clearance(rig):
+        m = plan_retreat(st, a, {**now, a: q})
+        if isinstance(m, str):
+            return Step(a, phase, why=f"retreat from {b}: {m}")
+        motions.append(m)
+    if not motions:
+        return None
+    verdicts, qb = [], now[a]
+    for m in motions:
+        v = check(st.config_dir, a, m, phase, qb, standing=standing)
+        if not v.passed:
+            return Step(a, phase, why="retreat: checker: " + ", ".join(v.failed))
+        verdicts.append(v)
+        qb = m.q_end
+    return Step(a, phase, tuple(motions), tuple(verdicts), dict(standing))
+
+
+def retreats(st, now) -> tuple[list, dict]:
+    """Steps "retreat <slot>" for every arm standing with a joint inside the gates' limit
+    margin (the joint move first) or within the clearance of another arm (then the
+    up-and-away), and where everything stands after them.  Rig order, in passes: an arm whose
+    retreat is refused is tried again after the others have moved (the one that can get away
+    goes first); one still refused when nobody can move is a Step with why."""
+    rig = st.rig
     now = {a: np.asarray(q, float) for a, q in now.items()}
-    steps = []
-    for a in rig.arm_ids:
-        obs, standing, phase = Scene(rig).of(a, now, (a,), (), f"retreat {a}")
-        motions, verdicts, q, why = [], [], now[a], ""
-        joints = joint_retreat(st, a, q)
-        if isinstance(joints, str):
-            why = f"retreat from the joint limits: {joints}"
-        elif joints is not None:
-            motions.append(joints)
-            q = joints.q_end
-        if not why:
-            b, g = nearest(rig, a, {**now, a: q})
-            if b is not None and g < clearance(rig):
-                m = plan_retreat(st, a, {**now, a: q})
-                if isinstance(m, str):
-                    why = f"retreat from {b}: {m}"
-                else:
-                    motions.append(m)
-        if not why:
-            qb = now[a]
-            for m in motions:
-                v = check(st.config_dir, a, m, phase, qb, standing=standing)
-                if not v.passed:
-                    why = "retreat: checker: " + ", ".join(v.failed)
-                    break
-                verdicts.append(v)
-                qb = m.q_end
-        if why:
-            steps.append(Step(a, phase, why=why))
-        elif motions:
-            steps.append(Step(a, phase, tuple(motions), tuple(verdicts), dict(standing)))
-            now[a] = motions[-1].q_end
+    steps, pending = [], list(rig.arm_ids)
+    while pending:
+        refused, moved = {}, False
+        for a in list(pending):
+            got = _one(st, a, now)
+            if got is None:
+                pending.remove(a)
+            elif got.why:
+                refused[a] = got
+            else:
+                steps.append(got)
+                now[a] = got.motions[-1].q_end
+                pending.remove(a)
+                moved = True
+        if not moved:
+            steps += [refused[a] for a in pending]
+            break
     return steps, now
 
 

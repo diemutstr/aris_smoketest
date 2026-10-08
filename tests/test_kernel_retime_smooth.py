@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ARC = np.load(ROOT / "tests" / "data" / "retime_smooth_arc.npz")
 LIMITS = Limits(ARC["q_min"], ARC["q_max"], ARC["qd_max"], ARC["qdd_max"], ARC["qddd_max"])
 RULES = DrawRules(draw_speed=float(ARC["draw_speed"]), speed_fraction=float(ARC["speed_fraction"]))
-ARM = Rig.load(ROOT / "config").arm("1L")
+ARM = Rig.load(ROOT / "config").arm("1R")
 ALONG = np.abs(ARC["s"] - ARC["s"][0])
 # The corner model's answer on the arc, recorded with the code as it was before `smooth`
 # existed: smooth=False must keep giving exactly this.
@@ -325,7 +325,7 @@ def test_arm_cases():
     arms 13 and 31, timed both ways.  Slowest mid-line speed as the checker measures it."""
     rig = Rig.load(ROOT / "config")
     print()
-    for arm_id in ("1L", "2L"):
+    for arm_id in ("1R", "2R"):
         arm, rules, sets = _plans(rig, arm_id)
         for name, plans in sets.items():
             got = {}

@@ -110,7 +110,9 @@ class Executor:
                 status = "stopped" if stop.is_set() else "failed"
                 return self._halt(phase, done, status, r.why, item.index)
             done += 1
-            last_end = item.motion.q_end
+            # a guide ends where the person left the arm (the driver holds it there when its
+            # glide back to the hover fails): parked means standing still there
+            last_end = np.asarray(r.q, float) if kind == "guide" else item.motion.q_end
             self._log("motion done", phase, index=item.index, q=r.q)
 
     def _refuse_start(self, motion) -> str:

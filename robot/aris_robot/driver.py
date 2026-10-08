@@ -24,6 +24,7 @@ standing in for the force estimate.
 """
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 
@@ -121,7 +122,10 @@ class RosArm:
             r = T.touch(motion, _Position(self), self.kin, self.ts)
             self.last_report = dict(kind="touch", air_zero=r.air_zero, held=r.held,
                                     depth_past_end=r.depth_past_end, why=r.why,
-                                    armed_zero=r.armed_zero, early_trips=r.early_trips)
+                                    armed_zero=r.armed_zero, early_trips=r.early_trips,
+                                    by_cap=r.by_cap)
+            if r.by_cap:
+                self.say("touch: contact found by the cap", text=r.by_cap)
             if r.held:
                 self._stopped = True             # stands where it hit; a person looks first
             if r.done:
@@ -156,8 +160,15 @@ class RosArm:
                 return out
             back = self._back_to_hover(np.asarray(motion.q_end, float), out.q)
             if back:
-                return Result.failed(f"sample read, then {back}", self.state().q)
-            return out
+                # the sample is kept whatever happens after it: hold where the arm stands
+                # (after the lift if that went), say so, and report success from there
+                why = self._trajectory_controller()
+                here = self.state().q
+                self.say("guide: registered; stayed at the meeting pose", q=here,
+                         holding=not why, why=why,
+                         text=f"registered; stayed at the meeting pose (glide failed: {back})")
+                return GuideResult(True, "check", out.q, q_end=here)
+            return GuideResult(True, "check", out.q, q_end=self.state().q)
 
     def _await_sample(self, q_hover) -> Result:
         g = self.guide_cfg
@@ -398,6 +409,13 @@ class RosArm:
             time.sleep(0.02)
             s = self.state()
         return s
+
+
+@dataclasses.dataclass(frozen=True)
+class GuideResult(Result):
+    """A guide's result: `q` the sample (what the executor registers), `q_end` where the arm
+    stands at the end (the hover, or the meeting pose when the retreat could not be flown)."""
+    q_end: np.ndarray | None = None
 
 
 class _Position:

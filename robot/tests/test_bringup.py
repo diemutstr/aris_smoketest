@@ -34,9 +34,9 @@ def written(tmp_path_factory):
 
 def test_every_arm_gets_its_address_domain_and_hanging_base(written):
     rig, site, files, _ = written
-    driven = sorted(a for a in rig.arm_ids if not site.arm(a).never)   # 3L, 3R: never driven
+    driven = sorted(a for a in rig.arm_ids if not site.arm(a).never)
     assert sorted(json.loads(f.read_text())["arm"] for f in files) == driven
-    assert "3L" not in driven
+    assert {"3L", "3R"} <= set(driven)                # row 3 hangs inverted too (2026-10-08)
     for f in files:
         a = json.loads(f.read_text())
         sa = site.arm(a["arm"])

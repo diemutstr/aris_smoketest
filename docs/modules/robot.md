@@ -122,6 +122,11 @@ phase, each with one `guide` motion at its hover, and each arm's watch runs on i
    down (or up) to the hover. Both legs are IK-tracked at the free speed and end at the
    hover's joints. Both arms retreat at once and only ever move apart. The result is done, why "check", with the sampled
    joints.
+The sample is never discarded: "guide: registered" (with the joints) is posted the moment it
+is taken, before any retreat. If the lift or the glide fails, the trajectory controller holds
+where the arm stands, the row "registered; stayed at the meeting pose (glide failed: <why>)"
+is posted, and the guide still succeeds ("check", `q` the sample, `q_end` where the arm
+stands): the server plans the retreat from there.
 Every stage is a "guide: ..." row on the job and the operator rows.
 
 The Desk/panda-py calibration driver was removed on 2026-10-07 after three days of token
@@ -145,13 +150,27 @@ failures; it lives at 7d93a14. The guide under FCI (enabling buttons with the co
   FCI is on.
 - A reading older than 2 s is stale: `q` null, with "stale joint states (last x s ago)".
 
-**2026-10-07, second round.**
+**2026-10-08.**
+- **Touch zero at the hover.** Every touch stopped at the cap with no contact: the zero was
+  taken during the descent, and with the paper higher than planned it included the press. The
+  zero is now the mean of 20 readings standing still at the hover before the descent. The
+  detector arms 0.1 s (planned time) into each flight. Contact is 3 N over that zero for 15
+  readings. The cap (6 N over it) after arming is a contact found by the cap: the touch is the
+  first reading of the last run over 3 N in the last 1 s of readings, with the row "contact
+  found by the cap: the force rose a → b N within t s", and the way back is flown. A cap
+  before arming is a failure and the arm holds.
+- **Row 3** hangs inverted (robots 13, 17): `force_sign` −1, cores 20 and 21, not mounted by
+  default.
+- **Old services.** `aris-session@*`, the orchestrators and the keep-runners must be disabled
+  on the Dell before serve (they hold the spawner lock): README section 5.
+
+**2026-10-07, second round** (the touch arming here is replaced by 2026-10-08).
 - **Touch.** The touch detector arms at constant descent speed: the acceleration ramp plus
   0.1 s, from the planned timing. Its zero is the mean of 20 readings taken then; contact is
   3 N above it over 15 readings. A trip before arming (the descent's own jolt) is counted, not
   taken. The cap (6 N over the hover's air zero) counts from the first reading. An extension
   past the planned end re-arms after its own ramp and keeps the first zero.
-- **Cores.** Stacks run as `taskset -c <rt_core>` (16-19). Real-time priority goes on the
+- **Cores.** Stacks run as `taskset -c <rt_core>` (16-19; row 3: 20 and 21, which must be isolated on the Dell as 16-19 are). Real-time priority goes on the
   control-loop threads only, set by the site's helper. The whole tree at FIFO 95 froze the PC.
 - **No silent hangs.** serve watches a job until it has started: no progress for 10 s
   fails it with a row naming the step, also in the job's log, and the late start is blocked.

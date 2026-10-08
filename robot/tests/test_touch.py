@@ -75,11 +75,45 @@ def test_no_contact_gives_up_after_the_extra_depth_and_comes_back(rig, setup):
     assert np.abs(pos.q - setup[0]).max() <= 1e-9
 
 
-def test_a_hard_hit_stops_and_holds(rig, setup):
-    r, pos, kin, paper = _run(rig, setup, 0.005, k=5e6)            # steel, not paper
-    assert not r.done and r.held and "above the cap" in r.why
+def test_the_paper_5_mm_high_is_found_by_the_threshold(rig, setup):
+    """2026-10-08: with the paper higher than planned, the old zero (taken during the descent)
+    included the press and every touch ran into the cap.  The zero is now the hover's."""
+    r, pos, kin, paper = _run(rig, setup, 0.005)
+    assert r.done and not r.by_cap, (r.why, r.by_cap)
+    assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / 5000.0) < 0.00025
+    assert r.air_zero == pytest.approx(2.3, abs=0.05)
+
+
+def test_a_steep_rise_is_a_contact_found_by_the_cap_and_backdated(rig, setup):
+    """A stiff surface: 3 N to 6 N within fewer than 15 readings.  The cap stops it; the
+    contact is the first reading over 3 N, and the arm flies back to the hover."""
+    import re
+    k = 5e4                                                          # 3 N at 60 um, 6 N at 120
+    r, pos, kin, paper = _run(rig, setup, 0.0, k=k)
+    assert r.done and not r.held, r.why
+    m = re.fullmatch(r"contact found by the cap: the force rose (-?[\d.]+) \u2192 ([\d.]+) N "
+                     r"within ([\d.]+) s", r.by_cap)
+    assert m, r.by_cap
+    assert float(m.group(1)) <= 3.0 and float(m.group(2)) > 6.0 and float(m.group(3)) < 0.1
+    assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / k) < 2.5e-5   # one 20 um tick
+    assert np.abs(pos.q - setup[0]).max() <= 1e-9                    # back at the hover
+
+
+def test_the_cap_before_arming_is_a_failure_and_holds(rig, setup):
+    class Slammed(SimPositionArm):                   # 8 N in the first readings of a flight
+        def fly(self, traj, watch):
+            n, ticks = self.paper.n, [0]
+
+            def slammed(q, F):
+                ticks[0] += 1
+                return watch(q, F + (8.0 * n if ticks[0] <= 5 else 0.0))
+            return super().fly(traj, slammed)
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    pos = Slammed(q0, FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and r.held and "before the detector armed" in r.why
     assert len(pos.flights) == 1                                   # no way back flown
-    assert np.abs(pos.q - setup[0]).max() > 0.01
 
 
 def test_refusals_before_moving(rig, setup):
@@ -124,14 +158,14 @@ def test_the_executor_logs_the_contact_row_with_the_joints(rig, setup, tmp_path)
 
 class Jolting(SimPositionArm):
     """Every flight starts with a jolt: the force estimate reads 5 N more for its first
-    0.15 s (the descent's own acceleration, as on 2026-10-07: tripped 60 mm in the air)."""
+    0.1 s (the descent's own acceleration, as on 2026-10-07: tripped 60 mm in the air)."""
 
     def fly(self, traj, watch):
         n, ticks = self.paper.n, [0]
 
         def jolted(q, F):
             ticks[0] += 1
-            return watch(q, F + (5.0 * n if ticks[0] * 0.004 <= 0.15 else 0.0))
+            return watch(q, F + (5.0 * n if ticks[0] * 0.004 <= 0.1 else 0.0))
         return super().fly(traj, jolted)
 
 
@@ -142,6 +176,6 @@ def test_the_start_transient_is_not_a_contact(rig, setup):
     pos = Jolting(q0, paper)
     r = touch(m, pos, kin, TouchSettings())
     assert r.done, r.why
-    assert r.early_trips >= 15                       # it would have tripped, unarmed
+    assert r.early_trips >= 15 and not r.by_cap      # it would have tripped, unarmed
     assert abs(_height_of(kin, paper, r.q_contact) + 3.0 / 5000.0) < 0.00025
     assert r.armed_zero == pytest.approx(2.3, abs=0.1)

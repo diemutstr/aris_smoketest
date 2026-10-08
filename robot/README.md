@@ -122,6 +122,19 @@ job runs at the normal thresholds.
 
 ## 5. The resident process: `aris-robot serve`
 
+**First, the old services must go.** The Dell still has the previous stack's units
+(`aris-session@*`, the orchestrators, the keep-runners). While they run they hold the
+ros2_control spawner lock, and serve's stacks never get their controllers. Disable them once,
+before serve is installed:
+
+```
+sudo systemctl disable --now 'aris-session@*' 'aris-orchestrator*' 'aris-keep*'
+systemctl list-units --all 'aris-session*' 'aris-orchestrator*' 'aris-keep*'   # none active
+systemctl list-unit-files 'aris-*'      # none enabled, except aris-robot once installed
+```
+
+If the check still lists one as active or enabled, disable that unit by its exact name.
+
 Install it once and leave this PC alone:
 
 ```
@@ -219,11 +232,16 @@ phase, each with one `guide` motion at its hover, and each arm's watch runs on i
    down (or up) to the hover. Both legs are IK-tracked at the free speed and end at the
    hover's joints. Both arms retreat at once and only ever move apart. The result is done, why "check", with the sampled
    joints.
+The sample is never discarded: "guide: registered" (with the joints) is posted the moment it
+is taken, before any retreat. If the lift or the glide fails, the trajectory controller holds
+where the arm stands, the row "registered; stayed at the meeting pose (glide failed: <why>)"
+is posted, and the guide still succeeds ("check", `q` the sample, `q_end` where the arm
+stands): the server plans the retreat from there.
 Every stage is a "guide: ..." row on the job and the operator rows.
 
 **Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
 it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,
-2R → 17, 1L → 18, 1R → 19. serve sets no real-time priority. With the whole launch tree at
+2R → 17, 1L → 18, 1R → 19, 3L → 20, 3R → 21. serve sets no real-time priority. With the whole launch tree at
 SCHED_FIFO 95 on top of the site's own helper, the Dell froze twice (2026-10-07, NIC
 watchdog). Real-time priority belongs on the control-loop threads only, and the site's helper
 script sets it. For each running stack, the helper must:
@@ -233,10 +251,13 @@ script sets it. For each running stack, the helper must:
 3. Run `chrt -f -p 95 <tid>` on that thread alone.
 
 The helper must run again after serve restarts a stack.
-3L (the floor arm) and 3R (empty) get no stack at all: the site table marks them
-`controlled: never` / `absent`, and site.json refuses to mount them. Link drops ended on
-2026-10-07 once each arm's loop had its own core and the network card's interrupts were kept
-off those cores. The Dell's isolated cores are 8-19 and 28-39.
+Row 3 hangs inverted like the others since 2026-10-08 (robots 13 and 17): `force_sign` −1,
+cores 20 and 21, `mounted` false until the site file flips it. Link drops ended on 2026-10-07
+once each arm's loop had its own core and the network card's interrupts were kept off those
+cores. The Dell's isolated cores are 8-19 and 28-39. **Cores 20 and 21 are not isolated
+yet.** Before row 3 is mounted, add them to the kernel's isolated set as 16-19 are (the
+`isolcpus=`/`nohz_full=`/`rcu_nocbs=` lists on the kernel command line, then a reboot). Check
+with `cat /sys/devices/system/cpu/isolated`: it must list 20 and 21.
 
 **One-time host step: the network card's interrupts on cores 12, 13, 32, 33** (as root, once;
 again after a kernel or NIC change):

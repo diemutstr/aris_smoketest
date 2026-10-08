@@ -35,8 +35,8 @@ MINE = read_rig(CONFIG)
 MINE_MODEL = load_model()
 KB = "numpy"          # the kernel's numpy engine: the reference, whatever is compiled
 N_AGREE = 10_000
-SLOTS = ("1L", "1R", "2L", "2R", "3L", "3R")
-OLD_ID = {13: "1L", 17: "1R", 31: "2L", 71: "2R", 2: "3L", 97: "3R"}   # ids in tests/data
+SLOTS = ("1R", "1L", "2R", "2L", "3R", "3L")
+OLD_ID = {13: "1R", 17: "1L", 31: "2R", 71: "2L", 2: "3R", 97: "3L"}   # ids in tests/data
 RULES = RIG.rules()   # the press and the drawing speed of the pen that is in, as the planners
 PRESS = RULES.press   # get them
 
@@ -220,7 +220,7 @@ def test_capsule_table_matches_the_planners():
             diffs.append(f"{what}: {x} vs {y}")
     if tuple(tool.pen_names) != tuple(np.array(mine.names)[mine.is_pen]):
         diffs.append("pen capsules differ")
-    arm = RIG.arm("1L")
+    arm = RIG.arm("1R")
     if {tuple(p) for p in arm.self_pairs} != {tuple(p) for p in mine.self_pairs}:
         diffs.append("self-collision pairs differ")
     kb = arm.body(np.zeros((1, 7)))
@@ -233,7 +233,7 @@ def test_capsule_table_matches_the_planners():
 
 
 def _drake_fr3():
-    """An FR3 plant from the URDF in assets (the chain named arm13 there; slot 1L), meshes left out."""
+    """An FR3 plant from the URDF in assets (the chain named arm13 there; slot 1R), meshes left out."""
     from pydrake.multibody.parsing import Parser
     from pydrake.multibody.plant import MultibodyPlant
     root = ET.parse(REPO / "assets" / "system_model" / "installation.urdf").getroot()
@@ -332,16 +332,16 @@ def test_link1_exempt_from_its_own_hanger_only():
     """rig.json hanger.exempt_links: an arm's link 1 is not checked against its own struts,
     plate and clamp (a rig test settles that once); it is against every other box."""
     from dataclasses import replace as dc_replace
-    scene = build_scene(MINE, "2R", (), (), False)
-    q = MINE.mounts["2R"].park_q[None]
+    scene = build_scene(MINE, "2L", (), (), False)
+    q = MINE.mounts["2L"].park_q[None]
     strict = clearance(dc_replace(scene, own_exempt=()), q)
     rule = clearance(scene, q)
-    print(f"\nslot 2R at park, steel: without the exemption {strict.value['steel'][0] * 1e3:.2f} mm "
+    print(f"\nslot 2L at park, steel: without the exemption {strict.value['steel'][0] * 1e3:.2f} mm "
           f"({strict.closest('steel', 0)}), with it {rule.value['steel'][0] * 1e3:.2f} mm "
           f"({rule.closest('steel', 0)})")
     assert MINE.own_exempt == ("link1",)
-    assert strict.closest("steel", 0).startswith("link1") and "2R" in strict.closest("steel", 0)
-    assert not (rule.closest("steel", 0).startswith("link1") and "2R" in rule.closest("steel", 0))
+    assert strict.closest("steel", 0).startswith("link1") and "2L" in strict.closest("steel", 0)
+    assert not (rule.closest("steel", 0).startswith("link1") and "2L" in rule.closest("steel", 0))
     other = dc_replace(scene, box_own=np.zeros_like(scene.box_own))       # nobody's own hanger
     assert clearance(other, q).value["steel"][0] == strict.value["steel"][0]
 
@@ -358,8 +358,8 @@ def _rpy(r, p, y):
 
 SHIFT = np.array([0.008, -0.006, 0.003])            # the calibrated base, against nominal
 T_CAL = np.eye(4)
-T_CAL[:3, :3] = _rpy(0.003, -0.002, 0.005) @ RIG.T_table_base("2R")[:3, :3]
-T_CAL[:3, 3] = RIG.T_table_base("2R")[:3, 3] + SHIFT
+T_CAL[:3, :3] = _rpy(0.003, -0.002, 0.005) @ RIG.T_table_base("2L")[:3, :3]
+T_CAL[:3, 3] = RIG.T_table_base("2L")[:3, 3] + SHIFT
 TIP_CAL = MINE_MODEL.tip_hand + np.array([0.001, -0.0005, -0.002])
 BASE = {"passed": True, "date": "2026-10-02", "method": "plane", "T_table_base": T_CAL.tolist(),
         "residuals": {}, "why": ""}
@@ -371,12 +371,12 @@ def _pen_part(pen):
 
 
 CALIBRATIONS = {
-    "base only": ({"slot": "2R", "base": BASE}, True, False),
-    "pen for another pen": ({"slot": "2R", "base": BASE, "pen": _pen_part("gel_06")}, True,
+    "base only": ({"slot": "2L", "base": BASE}, True, False),
+    "pen for another pen": ({"slot": "2L", "base": BASE, "pen": _pen_part("gel_06")}, True,
                             False),
-    "pen only": ({"slot": "2R", "base": dict(BASE, passed=False, why="plane fit 3 mm off"),
+    "pen only": ({"slot": "2L", "base": dict(BASE, passed=False, why="plane fit 3 mm off"),
                   "pen": _pen_part("graphite_4h")}, False, True),
-    "both": ({"slot": "2R", "base": BASE, "pen": _pen_part("graphite_4h")}, True, True),
+    "both": ({"slot": "2L", "base": BASE, "pen": _pen_part("graphite_4h")}, True, True),
 }
 
 
@@ -386,12 +386,12 @@ def test_calibration_parts(case, tmp_path):
     `pen` when it passed and names the pen that is in; otherwise nominal, and the verdict's notes
     say so.  The arm the checker builds agrees with the planners' rig on the same files."""
     cal, base_used, pen_used = CALIBRATIONS[case]
-    cfg = _config_copy(tmp_path, calibration={"2R": cal})
+    cfg = _config_copy(tmp_path, calibration={"2L": cal})
     mine, theirs = read_rig(cfg), Rig.load(cfg)
-    mount = mine.mounts["2R"]
-    T_nom = RIG.T_table_base("2R")
+    mount = mine.mounts["2L"]
+    T_nom = RIG.T_table_base("2L")
     assert np.array_equal(mount.T_table_base, T_CAL if base_used else T_nom)
-    assert np.array_equal(theirs.T_table_base("2R"), mount.T_table_base)
+    assert np.array_equal(theirs.T_table_base("2L"), mount.T_table_base)
     assert (mount.tip_hand is not None) == pen_used
     if pen_used:
         assert np.array_equal(mount.tip_hand, TIP_CAL)
@@ -401,39 +401,39 @@ def test_calibration_parts(case, tmp_path):
         assert "gel_06" in notes and "graphite_4h" in notes
     rng = np.random.default_rng(7)
     Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(300, 7))
-    A, B = capsules(model_of(mine, "2R"), Q, mount.T_table_base)
-    kb = theirs.arm("2R").body(Q)
-    T = theirs.T_table_base("2R")
+    A, B = capsules(model_of(mine, "2L"), Q, mount.T_table_base)
+    kb = theirs.arm("2L").body(Q)
+    T = theirs.T_table_base("2L")
     to_table = lambda p: p @ T[:3, :3].T + T[:3, 3]
     ends = max(np.abs(A - to_table(kb.p0)).max(), np.abs(B - to_table(kb.p1)).max())
     v = check_phase_end(cfg, RIG.phase(1), {a: RIG.park_q(a) for a in RIG.phase(1).active})
     print(f"\n{case}: capsule ends against the planners' rig {ends:.1e} m; notes: "
-          f"{[n for n in v.notes if n.startswith('2R')]}")
+          f"{[n for n in v.notes if n.startswith('2L')]}")
     assert ends < 1e-9
-    assert [n for n in v.notes if n.startswith("2R")] == list(mount.notes)
+    assert [n for n in v.notes if n.startswith("2L")] == list(mount.notes)
 
 
 def test_hanger_follows_the_calibrated_axis(tmp_path):
     """The arm is bolted to its plate: a slot's struts, plate and clamp move across the table
     with its calibrated axis (heights stay the frame's), as in the planners' rig; nobody else's
     steel moves."""
-    cfg = _config_copy(tmp_path, calibration={"2R": CALIBRATIONS["both"][0]})
+    cfg = _config_copy(tmp_path, calibration={"2L": CALIBRATIONS["both"][0]})
     mine, theirs = read_rig(cfg), Rig.load(cfg)
     move = np.array([SHIFT[0], SHIFT[1], 0.0])
     boxes = {b.name: b for b in theirs.steel}
     for k, name in enumerate(mine.box_names):
         n = MINE.box_names.index(name)
-        moved = mine.box_owner[k] == "2R"
+        moved = mine.box_owner[k] == "2L"
         want = move if moved else np.zeros(3)
         assert np.allclose(mine.box_lo[k] - MINE.box_lo[n], want, atol=1e-12), name
         assert np.allclose(mine.box_hi[k] - MINE.box_hi[n], want, atol=1e-12), name
         assert np.allclose(boxes[name].lo_table, mine.box_lo[k], atol=1e-12), name
         assert np.allclose(boxes[name].hi_table, mine.box_hi[k], atol=1e-12), name
-    assert sum(o == "2R" for o in mine.box_owner) == 4
+    assert sum(o == "2L" for o in mine.box_owner) == 4
     # and the clearance to it follows: the arm at park, against its own plus-x strut
     for rig, what in ((MINE, "nominal"), (mine, "calibrated")):
-        scene = build_scene(rig, "2R", (), (), False)
-        own = clearance(dc_replace(scene, own_exempt=()), rig.mounts["2R"].park_q[None])
+        scene = build_scene(rig, "2L", (), (), False)
+        own = clearance(dc_replace(scene, own_exempt=()), rig.mounts["2L"].park_q[None])
         print(f"\n{what}: closest steel {own.value['steel'][0] * 1e3:.2f} mm beyond demanded "
               f"({own.closest('steel', 0)})")
 
@@ -443,14 +443,14 @@ def test_slot_without_a_hanger(tmp_path):
     same steel as the planners' rig; every other box stays."""
     def change(cfg, pen):
         for a in cfg["slots"]["list"]:
-            if a["slot"] in ("3L", "3R"):
-                a.update(mounted=False, hanger=a["slot"] == "3L")
+            if a["slot"] in ("3R", "3L"):
+                a.update(mounted=False, hanger=a["slot"] == "3R")
     cfg = _config_copy(tmp_path, change)
     mine, theirs = read_rig(cfg), Rig.load(cfg)
-    assert "3R" not in mine.box_owner and sum(o == "3L" for o in mine.box_owner) == 4
+    assert "3L" not in mine.box_owner and sum(o == "3R" for o in mine.box_owner) == 4
     assert set(mine.box_names) == {b.name for b in theirs.steel}
     assert set(MINE.box_names) - set(mine.box_names) == {
-        n for n, o in zip(MINE.box_names, MINE.box_owner) if o == "3R"}
+        n for n, o in zip(MINE.box_names, MINE.box_owner) if o == "3L"}
 
 
 # =========================================================================== faults
@@ -464,39 +464,39 @@ def _fails(v, name):
 
 @pytest.mark.slow
 def test_fault_path_through_a_strut():
-    ph = phase_of("2L")
-    path = find_through("2L", ph, "steel", seed=1)
-    v = check(CONFIG, "2L", free_motion("2L", path), ph, path[0])
+    ph = phase_of("2R")
+    path = find_through("2R", ph, "steel", seed=1)
+    v = check(CONFIG, "2R", free_motion("2R", path), ph, path[0])
     _fails(v, "clearance steel")
 
 
 @pytest.mark.slow
 def test_fault_path_crosses_a_wall():
-    ph = phase_of("2L")
-    path = find_through("2L", ph, "walls", seed=2)
-    _fails(check(CONFIG, "2L", free_motion("2L", path), ph, path[0]), "clearance walls")
+    ph = phase_of("2R")
+    path = find_through("2R", ph, "walls", seed=2)
+    _fails(check(CONFIG, "2R", free_motion("2R", path), ph, path[0]), "clearance walls")
 
 
 @pytest.mark.slow
 def test_fault_path_touches_a_parked_neighbour():
-    ph = phase_of("2L")
-    path = find_through("2L", ph, "parked", seed=3)
-    _fails(check(CONFIG, "2L", free_motion("2L", path), ph, path[0]), "clearance parked arms")
+    ph = phase_of("2R")
+    path = find_through("2R", ph, "parked", seed=3)
+    _fails(check(CONFIG, "2R", free_motion("2R", path), ph, path[0]), "clearance parked arms")
 
 
 @pytest.mark.slow
 def test_fault_self_collision():
-    ph = phase_of("1L")
-    path = find_through("1L", ph, "self", seed=5)
-    _fails(check(CONFIG, "1L", free_motion("1L", path), ph, path[0]), "clearance self")
+    ph = phase_of("1R")
+    path = find_through("1R", ph, "self", seed=5)
+    _fails(check(CONFIG, "1R", free_motion("1R", path), ph, path[0]), "clearance self")
 
 
 def test_fault_pen_dips_into_the_paper_when_lifted():
     u = np.linspace(0, 1, 121)
     xy = (1 - u)[:, None] * np.array([-0.60, 0.10]) + u[:, None] * np.array([-0.55, 0.30])
     z = 0.030 - 0.031 * (1 - np.abs(2 * u - 1))                    # down to -1 mm, back up
-    Q, _ = ik_path("2L", np.column_stack([xy, z]))
-    v = check(CONFIG, "2L", free_motion("2L", Q), phase_of("2L"), Q[0])
+    Q, _ = ik_path("2R", np.column_stack([xy, z]))
+    v = check(CONFIG, "2R", free_motion("2R", Q), phase_of("2R"), Q[0])
     _fails(v, "clearance paper (pen)")
     assert -0.0017 < v.get("clearance paper (pen)").value < -0.0009
 
@@ -504,7 +504,7 @@ def test_fault_pen_dips_into_the_paper_when_lifted():
 def test_fault_corner_reads_differently_at_4_khz():
     """A joint-space corner flown through at speed, handed over at 48 Hz with the velocity of
     each leg: the acceleration jumps, so the finite differences grow with the rate (L44)."""
-    q0 = RIG.park_q("2L")
+    q0 = RIG.park_q("2R")
     a, b = np.zeros(7), np.zeros(7)
     a[6], b[5] = 0.15, 0.15
     t = np.arange(0, 4.0 + 1e-9, 1 / 48)
@@ -512,7 +512,7 @@ def test_fault_corner_reads_differently_at_4_khz():
     ud = 0.5 * np.pi / 4.0 * np.sin(np.pi * t / 4.0)
     q = q0 + np.where(u[:, None] < 0.5, 2 * u[:, None] * a, a + (2 * u[:, None] - 1) * b)
     qd = np.where(u[:, None] < 0.5, 2 * ud[:, None] * a, 2 * ud[:, None] * b)
-    v = check(CONFIG, "2L", Motion("free", Trajectory(t, q, qd)), phase_of("2L"), q0)
+    v = check(CONFIG, "2R", Motion("free", Trajectory(t, q, qd)), phase_of("2R"), q0)
     _fails(v, "1 kHz vs 4 kHz")
 
 
@@ -523,24 +523,24 @@ def _joint7_swing(peak):
     v = np.where(t < ramp, 0.5 * peak * (1 - np.cos(np.pi * t / ramp)),
                  0.5 * peak * (1 - np.cos(np.pi * (2 * ramp - t) / ramp)))
     x = np.concatenate([[0], np.cumsum(0.5 * (v[1:] + v[:-1]) * np.diff(t))])
-    q = np.tile(RIG.park_q("1L"), (len(t), 1))
+    q = np.tile(RIG.park_q("1R"), (len(t), 1))
     qd = np.zeros_like(q)
     q[:, 6], qd[:, 6] = -2.4 + x, v
     return Trajectory(t, q, qd)
 
 
 def test_fault_velocity_one_percent_over():
-    lim = RIG.arm("1L").limits.qd_max[6]
-    over = check(CONFIG, "1L", Motion("free", _joint7_swing(1.01 * lim)), phase_of("1L"))
+    lim = RIG.arm("1R").limits.qd_max[6]
+    over = check(CONFIG, "1R", Motion("free", _joint7_swing(1.01 * lim)), phase_of("1R"))
     _fails(over, "velocity at 1 kHz")
     assert 1.005 < over.get("velocity at 1 kHz").value < 1.011
-    under = check(CONFIG, "1L", Motion("free", _joint7_swing(0.99 * lim)), phase_of("1L"))
+    under = check(CONFIG, "1R", Motion("free", _joint7_swing(0.99 * lim)), phase_of("1R"))
     assert under.get("velocity at 1 kHz").passed
 
 
 @pytest.fixture(scope="module")
 def good_draw():
-    return draw_motion("2L", line_table((-0.62, 0.05), (-0.50, 0.30)))
+    return draw_motion("2R", line_table((-0.62, 0.05), (-0.50, 0.30)))
 
 
 PAPER_ROWS = ("clearance paper (links)", "clearance paper (tool)", "clearance paper (pen)")
@@ -550,8 +550,8 @@ PAPER_ROWS = ("clearance paper (links)", "clearance paper (tool)", "clearance pa
                          ids=["upright", "leaned 15 deg, worst direction"])
 def test_a_straight_line_draws(lean):
     """A straight line drawn on the paper passes everything, hand square and leaned 15 deg."""
-    m = draw_motion("2L", line_table((-0.62, 0.05), (-0.50, 0.30)), lean=lean)
-    v = check(CONFIG, "2L", m, phase_of("2L"), m.q_start)
+    m = draw_motion("2R", line_table((-0.62, 0.05), (-0.50, 0.30)), lean=lean)
+    v = check(CONFIG, "2R", m, phase_of("2R"), m.q_start)
     print(f"\n{v}")
     assert v.passed, v.failed
     assert "clearance paper (pen)" not in [x.name for x in v.measurements]
@@ -562,22 +562,22 @@ def test_a_straight_line_draws(lean):
 def test_fault_drawing_leaves_the_line(good_draw):
     tb = good_draw.tip_base
     d = tb[-1] - tb[0]
-    side = np.cross(d, RIG.paper("2L").normal)
+    side = np.cross(d, RIG.paper("2R").normal)
     side = side / np.linalg.norm(side)
     moved = Motion("draw", good_draw.traj, good_draw.piece, tb + 0.0005 * side)
-    v = check(CONFIG, "2L", moved, phase_of("2L"), good_draw.q_start)
+    v = check(CONFIG, "2R", moved, phase_of("2R"), good_draw.q_start)
     _fails(v, "tip on line")
     assert 0.00045 < v.get("tip on line").value < 0.00055
 
 
 def test_fault_drawing_stops_halfway():
-    a, b = draw_motion("2L", line_table((-0.62, 0.05), (-0.50, 0.30)), split=60)
+    a, b = draw_motion("2R", line_table((-0.62, 0.05), (-0.50, 0.30)), split=60)
     assert np.abs(a.q_end - b.q_start).max() < 1e-9
     t = np.concatenate([a.traj.t, a.traj.t[-1] + b.traj.t[1:]])
     traj = Trajectory(t, np.vstack([a.traj.q, b.traj.q[1:]]), np.vstack([a.traj.qd,
                                                                            b.traj.qd[1:]]))
     both = Motion("draw", traj, None, np.vstack([a.tip_base, b.tip_base[1:]]))
-    _fails(check(CONFIG, "2L", both, phase_of("2L"), a.q_start), "never stops")
+    _fails(check(CONFIG, "2R", both, phase_of("2R"), a.q_start), "never stops")
 
 
 def _nearest_progress(m):
@@ -585,7 +585,7 @@ def _nearest_progress(m):
     from aris.check.drawing import _project
     tr = m.traj
     t = np.arange(tr.t[0], tr.t[-1], 1e-3)
-    x = RIG.arm("2L").tip(sample(tr, t)[0])
+    x = RIG.arm("2R").tip(sample(tr, t)[0])
     P = m.tip_base
     seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
     s_at = np.concatenate([[0.0], np.cumsum(seg)])
@@ -607,8 +607,8 @@ def test_drawing_round_a_sharp_corner():
     d1 = np.array([c * d0[0] - s_ * d0[1], s_ * d0[0] + c * d0[1]])
     b = v + 0.12 * d1
     pts = np.vstack([line_table(a, v, 80)[:-1], line_table(v, b, 80)])
-    m = draw_motion("2L", pts)
-    v_ = check(CONFIG, "2L", m, phase_of("2L"), m.q_start)
+    m = draw_motion("2R", pts)
+    v_ = check(CONFIG, "2R", m, phase_of("2R"), m.q_start)
     near = _nearest_progress(m)
     dip = float(np.max(np.maximum.accumulate(near) - near))
     print(f"\n{v_}\nnearest point on the line falls back by {dip * 1e3:.3f} mm at the corner")
@@ -642,14 +642,14 @@ def test_draw_speed_comes_from_the_pen(good_draw, tmp_path):
     the pen says 10 mm/s.  A pen without a speed falls back to drawing.draw_speed_m_per_s and
     the verdict says so."""
     assert read_rig(CONFIG).draw_speed == RULES.draw_speed == 0.015   # same number as planners
-    ok = check(CONFIG, "2L", good_draw, phase_of("2L"), good_draw.q_start)
-    slow = check(_config_with_draw_speed(tmp_path / "a", 0.010), "2L", good_draw,
-                 phase_of("2L"), good_draw.q_start)
+    ok = check(CONFIG, "2R", good_draw, phase_of("2R"), good_draw.q_start)
+    slow = check(_config_with_draw_speed(tmp_path / "a", 0.010), "2R", good_draw,
+                 phase_of("2R"), good_draw.q_start)
 
     def no_speed(cfg, pen):
         del pen["speed_m_per_s"]
         cfg["drawing"]["draw_speed_m_per_s"] = 0.010
-    fallback = check(_config_copy(tmp_path / "b", no_speed), "2L", good_draw, phase_of("2L"),
+    fallback = check(_config_copy(tmp_path / "b", no_speed), "2R", good_draw, phase_of("2R"),
                      good_draw.q_start)
     print(f"\ntip speed limit {ok.get('tip speed').limit * 1e3:.2f} mm/s, then "
           f"{slow.get('tip speed').limit * 1e3:.2f} mm/s; fallback note: {fallback.notes}")
@@ -677,7 +677,7 @@ def test_sharp_corner_at_80_mm_per_s_slows_but_does_not_stop(tmp_path):
     stop = v.get("never stops")
     assert 5e-4 < stop.value < 2e-3 and stop.passed
     t = np.arange(d["t"][0], d["t"][-1], 1e-4)
-    tips = RIG.arm("2L").tip(sample(m.traj, t)[0])
+    tips = RIG.arm("2R").tip(sample(m.traj, t)[0])
     speed = np.linalg.norm(np.diff(tips, axis=0), axis=1) / 1e-4
     k = int(np.argmin(np.abs(t[:-1] - 2.1516)))
     print(f"real tip speed at the corner (10 kHz): {speed[k - 10:k + 10].min() * 1e3:.2f} mm/s")
@@ -689,8 +689,8 @@ def test_drawing_speed_allowance(good_draw):
     tr = good_draw.traj
     for factor, ok in ((1.015, True), (1.04, False)):
         fast = Trajectory(tr.t / factor, tr.q, tr.qd * factor)
-        v = check(CONFIG, "2L", Motion("draw", fast, good_draw.piece, good_draw.tip_base),
-                  phase_of("2L"), good_draw.q_start)
+        v = check(CONFIG, "2R", Motion("draw", fast, good_draw.piece, good_draw.tip_base),
+                  phase_of("2R"), good_draw.q_start)
         print(f"\n{factor}: tip speed {v.get('tip speed').value * 1e3:.3f} mm/s, "
               f"limit {v.get('tip speed').limit * 1e3:.3f}")
         assert v.get("tip speed").passed == ok
@@ -707,44 +707,44 @@ def test_tolerances_from_rig_json(good_draw, tmp_path):
     fast = Motion("draw", Trajectory(tr.t / 1.015, tr.q, tr.qd * 1.015), good_draw.piece,
                   good_draw.tip_base)
     q0 = good_draw.q_start
-    assert check(CONFIG, "2L", fast, phase_of("2L"), q0).get("tip speed").passed
+    assert check(CONFIG, "2R", fast, phase_of("2R"), q0).get("tip speed").passed
     tight = Tolerances(speed_tol=0.01)
-    _fails(check(CONFIG, "2L", fast, phase_of("2L"), q0, tolerances=tight), "tip speed")
+    _fails(check(CONFIG, "2R", fast, phase_of("2R"), q0, tolerances=tight), "tip speed")
     cfg = _config_copy(tmp_path / "b", lambda c, pen: c["checker"].update(speed_tol=0.01))
-    _fails(check(cfg, "2L", fast, phase_of("2L"), q0), "tip speed")
+    _fails(check(cfg, "2R", fast, phase_of("2R"), q0), "tip speed")
 
 
 def _down(depth, n=60):
     """Tip straight down from 10 mm above the paper to `depth` (negative: into it)."""
     z = np.linspace(0.010, depth, n)
-    Q, _ = ik_path("2L", np.column_stack([np.full(n, -0.56), np.full(n, 0.17), z]))
-    return free_motion("2L", Q).traj
+    Q, _ = ik_path("2R", np.column_stack([np.full(n, -0.56), np.full(n, 0.17), z]))
+    return free_motion("2R", Q).traj
 
 
 @pytest.mark.slow  # 5 to 17 s: over the quick set's budget (orchestrator, 2026-10-01)
 def test_lower_and_lift():
     """A lower ends, a lift starts, on the drawing surface (the press below the paper); the pen
     may go 2 mm below that surface at most.  A lower that ends on the paper itself fails."""
-    ph = phase_of("2L")
+    ph = phase_of("2R")
     tr = _down(-PRESS)
-    lower = check(CONFIG, "2L", Motion("lower", tr), ph, tr.q[0])
+    lower = check(CONFIG, "2R", Motion("lower", tr), ph, tr.q[0])
     print(f"\n{lower}")
     assert lower.passed, lower.failed
     depth = lower.get("pen depth (lower, lift)")
     assert -0.0016 - PRESS < depth.value < -PRESS and depth.limit == -0.002 - PRESS
     assert lower.get("tip on surface (lower, lift)").value < 1e-6
     back = Trajectory(tr.t[-1] - tr.t[::-1], tr.q[::-1], -tr.qd[::-1])
-    assert check(CONFIG, "2L", Motion("lift", back), ph, back.q[0]).passed
-    _fails(check(CONFIG, "2L", Motion("free", tr), ph, tr.q[0]), "clearance paper (pen)")
+    assert check(CONFIG, "2R", Motion("lift", back), ph, back.q[0]).passed
+    _fails(check(CONFIG, "2R", Motion("free", tr), ph, tr.q[0]), "clearance paper (pen)")
     deep = _down(-PRESS - 0.003)
-    _fails(check(CONFIG, "2L", Motion("lower", deep), ph, deep.q[0]), "pen depth (lower, lift)")
+    _fails(check(CONFIG, "2R", Motion("lower", deep), ph, deep.q[0]), "pen depth (lower, lift)")
     on_paper = _down(0.0)
-    v = check(CONFIG, "2L", Motion("lower", on_paper), ph, on_paper.q[0])
+    v = check(CONFIG, "2R", Motion("lower", on_paper), ph, on_paper.q[0])
     print(f"lower ending on the paper: {v.get('tip on surface (lower, lift)')}")
     _fails(v, "tip on surface (lower, lift)")
     assert abs(v.get("tip on surface (lower, lift)").value - PRESS) < 1e-6
     up = Trajectory(on_paper.t[-1] - on_paper.t[::-1], on_paper.q[::-1], -on_paper.qd[::-1])
-    _fails(check(CONFIG, "2L", Motion("lift", up), ph, up.q[0]), "tip on surface (lower, lift)")
+    _fails(check(CONFIG, "2R", Motion("lift", up), ph, up.q[0]), "tip on surface (lower, lift)")
 
 
 def _touch(down):
@@ -753,7 +753,7 @@ def _touch(down):
     q = np.vstack([down.q, down.q[-2::-1]])
     qd = np.vstack([down.qd, -down.qd[-2::-1]])
     t = np.concatenate([down.t, 2 * T - down.t[-2::-1]])
-    return Motion("touch", Trajectory(t, q, qd), tip_base=RIG.arm("2L").tip(q))
+    return Motion("touch", Trajectory(t, q, qd), tip_base=RIG.arm("2R").tip(q))
 
 
 @pytest.mark.slow  # two IK paths, about 10 s
@@ -761,43 +761,43 @@ def test_touch_probes_the_real_paper():
     """A touch looks for the paper itself, so the press does not apply: a touch to the paper
     passes with the pen's press of 3.5 mm; one planned to the drawing surface (3.5 mm low)
     fails 'tip on paper'.  One verdict for the whole motion, each row from the tighter half."""
-    ph = phase_of("2L")
+    ph = phase_of("2R")
     good, low = _touch(_down(0.0)), _touch(_down(-PRESS))
-    v = check(CONFIG, "2L", good, ph, good.q_start)
+    v = check(CONFIG, "2R", good, ph, good.q_start)
     print(f"\n{v}")
     assert v.passed, v.failed
     assert v.get("tip on paper").value < 1e-6
     assert v.get("pen depth (lower, lift)").limit == -0.002          # below the paper, no press
     assert v.get("starts at q_before").detail.startswith("descent")
-    w = check(CONFIG, "2L", low, ph, low.q_start)
+    w = check(CONFIG, "2R", low, ph, low.q_start)
     print(f"touch to the drawing surface: {w.get('tip on paper')}")
     _fails(w, "tip on paper")
     assert abs(w.get("tip on paper").value - PRESS) < 1e-6
     flat = Motion("touch", Trajectory(good.traj.t[:2], good.traj.q[:2], good.traj.qd[:2]))
-    _fails(check(CONFIG, "2L", flat, ph), "well formed")
+    _fails(check(CONFIG, "2R", flat, ph), "well formed")
 
 
 @pytest.mark.slow  # IK for a line and a descent, about 5 s
 def test_air_run_surface_z():
     """The air run flies the plan 30 mm above the paper: with `surface_z` = paper + 30 mm a line
     drawn there and the lower onto it pass; without it they fail their tip rows."""
-    ph, air = phase_of("2L"), MINE.paper_z + 0.030
-    draw = draw_motion("2L", line_table((-0.62, 0.05), (-0.50, 0.30), z=0.030))
+    ph, air = phase_of("2R"), MINE.paper_z + 0.030
+    draw = draw_motion("2R", line_table((-0.62, 0.05), (-0.50, 0.30), z=0.030))
     n = 40
-    Q, _ = ik_path("2L", np.column_stack([np.full(n, -0.62), np.full(n, 0.05),
+    Q, _ = ik_path("2R", np.column_stack([np.full(n, -0.62), np.full(n, 0.05),
                                           np.linspace(0.045, 0.030, n)]))
-    lower = free_motion("2L", Q)
+    lower = free_motion("2R", Q)
     lower = Motion("lower", lower.traj)
     for m in (draw, lower):
         row = "tip on paper" if m.kind == "draw" else "tip on surface (lower, lift)"
-        up = check(CONFIG, "2L", m, ph, m.q_start, surface_z=air)
+        up = check(CONFIG, "2R", m, ph, m.q_start, surface_z=air)
         print(f"\n{m.kind} at {air * 1e3:.0f} mm: {up.get(row).value * 1e3:.3f} mm "
               f"({up.get(row).detail})")
         assert up.passed, up.failed
-        plain = check(CONFIG, "2L", m, ph, m.q_start)
+        plain = check(CONFIG, "2R", m, ph, m.q_start)
         _fails(plain, row)
         assert abs(plain.get(row).value - (0.030 + PRESS)) < 5e-4
-    _fails(check(CONFIG, "2L", draw, ph, draw.q_start, surface_z=float("nan")), "well formed")
+    _fails(check(CONFIG, "2R", draw, ph, draw.q_start, surface_z=float("nan")), "well formed")
 
 
 def test_paper_height_map(tmp_path):
@@ -809,7 +809,7 @@ def test_paper_height_map(tmp_path):
     bump = lambda x, y: 0.0015 * np.exp(-((x + 0.56) ** 2 + (y - 0.175) ** 2) / (2 * 0.05 ** 2))
     gx, gy = np.meshgrid(np.linspace(-0.75, -0.35, 9), np.linspace(-0.05, 0.40, 10))
     touches = np.column_stack([gx.ravel(), gy.ravel(), bump(gx.ravel(), gy.ravel())])
-    surf = fit(touches, MINE.paper_z, "2026-10-07", ("2L",))
+    surf = fit(touches, MINE.paper_z, "2026-10-07", ("2R",))
     cfg = _config_copy(tmp_path)
     write_paper(surf, cfg)
     mine = read_rig(cfg)
@@ -818,9 +818,9 @@ def test_paper_height_map(tmp_path):
     agree = np.abs(mine.paper_map.z(x, y) - surf.z(x, y)).max()
     pts = line_table((-0.62, 0.05), (-0.50, 0.30))
     pts[:, 2] = surf.z(pts[:, 0], pts[:, 1]) - PRESS
-    m = draw_motion("2L", pts)
-    on_map = check(cfg, "2L", m, phase_of("2L"), m.q_start)
-    flat = check(CONFIG, "2L", m, phase_of("2L"), m.q_start)
+    m = draw_motion("2R", pts)
+    on_map = check(cfg, "2R", m, phase_of("2R"), m.q_start)
+    flat = check(CONFIG, "2R", m, phase_of("2R"), m.q_start)
     height = float((pts[:, 2] + PRESS).max())
     print(f"\nreader vs writer, 2000 points: {agree:.1e} m; bump on the line {height * 1e3:.2f} mm; "
           f"on the map {on_map.get('tip on paper').value * 1e3:.3f} mm, on the plane "
@@ -838,11 +838,11 @@ def test_press_is_where_the_tip_draws(good_draw, tmp_path):
     pen's press below the paper (3.5 mm when written, 1.6 mm since) passes 'tip on paper' with
     that press and fails it when rig.json says the press is 0."""
     assert read_rig(CONFIG).press == PRESS > 0.001                    # same number as planners
-    tips = good_draw.tip_base @ RIG.T_table_base("2L")[:3, :3].T + RIG.T_table_base("2L")[:3, 3]
+    tips = good_draw.tip_base @ RIG.T_table_base("2R")[:3, :3].T + RIG.T_table_base("2R")[:3, 3]
     assert np.allclose(tips[:, 2], -PRESS)
-    pressed = check(CONFIG, "2L", good_draw, phase_of("2L"), good_draw.q_start)
-    flat = check(_config_copy(tmp_path, lambda cfg, pen: pen.update(press_m=0.0)), "2L",
-                 good_draw, phase_of("2L"), good_draw.q_start)
+    pressed = check(CONFIG, "2R", good_draw, phase_of("2R"), good_draw.q_start)
+    flat = check(_config_copy(tmp_path, lambda cfg, pen: pen.update(press_m=0.0)), "2R",
+                 good_draw, phase_of("2R"), good_draw.q_start)
     print(f"\npress {PRESS * 1e3:.1f} mm: {pressed.get('tip on paper')}\npress 0: {flat.get('tip on paper')}")
     assert pressed.passed, pressed.failed
     _fails(flat, "tip on paper")
@@ -854,42 +854,42 @@ def test_press_is_where_the_tip_draws(good_draw, tmp_path):
 
 @pytest.fixture(scope="module")
 def good_free():
-    q0 = RIG.park_q("2L")
-    return free_motion("2L", [q0, q0 + np.array([-0.4, -0.1, 0.1, 0.3, 0.2, -0.2, 0.5])])
+    q0 = RIG.park_q("2R")
+    return free_motion("2R", [q0, q0 + np.array([-0.4, -0.1, 0.1, 0.3, 0.2, -0.2, 0.5])])
 
 
 def test_fault_empty_and_still_motions(good_free):
     one = Trajectory(good_free.traj.t[:1], good_free.traj.q[:1], good_free.traj.qd[:1])
-    _fails(check(CONFIG, "2L", Motion("free", one), phase_of("2L")), "well formed")
+    _fails(check(CONFIG, "2R", Motion("free", one), phase_of("2R")), "well formed")
     q = np.tile(good_free.q_start, (2, 1))
     still = Trajectory(np.array([0.0, 1.0]), q, np.zeros((2, 7)))
-    _fails(check(CONFIG, "2L", Motion("free", still), phase_of("2L")), "moves")
+    _fails(check(CONFIG, "2R", Motion("free", still), phase_of("2R")), "moves")
 
 
 def test_fault_start_does_not_match(good_free):
     q_before = good_free.q_start.copy()
     q_before[2] += 1e-4
-    _fails(check(CONFIG, "2L", good_free, phase_of("2L"), q_before), "starts at q_before")
+    _fails(check(CONFIG, "2R", good_free, phase_of("2R"), q_before), "starts at q_before")
 
 
 def test_fault_end_not_at_rest(good_free):
     tr = good_free.traj
     n = len(tr.t) // 2
     cut = Motion("free", Trajectory(tr.t[:n], tr.q[:n], tr.qd[:n]))
-    _fails(check(CONFIG, "2L", cut, phase_of("2L"), tr.q[0]), "at rest at end")
+    _fails(check(CONFIG, "2R", cut, phase_of("2R"), tr.q[0]), "at rest at end")
 
 
 def test_fault_arm_not_active_in_the_phase(good_free):
-    _fails(check(CONFIG, "2L", good_free, RIG.phase(1), good_free.q_start), "well formed")
+    _fails(check(CONFIG, "2R", good_free, RIG.phase(1), good_free.q_start), "well formed")
 
 
 # =========================================================================== good motions
 
 
 GOOD = {
-    "2L": np.array([-0.4, -0.1, 0.1, 0.3, 0.2, -0.2, 0.5]),
-    "1L": np.array([0.3, 0.1, -0.2, 0.2, -0.3, 0.2, -0.6]),
-    "3R": np.array([-0.3, 0.1, 0.2, -0.2, 0.2, -0.1, 0.8]),
+    "2R": np.array([-0.4, -0.1, 0.1, 0.3, 0.2, -0.2, 0.5]),
+    "1R": np.array([0.3, 0.1, -0.2, 0.2, -0.3, 0.2, -0.6]),
+    "3L": np.array([-0.3, 0.1, 0.2, -0.2, 0.2, -0.1, 0.8]),
 }
 
 
@@ -911,7 +911,7 @@ def test_same_verdict_at_any_sampling(good_free):
     for name, tr in (("retimed", good_free.traj), ("100 Hz", resample(good_free.traj, 100)),
                      ("1 kHz", resample(good_free.traj, 1000)),
                      ("4 kHz", resample(good_free.traj, 4000))):
-        v = check(CONFIG, "2L", Motion("free", tr), phase_of("2L"), q0)
+        v = check(CONFIG, "2R", Motion("free", tr), phase_of("2R"), q0)
         out[name] = v
         print(f"\n{name:8} ({len(tr.t)} samples): {'PASS' if v.passed else v.failed}, "
               f"smallest clearance beyond demanded {v.min_clearance * 1e3:.3f} mm "
@@ -927,9 +927,9 @@ def test_clearance_is_a_true_bound(good_free):
     """The reported clearance never exceeds the truth measured by the planners' kernel on a
     20 kHz sampling of the same flown curve, and lies within the tolerance (0.25 mm) of it."""
     tr = good_free.traj
-    v = check(CONFIG, "2L", good_free, phase_of("2L"), good_free.q_start)
+    v = check(CONFIG, "2R", good_free, phase_of("2R"), good_free.q_start)
     t = np.linspace(tr.t[0], tr.t[-1], int(tr.t[-1] * 20000) + 1)
-    k = kernel_classes("2L", phase_of("2L"), sample(tr, t)[0])
+    k = kernel_classes("2R", phase_of("2R"), sample(tr, t)[0])
     truth = min(float(k[c].min()) for c in CLASSES)
     print(f"\nreported {v.min_clearance * 1e3:.4f} mm, kernel at 20 kHz {truth * 1e3:.4f} mm")
     assert v.min_clearance <= truth + 1e-9
@@ -939,14 +939,14 @@ def test_clearance_is_a_true_bound(good_free):
 @pytest.mark.slow
 def test_same_verdict_with_twice_the_samples():
     """A motion that fails, handed over again with a sample inserted between every two."""
-    ph = phase_of("2L")
-    path = find_through("2L", ph, "steel", seed=1)
-    m = free_motion("2L", path)
+    ph = phase_of("2R")
+    path = find_through("2R", ph, "steel", seed=1)
+    m = free_motion("2R", path)
     tr = m.traj
     t2 = np.sort(np.concatenate([tr.t, 0.5 * (tr.t[1:] + tr.t[:-1])]))
     q2, qd2, _ = sample(tr, t2)
-    a = check(CONFIG, "2L", m, ph, path[0])
-    b = check(CONFIG, "2L", Motion("free", Trajectory(t2, q2, qd2)), ph, path[0])
+    a = check(CONFIG, "2R", m, ph, path[0])
+    b = check(CONFIG, "2R", Motion("free", Trajectory(t2, q2, qd2)), ph, path[0])
     print(f"\n{len(tr.t)} samples: {a.min_clearance * 1e3:.3f} mm; {len(t2)} samples: "
           f"{b.min_clearance * 1e3:.3f} mm")
     assert a.passed == b.passed and a.failed == b.failed
@@ -958,19 +958,19 @@ def test_same_verdict_with_twice_the_samples():
 
 @pytest.mark.slow
 def test_old_plan_l44():
-    """The old hover schedule of arm 71 (now slot 2R): kinematics agree with the old code on every frame; the
+    """The old hover schedule of arm 71 (now slot 2L): kinematics agree with the old code on every frame; the
     old checker passed it, this one refuses it for its acceleration (lesson L44)."""
     ref = np.load(DEPLOY / "tests" / "data" / "check_old_plan.npz")
     m = load_model()
     tip_table = np.asarray(ref["tip_world"]) - ref["shift"]
-    R, p = frames(m, ref["q"], MINE.mounts["2R"].T_table_base)
+    R, p = frames(m, ref["q"], MINE.mounts["2L"].T_table_base)
     mine = p[:, 8] + R[:, 8] @ m.tip_hand
     err = np.abs(mine - tip_table).max()
     t, q = ref["t"], ref["q"]
     qd = np.gradient(q, t, axis=0)
     qd[0] = qd[-1] = 0.0
-    v = check(CONFIG, "2R", Motion("free", Trajectory(t, q, qd)),
-              Phase("old hover run", ("2R",), (), ()), q[0])
+    v = check(CONFIG, "2L", Motion("free", Trajectory(t, q, qd)),
+              Phase("old hover run", ("2L",), (), ()), q[0])
     print(f"\npen tip vs old code over {len(q)} frames: {err:.1e} m")
     print(f"old reading at 48 Hz: {ref['old_acc_48'].max():.1f} rad/s^2, linear to 1 kHz "
           f"{ref['old_acc_1k'].max():.0f}; this checker: "
@@ -997,15 +997,15 @@ def _timed(slot, m, q0, reps=3):
 def test_speed():
     """Measured 2026-09-29 (CPU time, one core): 0.13 s for the 7 s free motion and 0.53 s
     for the 60 s drawing motion.  The ceilings are about ten times that."""
-    q0 = RIG.park_q("2L")
-    d = GOOD["2L"]
-    free = free_motion("2L", [q0, q0 + d, q0 - 0.3 * d, q0 + d, q0], speed_fraction=0.12)
+    q0 = RIG.park_q("2R")
+    d = GOOD["2R"]
+    free = free_motion("2R", [q0, q0 + d, q0 - 0.3 * d, q0 + d, q0], speed_fraction=0.12)
     a = np.linspace(0, 3.2 * np.pi, 960)                           # 1.6 turns, 1.2 m of line
     circle = np.column_stack([-0.55 + 0.12 * np.cos(a), 0.20 + 0.12 * np.sin(a), 0 * a - PRESS])
-    draw = draw_motion("2L", circle)
+    draw = draw_motion("2R", circle)
     rows = []
     for name, m in (("free", free), ("draw", draw)):
-        sec, v = _timed("2L", m, m.q_start)
+        sec, v = _timed("2R", m, m.q_start)
         rows.append(sec)
         print(f"\n{name}: {m.traj.t[-1]:.1f} s motion, {len(m.traj.t)} samples handed over, "
               f"checked in {sec * 1e3:.0f} ms CPU ({v.min_clearance_at}); "
@@ -1030,18 +1030,18 @@ def test_phase_end_everyone_at_park_passes():
 
 
 def test_phase_end_pairs_agree_with_the_planners():
-    """Slot 2R at random configurations, 2L at park: the pair clearance equals the kernel's
-    clearance of 2R's whole body (base included, which a moving arm's check leaves out)
-    against parked 2L."""
+    """Slot 2L at random configurations, 2R at park: the pair clearance equals the kernel's
+    clearance of 2L's whole body (base included, which a moving arm's check leaves out)
+    against parked 2R."""
     rng = np.random.default_rng(9)
     Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(40, 7))
-    body = RIG.arm("2R").body(Q)
+    body = RIG.arm("2L").body(Q)
     body = replace(body, is_fixed=np.zeros_like(body.is_fixed))
-    parked = RIG.obstacles("2R", parked=("2L",), for_planning=False).capsules
+    parked = RIG.obstacles("2L", parked=("2R",), for_planning=False).capsules
     k = collide.clearance(body, Obstacles(capsules=parked), prune=False, backend=KB)
     worst = 0.0
     for q, kv in zip(Q, k):
-        v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {"2R": q}))
+        v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {"2L": q}))
         m = v.get("arms 2L and 2R")
         worst = max(worst, abs((m.value - m.limit) - kv))
     print(f"\npair clearance vs kernel, 40 configurations: {worst:.1e} m")
@@ -1049,13 +1049,13 @@ def test_phase_end_pairs_agree_with_the_planners():
 
 
 def test_phase_end_catches_a_touching_pair_and_a_missing_arm():
-    ph = Phase("pair", ("2R",), ("2L",), ())
+    ph = Phase("pair", ("2L",), ("2R",), ())
     rng = np.random.default_rng(10)
     Q = rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(3000, 7))
-    q = Q[np.argmax(kernel_classes("2R", ph, Q)["parked"] < -0.01)]
-    v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {"2R": q}))
+    q = Q[np.argmax(kernel_classes("2L", ph, Q)["parked"] < -0.01)]
+    v = check_phase_end(CONFIG, RIG.phase(1), _at_park(1, {"2L": q}))
     _fails(v, "arms 2L and 2R")
-    _fails(check_phase_end(CONFIG, RIG.phase(1), {"1L": RIG.park_q("1L")}), "well formed")
+    _fails(check_phase_end(CONFIG, RIG.phase(1), {"1R": RIG.park_q("1R")}), "well formed")
 
 
 def _pen_down(slot, xy):
@@ -1064,22 +1064,22 @@ def _pen_down(slot, xy):
 
 
 def test_phase_end_with_a_pen_still_down():
-    """Pens are lifted one arm per phase: at the end of the phase that lifted 2L's pen, 2R (not
+    """Pens are lifted one arm per phase: at the end of the phase that lifted 2R's pen, 2L (not
     moved, in `standing`) still has its pen on the paper and is accepted where it stands; the
     pair rows still count it.  Without `standing` it fails its paper row, and a phase that
     leaves the arm it MOVED at the paper fails too."""
-    down = {"2L": _pen_down("2L", (-0.56, 0.17)), "2R": _pen_down("2R", (0.55, 0.17))}
-    ph = Phase("lift pens 2L", ("2L",), tuple(a for a in SLOTS if a != "2L"), ())
-    lifted = dict(down, **{"2L": RIG.park_q("2L")})
-    v = check_phase_end(CONFIG, ph, lifted, standing={"2R": down["2R"]})
+    down = {"2R": _pen_down("2R", (-0.56, 0.17)), "2L": _pen_down("2L", (0.55, 0.17))}
+    ph = Phase("lift pens 2R", ("2R",), tuple(a for a in SLOTS if a != "2R"), ())
+    lifted = dict(down, **{"2R": RIG.park_q("2R")})
+    v = check_phase_end(CONFIG, ph, lifted, standing={"2L": down["2L"]})
     print(f"\n{v}")
     assert v.passed, v.failed
-    assert "arm 2R: paper (pen)" not in [m.name for m in v.measurements]
+    assert "arm 2L: paper (pen)" not in [m.name for m in v.measurements]
     assert len([m for m in v.measurements if m.name.startswith("arms ")]) == 15
-    _fails(check_phase_end(CONFIG, ph, lifted), "arm 2R: paper (pen)")
-    left = check_phase_end(CONFIG, ph, down, standing={"2R": down["2R"]})
-    _fails(left, "arm 2L: paper (pen)")
-    _fails(check_phase_end(CONFIG, ph, lifted, standing={"2L": None}), "well formed")
+    _fails(check_phase_end(CONFIG, ph, lifted), "arm 2L: paper (pen)")
+    left = check_phase_end(CONFIG, ph, down, standing={"2L": down["2L"]})
+    _fails(left, "arm 2R: paper (pen)")
+    _fails(check_phase_end(CONFIG, ph, lifted, standing={"2R": None}), "well formed")
 
 
 # =========================================================================== standing arms
@@ -1087,34 +1087,34 @@ def test_phase_end_with_a_pen_still_down():
 
 def test_standing_arm_away_from_park(good_free):
     """`standing`: an arm standing still somewhere other than its park is built at those joints,
-    like a parked arm at its park.  The good free motion of 2L passes with 2R parked; with 2R
-    standing at a configuration that reaches into the motion it is refused; 2R standing at its
-    own park reads exactly as 2R parked."""
-    ph = phase_of("2L")
-    assert "2R" in ph.parked
-    ok = check(CONFIG, "2L", good_free, ph, good_free.q_start)
+    like a parked arm at its park.  The good free motion of 2R passes with 2L parked; with 2L
+    standing at a configuration that reaches into the motion it is refused; 2L standing at its
+    own park reads exactly as 2L parked."""
+    ph = phase_of("2R")
+    assert "2L" in ph.parked
+    ok = check(CONFIG, "2R", good_free, ph, good_free.q_start)
     assert ok.passed, ok.failed
-    same = check(CONFIG, "2L", good_free, ph, good_free.q_start,
-                 standing={"2R": RIG.park_q("2R")})
+    same = check(CONFIG, "2R", good_free, ph, good_free.q_start,
+                 standing={"2L": RIG.park_q("2L")})
     assert same.get("clearance parked arms").value == ok.get("clearance parked arms").value
     rng = np.random.default_rng(21)
     Q = good_free.traj.q[::max(1, len(good_free.traj.q) // 40)]
     hit = None
     for q in rng.uniform(MINE_MODEL.q_min, MINE_MODEL.q_max, size=(400, 7)):
-        scene = build_scene(MINE, "2L", (), (), False, standing={"2R": q})
+        scene = build_scene(MINE, "2R", (), (), False, standing={"2L": q})
         if clearance(scene, Q).value["parked"].min() < -0.01:
             hit = q
             break
     assert hit is not None, "no brushing configuration found"
-    v = check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2R": hit})
-    print(f"\n2R parked: {ok.get('clearance parked arms').value * 1e3:.1f} mm; standing at "
+    v = check(CONFIG, "2R", good_free, ph, good_free.q_start, standing={"2L": hit})
+    print(f"\n2L parked: {ok.get('clearance parked arms').value * 1e3:.1f} mm; standing at "
           f"{np.round(hit, 2)}: {v.get('clearance parked arms').value * 1e3:.1f} mm "
           f"({v.get('clearance parked arms').detail})")
     _fails(v, "clearance parked arms")
-    assert "standing2R:" in v.get("clearance parked arms").detail
-    _fails(check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2L": hit}),
+    assert "standing2L:" in v.get("clearance parked arms").detail
+    _fails(check(CONFIG, "2R", good_free, ph, good_free.q_start, standing={"2R": hit}),
            "well formed")
-    _fails(check(CONFIG, "2L", good_free, ph, good_free.q_start, standing={"2R": hit[:6]}),
+    _fails(check(CONFIG, "2R", good_free, ph, good_free.q_start, standing={"2L": hit[:6]}),
            "well formed")
 
 
@@ -1134,17 +1134,17 @@ def _ik_along(slot, pts):
 
 
 def _meeting(paths_2L, p_2R):
-    """2L following each of `paths_2L` (table points, one start) and 2R standing at `p_2R`,
-    hands turned to keep everything but each other clear at the start.  -> 2L's joint paths
-    (one per table path, the same spin, joint 7 and branch), 2R's joints."""
-    L = [_ik_along("2L", P) for P in paths_2L]
+    """2R following each of `paths_2L` (table points, one start) and 2L standing at `p_2R`,
+    hands turned to keep everything but each other clear at the start.  -> 2R's joint paths
+    (one per table path, the same spin, joint 7 and branch), 2L's joints."""
+    L = [_ik_along("2R", P) for P in paths_2L]
     keys = lambda Qs: {tuple(np.round(Q[0], 9)): Q for Q in Qs}
     common = [k for k in keys(L[0]) if all(k in keys(Ls) for Ls in L[1:])]
-    R = [Q[0] for Q in _ik_along("2R", np.array([p_2R, p_2R]))]
+    R = [Q[0] for Q in _ik_along("2L", np.array([p_2R, p_2R]))]
     starts = np.array(common)
     best = (-np.inf,)
     for qr in R[::2]:
-        c = clearance(build_scene(MINE, "2L", (), (), False, standing={"2R": qr}), starts)
+        c = clearance(build_scene(MINE, "2R", (), (), False, standing={"2L": qr}), starts)
         ok = np.all([c.value[k] > 0.01 for k in ("steel", "links", "tool", "pen", "self")], 0)
         v = np.where(ok, c.value["parked"], -np.inf)
         i = int(np.argmax(v))
@@ -1159,38 +1159,38 @@ def _polyline(*corners, n=30):
 
 
 def test_retreat_from_a_meeting():
-    """A retreat starts inside the arm-to-arm clearance (two tools about 40 mm apart, 2R
-    standing): straight up then away passes, judged by the distance to 2R never falling back;
-    the same path with a 3 mm dip toward 2R fails 'retreat approaches 2R'; a free move from that
-    pose still fails the clearance to 2R."""
+    """A retreat starts inside the arm-to-arm clearance (two tools about 40 mm apart, 2L
+    standing): straight up then away passes, judged by the distance to 2L never falling back;
+    the same path with a 3 mm dip toward 2L fails 'retreat approaches 2L'; a free move from that
+    pose still fails the clearance to 2L."""
     start = np.array([-0.0375, 0.10, 0.06])
     up, away, dip = start + [0, 0, 0.06], start + [-0.10, 0, 0.06], start + [0.003, 0, 0]
     (Qg, Qd), qr = _meeting([_polyline(start, up, away), _polyline(start, dip, up, away)],
                             np.array([0.0375, 0.10, 0.06]))
-    ph, stand = Phase("meet 2L", ("2L",), (), ()), {"2R": qr}
-    good = Motion("retreat", free_motion("2L", Qg).traj)
-    bad = Motion("retreat", free_motion("2L", Qd).traj)
-    v = check(CONFIG, "2L", good, ph, good.q_start, standing=stand)
-    w = check(CONFIG, "2L", bad, ph, bad.q_start, standing=stand)
-    f = check(CONFIG, "2L", Motion("free", good.traj), ph, good.q_start, standing=stand)
-    print(f"\n{v}\ndip: {w.get('retreat approaches 2R')}\nfree: "
+    ph, stand = Phase("meet 2R", ("2R",), (), ()), {"2L": qr}
+    good = Motion("retreat", free_motion("2R", Qg).traj)
+    bad = Motion("retreat", free_motion("2R", Qd).traj)
+    v = check(CONFIG, "2R", good, ph, good.q_start, standing=stand)
+    w = check(CONFIG, "2R", bad, ph, bad.q_start, standing=stand)
+    f = check(CONFIG, "2R", Motion("free", good.traj), ph, good.q_start, standing=stand)
+    print(f"\n{v}\ndip: {w.get('retreat approaches 2L')}\nfree: "
           f"{f.get('clearance parked arms').value * 1e3:.1f} mm")
     assert v.passed, v.failed
-    assert v.get("retreat approaches 2R").detail.startswith("gap 4")       # ~40 mm apart
+    assert v.get("retreat approaches 2L").detail.startswith("gap 4")       # ~40 mm apart
     assert "clearance parked arms" not in [m.name for m in v.measurements]
-    _fails(w, "retreat approaches 2R")
-    assert 0.002 < w.get("retreat approaches 2R").value < 0.004
+    _fails(w, "retreat approaches 2L")
+    assert 0.002 < w.get("retreat approaches 2L").value < 0.004
     _fails(f, "clearance parked arms")
 
 
 def test_retreat_from_past_a_joint_limit():
-    """2R stands with joint 6 0.047 rad past its limit (the site, 2026-10-08).  A retreat that
+    """2L stands with joint 6 0.047 rad past its limit (the site, 2026-10-08).  A retreat that
     turns joint 6 straight back 0.25 rad passes (it ends 0.20 rad inside, past the 0.15 rad
     gate); the same motion as a free move fails the joint positions; a wiggle back toward the
     limit fails; a start 0.12 rad past the limit is refused."""
     lim = MINE_MODEL.q_min[5]
-    q0 = RIG.park_q("2R").copy()
-    ph = Phase("retreat 2R", ("2R",), (), ())
+    q0 = RIG.park_q("2L").copy()
+    ph = Phase("retreat 2L", ("2L",), (), ())
 
     def move(*steps, start=-0.047, T=1.5, hz=200):
         """Joint 6 from `start` past the limit through the offsets `steps`, rest to rest on
@@ -1208,12 +1208,12 @@ def test_retreat_from_past_a_joint_limit():
         return Trajectory(np.arange(len(x)) / hz, q, qd)
 
     straight = move(0.25)
-    v = check(CONFIG, "2R", Motion("retreat", straight), ph, straight.q[0])
-    f = check(CONFIG, "2R", Motion("free", straight), ph, straight.q[0])
+    v = check(CONFIG, "2L", Motion("retreat", straight), ph, straight.q[0])
+    f = check(CONFIG, "2L", Motion("free", straight), ph, straight.q[0])
     wiggle = move(0.15, 0.10, 0.25)
-    w = check(CONFIG, "2R", Motion("retreat", wiggle), ph, wiggle.q[0])
+    w = check(CONFIG, "2L", Motion("retreat", wiggle), ph, wiggle.q[0])
     far = move(0.30, start=-0.12)
-    x = check(CONFIG, "2R", Motion("retreat", far), ph, far.q[0])
+    x = check(CONFIG, "2L", Motion("retreat", far), ph, far.q[0])
     print(f"\n{v}\nfree: {f.get('joint positions')}\nwiggle: "
           f"{w.get('retreat approaches the limit of joint 6')}\n"
           f"far: {x.get('retreat starts near the limit of joint 6')}")
@@ -1225,10 +1225,28 @@ def test_retreat_from_past_a_joint_limit():
     _fails(x, "retreat starts near the limit of joint 6")
 
 
+def test_phase_end_with_arms_meant_to_touch():
+    """A pen-tip meeting whose lift failed leaves 2L and 2R inside the arm-to-arm clearance
+    (tools 44 mm apart): the phase end passes when both are in `contact` (that pair is not held
+    to the clearance, and the verdict says so) and fails without; one of them alone in `contact`
+    is not enough."""
+    start = np.array([-0.0375, 0.10, 0.06])
+    (Q,), q_2L = _meeting([_polyline(start, start + [0, 0, 0.01])], -start * [1, -1, -1])
+    ph = Phase("meet", ("2L", "2R"), tuple(a for a in SLOTS if a not in ("2L", "2R")), ())
+    q = {a: RIG.park_q(a) for a in SLOTS} | {"2R": Q[0], "2L": q_2L}
+    v = check_phase_end(CONFIG, ph, q, contact=("2L", "2R"))
+    print(f"\n{v}")
+    assert v.passed, v.failed
+    assert "arms 2L and 2R" not in [m.name for m in v.measurements]
+    assert any("arms 2L and 2R: meant to touch" in n for n in v.notes)
+    _fails(check_phase_end(CONFIG, ph, q), "arms 2L and 2R")
+    _fails(check_phase_end(CONFIG, ph, q, contact=("2L",)), "arms 2L and 2R")
+
+
 def test_everything_far_away_is_pruned_without_error(good_free):
     """Parked arms and boxes present but far beyond the threshold: every class prunes to
     nothing and still gives a true (large) answer."""
-    scene = build_scene(MINE, "2L", (), ("2R",), False)
+    scene = build_scene(MINE, "2R", (), ("2L",), False)
     shift = np.array([30.0, 0.0, 0.0])
     scene = dc_replace(scene, box_lo=scene.box_lo[:1] + 40.0, box_hi=scene.box_hi[:1] + 40.0,
                        box_own=scene.box_own[:1], box_names=scene.box_names[:1],

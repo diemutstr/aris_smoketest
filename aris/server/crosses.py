@@ -16,7 +16,7 @@ to its park, every motion checked as it is planned (the checker, `CheckVerify`).
 planner cannot draw whole fails the job before anything moves.
 
 Directions, as `docs/FOR_THE_ARTIST.md` section 0 names them: the desk is at the table's +y end
-(row 3), the L slots at −x, the R slots at +x.
+(row 3); L = her left = table +x, R = her right = table −x (renamed 2026-10-08).
 """
 from __future__ import annotations
 

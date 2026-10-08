@@ -247,3 +247,34 @@ def test_a_guide_nobody_moves_waits_then_times_out(monkeypatch, rig, site):
     texts = [x["text"] for x in said if x["event"] == "instruction"]
     assert texts[0].startswith("your turn") and texts[1:] == ["nobody moved 2L; waiting"]
     assert "fr3_arm_controller" in node.active                # holds again
+
+
+def test_a_failed_retreat_keeps_the_sample_and_holds_at_the_meeting_pose(monkeypatch, rig, site):
+    """The meeting worked, the glide back did not: the sample is registered (its row comes
+    before any retreat row), the trajectory controller holds where the arm stands, and the
+    result is a success with the sample and the real end pose."""
+    arm, node, said, hover, m = _guided(monkeypatch, rig, site)
+    moved = hover + np.array([0.0, 0.06, 0.0, -0.05, 0.0, 0.04, 0.0])
+    from aris.types import Refusal
+    monkeypatch.setattr(D.T, "glide", lambda *a, **k: Refusal("branch", "the line would jump"))
+
+    def person():
+        while not any(x["event"] == "instruction" for x in said):
+            time.sleep(0.01)
+        with node._lock:
+            node.q_d = moved.copy()
+    import threading
+    threading.Thread(target=person, daemon=True).start()
+    r = arm.guide(m)
+    assert r.done and r.why == "check", r.why
+    assert np.allclose(r.q, moved)                                 # the sample
+    assert np.abs(r.q_end - hover).max() > 0.01                    # stands off the hover
+    assert np.allclose(r.q_end, node.q_d)                          # where it really stands
+    assert "fr3_arm_controller" in node.active                     # holding
+    events = [x["event"] for x in said]
+    reg = events.index("guide: registered")
+    assert reg < events.index("guide: lifted")
+    stay = next(x for x in said if x["event"] == "guide: registered; stayed at the meeting pose")
+    assert stay["text"] == ("registered; stayed at the meeting pose (glide failed: cannot "
+                            "retreat (away): the line would jump)")
+    assert np.allclose(said[reg]["q"], moved)

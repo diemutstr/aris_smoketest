@@ -20,7 +20,7 @@ REF = np.load(DEPLOY / "tests" / "data" / "rig_reference.npz")
 TIP_SHIFT = np.array([0.001, 0.0, -0.002])  # made-up calibrated pen tip, hand frame
 SHIFT = REF["shift"]                      # canvas corner -> table centre, (0.9017, 1.81532, 0)
 # the reference file names arms by their old robot ids; the rig names them by slot
-OLD = {13: "1L", 17: "1R", 31: "2L", 71: "2R", 2: "3L", 97: "3R"}
+OLD = {13: "1R", 17: "1L", 31: "2R", 71: "2L", 2: "3R", 97: "3L"}   # the old model's arm ids by physical slot (its L was table -x, our R since 2026-10-08)
 SLOTS = ("1L", "1R", "2L", "2R", "3L", "3R")
 
 
@@ -77,27 +77,27 @@ def test_paper_round_trip_and_plane(rig):
 
 def test_paper_margins_for_planning(rig):
     c, a = rig.clearance, rig.allowance
-    pl = rig.paper("2L", for_planning=True)
+    pl = rig.paper("2R", for_planning=True)
     assert pl.margin == c["body_to_paper_m"] + a["body_to_paper_m"]
     assert pl.pen_margin == c["pen_lifted_to_paper_m"] + a["pen_lifted_to_paper_m"]
     assert pl.tool_margin == c["tool_to_paper_m"] + a["tool_to_paper_m"]
 
 
 def test_walls_have_one_margin(rig):
-    pl = rig.wall_in_base("1L", rig.wall_between("1L", "2R"))
+    pl = rig.wall_in_base("1R", rig.wall_between("1R", "2L"))
     assert pl.pen_margin is None and pl.tool_margin is None
 
 
 def test_to_base_refuses_a_base_frame_line(rig):
     with pytest.raises(ValueError):
-        rig.to_base("1L", Line("l", np.zeros((2, 3)), "base"))
+        rig.to_base("1R", Line("l", np.zeros((2, 3)), "base"))
 
 
 # --------------------------------------------------------------------------- 3. walls
 
 
-@pytest.mark.parametrize("a,b,y_sign", [("1L", "2R", -1), ("2R", "3L", +1), ("1R", "2L", -1),
-                                        ("2L", "3R", +1)])
+@pytest.mark.parametrize("a,b,y_sign", [("1R", "2L", -1), ("2L", "3R", +1), ("1L", "2R", -1),
+                                        ("2R", "3L", +1)])
 def test_walls(rig, a, b, y_sign):
     w = rig.wall_between(a, b)
     # passes through (0, +-0.6051); exactly +-L/6 of the 3.63064 canvas
@@ -123,13 +123,13 @@ def test_walls(rig, a, b, y_sign):
 
 
 def test_phase_walls_cross_on_the_centre_line(rig):
-    w1, w2 = rig.wall_between("1L", "2R"), rig.wall_between("1R", "2L")
+    w1, w2 = rig.wall_between("1R", "2L"), rig.wall_between("1L", "2R")
     np.testing.assert_allclose(w1.point_table, w2.point_table, atol=1e-15)
     assert abs(w1.normal_table @ w2.normal_table) < 0.61      # not parallel: they cross
 
 
 def test_wall_planning_margin(rig):
-    pl = rig.wall_in_base("1L", rig.wall_between("1L", "2R"), for_planning=True)
+    pl = rig.wall_in_base("1R", rig.wall_between("1R", "2L"), for_planning=True)
     assert pl.margin == 0.040 + rig.allowance["wall_m"]
 
 
@@ -226,7 +226,7 @@ def test_reach_bound_covers_the_old_body(rig):
 
 
 def test_reach_bound_covers_the_kernel_body(rig):
-    arm = rig.arm("2L")
+    arm = rig.arm("2R")
     rng = np.random.default_rng(5)
     lim = arm.limits
     Q = rng.uniform(lim.q_min, lim.q_max, size=(20_000, 7))
@@ -417,7 +417,7 @@ def test_a_longer_and_thicker_pen_moves_the_tip_and_the_capsule(tmp_path, rig):
     cfg["pens"]["current"] = "fat"
     (tmp_path / "rig.json").write_text(json.dumps(cfg))
     r = Rig.load(tmp_path)
-    tool0, tool = default_tool(), r.arm("2L").tool
+    tool0, tool = default_tool(), r.arm("2R").tool
     np.testing.assert_allclose(tool.tip_hand, tool0.tip_hand + 0.005 * tool0.pen_axis_hand,
                                atol=1e-15)
     pen = next(c for c in tool.capsules_hand if c.name == "pen")
@@ -441,14 +441,14 @@ def test_slot_names_are_checked(tmp_path, rig):
     with pytest.raises(KeyError, match="slot"):
         rig.T_table_base(31)                                   # an old robot id
     cfg = json.loads((CONFIG / "rig.json").read_text())
-    for change in ({"slot": "2X"}, {"slot": "2R"}, {"axis_xy_m": [0.305, 0.0]}):
+    for change in ({"slot": "2X"}, {"slot": "2R"}, {"axis_xy_m": [-0.305, 0.0]}):
         bad = json.loads(json.dumps(cfg))
-        bad["slots"]["list"][2].update(change)                # slot 2L
+        bad["slots"]["list"][2].update(change)                # slot 2L (at +x)
         (tmp_path / "rig.json").write_text(json.dumps(bad))
         with pytest.raises(ValueError):
             Rig.load(tmp_path)
     bad = json.loads(json.dumps(cfg))
-    bad["slots"]["list"][0]["axis_xy_m"] = [-0.305, 1.5]     # 1L beyond row 3
+    bad["slots"]["list"][0]["axis_xy_m"] = [-0.305, 1.5]     # 1R beyond row 3
     (tmp_path / "rig.json").write_text(json.dumps(bad))
     with pytest.raises(ValueError):
         Rig.load(tmp_path)
@@ -464,15 +464,15 @@ def test_own_hanger_exempts_link1_for_its_own_arm_only(rig):
 
 
 def test_parked_arm_capsules(rig):
-    obs = rig.obstacles("1L", parked=("1R",), walls=(rig.wall_between("1L", "2R"),))
+    obs = rig.obstacles("1R", parked=("1L",), walls=(rig.wall_between("1R", "2L"),))
     m = 0.050 + rig.allowance["arm_to_arm_m"]
     assert len(obs.capsules) > 0 and all(c.margin == m for c in obs.capsules)
     assert [p.kind for p in obs.planes] == ["paper", "wall"]
-    # the parked capsules sit where 1R's own body is, seen from 1L
-    body = rig.arm("1R").body(rig.park_q("1R")[None, :])
-    p_table = rig.to_table("1R", body.p0[0])
-    T = rig.T_base_table("1L")
-    body_caps = [c for c in obs.capsules if c.name.startswith("parked1R:")]
+    # the parked capsules sit where 1L's own body is, seen from 1R
+    body = rig.arm("1L").body(rig.park_q("1L")[None, :])
+    p_table = rig.to_table("1L", body.p0[0])
+    T = rig.T_base_table("1R")
+    body_caps = [c for c in obs.capsules if c.name.startswith("parked1L:")]
     np.testing.assert_allclose(np.array([c.p0 for c in body_caps]),
                                p_table @ T[:3, :3].T + T[:3, 3], atol=1e-12)
     assert len(body_caps) == len(obs.capsules)
@@ -490,7 +490,7 @@ def _moved(T, dxyz, tilt_deg=0.0):
     return out
 
 
-def _write_calibration(tmp_path, slot="2L", base=None, pen=None, base_passed=True,
+def _write_calibration(tmp_path, slot="2R", base=None, pen=None, base_passed=True,
                        pen_passed=True, pen_name="graphite_4h"):
     """A made-up two-part calibration file (BUILD.md); a part is left out when None."""
     shutil.copy(CONFIG / "rig.json", tmp_path / "rig.json")
@@ -512,18 +512,18 @@ def _boxes_of(r, slot):
 
 
 def test_base_part_alone_changes_its_slot_only(tmp_path, rig):
-    T = _moved(rig.T_table_base("2L"), [0.003, -0.002, 0.001], tilt_deg=0.5)
+    T = _moved(rig.T_table_base("2R"), [0.003, -0.002, 0.001], tilt_deg=0.5)
     _write_calibration(tmp_path, base=T)
     cal = Rig.load(tmp_path)
-    st = cal.calibration_status("2L")
-    assert st["base"].startswith("applied: 2L.json base") and st["pen"] == "none"
-    assert not cal.calibrated("2L")
-    np.testing.assert_allclose(cal.T_table_base("2L"), T, atol=0)
-    p0, p1 = rig.paper("2L"), cal.paper("2L")
+    st = cal.calibration_status("2R")
+    assert st["base"].startswith("applied: 2R.json base") and st["pen"] == "none"
+    assert not cal.calibrated("2R")
+    np.testing.assert_allclose(cal.T_table_base("2R"), T, atol=0)
+    p0, p1 = rig.paper("2R"), cal.paper("2R")
     assert not np.allclose(p0.normal, p1.normal) and abs(p0.offset - p1.offset) > 1e-4
-    np.testing.assert_array_equal(cal.mounts["2L"].tip_hand, default_tool().tip_hand)
+    np.testing.assert_array_equal(cal.mounts["2R"].tip_hand, default_tool().tip_hand)
     for slot in rig.arm_ids:
-        if slot == "2L":
+        if slot == "2R":
             continue
         assert cal.calibration_status(slot) == {"base": "none", "pen": "none"}
         np.testing.assert_array_equal(cal.T_table_base(slot), rig.T_table_base(slot))
@@ -533,40 +533,40 @@ def test_base_part_alone_changes_its_slot_only(tmp_path, rig):
         oa, ob = rig.obstacles(slot), cal.obstacles(slot)
         assert [x.name for x in oa.boxes] == [x.name for x in ob.boxes]
         for x, y in zip(oa.boxes, ob.boxes):
-            if y.name.endswith("2L") or "2L_" in y.name:
-                continue                                # 2L's hanger moved with 2L
+            if y.name.endswith("2R") or "2R_" in y.name:
+                continue                                # 2R's hanger moved with 2R
             np.testing.assert_array_equal(x.T_base_box, y.T_base_box)
-    for a, b in [("1L", "2R"), ("2R", "3L"), ("1R", "2L"), ("2L", "3R")]:
+    for a, b in [("1R", "2L"), ("2L", "3R"), ("1L", "2R"), ("2R", "3L")]:
         wa, wb = rig.wall_between(a, b), cal.wall_between(a, b)    # walls stay nominal
         np.testing.assert_array_equal(wa.point_table, wb.point_table)
         np.testing.assert_array_equal(wa.normal_table, wb.normal_table)
     for x, y in zip(rig.steel, cal.steel):
-        if y.owner != "2L":
+        if y.owner != "2R":
             np.testing.assert_array_equal(x.lo_table, y.lo_table)
-    # the paper as 2L now sees it: its base origin is 0.970 + 1 mm above the paper
+    # the paper as 2R now sees it: its base origin is 0.970 + 1 mm above the paper
     assert abs(-p1.offset - (0.970 + 0.001)) < 1e-12
 
 
 def test_hanger_follows_the_calibrated_axis(tmp_path, rig):
     off = np.array([0.020, -0.020, 0.0])
-    _write_calibration(tmp_path, base=_moved(rig.T_table_base("2L"), off))
+    _write_calibration(tmp_path, base=_moved(rig.T_table_base("2R"), off))
     cal = Rig.load(tmp_path)
-    before, after = _boxes_of(rig, "2L"), _boxes_of(cal, "2L")
+    before, after = _boxes_of(rig, "2R"), _boxes_of(cal, "2R")
     assert sorted(before) == sorted(after) and len(after) == 4
     for name in before:
         np.testing.assert_allclose(after[name].lo_table - before[name].lo_table, off, atol=1e-12)
         np.testing.assert_allclose(after[name].hi_table - before[name].hi_table, off, atol=1e-12)
     for slot in rig.slot_names:
-        if slot != "2L":
+        if slot != "2R":
             for name, b in _boxes_of(rig, slot).items():
                 np.testing.assert_array_equal(_boxes_of(cal, slot)[name].lo_table, b.lo_table)
     # seen from the arm, its own hanger has not moved, and link 1 still clears it
-    T0, T1 = rig.T_base_table("2L"), cal.T_base_table("2L")
+    T0, T1 = rig.T_base_table("2R"), cal.T_base_table("2R")
     for name in before:
         c0 = T0[:3, :3] @ (0.5 * (before[name].lo_table + before[name].hi_table)) + T0[:3, 3]
         c1 = T1[:3, :3] @ (0.5 * (after[name].lo_table + after[name].hi_table)) + T1[:3, 3]
         np.testing.assert_allclose(c0, c1, atol=1e-12)
-    w = _link1_sweep(cal, "2L")
+    w = _link1_sweep(cal, "2R")
     print("\n2L moved 20 mm in x and y, link 1 over all of q1: " +
           ", ".join(f"{c} {v:+.4f}" for c, v in w.items()))
     assert all(v >= 0.0 for v in w.values())
@@ -576,26 +576,26 @@ def test_pen_part_for_another_pen_is_not_applied(tmp_path, rig):
     tip = default_tool().tip_hand + TIP_SHIFT
     _write_calibration(tmp_path, pen=tip, pen_name="gel_06")
     cal = Rig.load(tmp_path)
-    st = cal.calibration_status("2L")
+    st = cal.calibration_status("2R")
     assert st["base"] == "none"
     assert st["pen"].startswith("pen part not applied") and "gel_06" in st["pen"] \
         and "graphite_4h" in st["pen"]
-    np.testing.assert_array_equal(cal.arm("2L").tool.tip_hand, default_tool().tip_hand)
-    np.testing.assert_array_equal(cal.T_table_base("2L"), rig.T_table_base("2L"))
+    np.testing.assert_array_equal(cal.arm("2R").tool.tip_hand, default_tool().tip_hand)
+    np.testing.assert_array_equal(cal.T_table_base("2R"), rig.T_table_base("2R"))
 
 
 def test_both_parts_applied(tmp_path, rig):
-    T = _moved(rig.T_table_base("2L"), [0.003, -0.002, 0.001], tilt_deg=0.5)
+    T = _moved(rig.T_table_base("2R"), [0.003, -0.002, 0.001], tilt_deg=0.5)
     _write_calibration(tmp_path, base=T, pen=default_tool().tip_hand + TIP_SHIFT)
     cal = Rig.load(tmp_path)
-    st = cal.calibration_status("2L")
-    assert st["base"].startswith("applied") and st["pen"].startswith("applied: 2L.json pen")
-    assert cal.calibrated("2L") and not cal.calibrated("2R")
-    np.testing.assert_allclose(cal.T_table_base("2L"), T, atol=0)
-    q = rig.park_q("2L")[None, :]
-    arm0, arm1 = rig.arm("2L"), cal.arm("2L")
+    st = cal.calibration_status("2R")
+    assert st["base"].startswith("applied") and st["pen"].startswith("applied: 2R.json pen")
+    assert cal.calibrated("2R") and not cal.calibrated("2L")
+    np.testing.assert_allclose(cal.T_table_base("2R"), T, atol=0)
+    q = rig.park_q("2R")[None, :]
+    arm0, arm1 = rig.arm("2R"), cal.arm("2R")
     np.testing.assert_allclose(arm1.tool.tip_hand, arm0.tool.tip_hand + TIP_SHIFT, atol=1e-15)
-    np.testing.assert_allclose(cal.mounts["2L"].tip_hand, arm1.tool.tip_hand, atol=0)
+    np.testing.assert_allclose(cal.mounts["2R"].tip_hand, arm1.tool.tip_hand, atol=0)
     tip, axis = arm1.tip(q)[0], arm1.pen_axis(q)[0]
     body = arm1.body(q)
     k = body.names.index("pen")
@@ -606,30 +606,30 @@ def test_both_parts_applied(tmp_path, rig):
 
 
 def test_parts_that_did_not_pass_are_not_applied(tmp_path, rig):
-    T = _moved(rig.T_table_base("2L"), [0.003, 0.0, 0.0])
+    T = _moved(rig.T_table_base("2R"), [0.003, 0.0, 0.0])
     tip = default_tool().tip_hand + TIP_SHIFT
     _write_calibration(tmp_path, base=T, pen=tip, base_passed=False)
     cal = Rig.load(tmp_path)
-    st = cal.calibration_status("2L")
+    st = cal.calibration_status("2R")
     assert st["base"] == "base part not applied: it did not pass (residual too large)"
     assert st["pen"].startswith("applied")                     # the parts are independent
-    np.testing.assert_array_equal(cal.T_table_base("2L"), rig.T_table_base("2L"))
+    np.testing.assert_array_equal(cal.T_table_base("2R"), rig.T_table_base("2R"))
     _write_calibration(tmp_path, base=T, pen=tip, pen_passed=False)
-    st = Rig.load(tmp_path).calibration_status("2L")
+    st = Rig.load(tmp_path).calibration_status("2R")
     assert st["base"].startswith("applied")
     assert st["pen"] == "pen part not applied: it did not pass (no contact)"
 
 
 def test_malformed_calibration_is_refused(tmp_path, rig):
-    T = rig.T_table_base("2L")
+    T = rig.T_table_base("2R")
     T[0, 0] *= 1.1
     _write_calibration(tmp_path, base=T)
     with pytest.raises(ValueError):
         Rig.load(tmp_path)
-    _write_calibration(tmp_path, base=rig.T_table_base("2L"))
-    p = tmp_path / "calibration" / "2L.json"
+    _write_calibration(tmp_path, base=rig.T_table_base("2R"))
+    p = tmp_path / "calibration" / "2R.json"
     cal = json.loads(p.read_text())
-    cal["slot"] = "2R"                                          # a file in the wrong place
+    cal["slot"] = "2L"                                          # a file in the wrong place
     p.write_text(json.dumps(cal))
     with pytest.raises(ValueError):
         Rig.load(tmp_path)
@@ -639,8 +639,8 @@ def test_malformed_calibration_is_refused(tmp_path, rig):
 
 
 def test_leaders_and_rows(rig):
-    assert rig.leaders(1) == ("1L", "2R", "3L") and rig.leaders(2) == ("1R", "2L", "3R")
-    pairs = {"1L": "1R", "1R": "1L", "2L": "2R", "2R": "2L", "3L": "3R", "3R": "3L"}
+    assert rig.leaders(1) == ("1R", "2L", "3R") and rig.leaders(2) == ("1L", "2R", "3L")
+    pairs = {"1R": "1L", "1L": "1R", "2R": "2L", "2L": "2R", "3R": "3L", "3L": "3R"}
     assert all(rig.row_partner(a) == b for a, b in pairs.items())
     with pytest.raises(ValueError):
         rig.leaders(3)
@@ -667,8 +667,8 @@ def test_config_only_read_by_rig():
 
 
 def test_phases(rig):
-    for n, active, pairs in [(1, ("1L", "2R", "3L"), {("1L", "2R"), ("2R", "3L")}),
-                             (2, ("1R", "2L", "3R"), {("1R", "2L"), ("2L", "3R")})]:
+    for n, active, pairs in [(1, ("1R", "2L", "3R"), {("1R", "2L"), ("2L", "3R")}),
+                             (2, ("1L", "2R", "3L"), {("1L", "2R"), ("2R", "3L")})]:
         ph = rig.phase(n)
         assert ph.active == active
         assert set(ph.parked) == set(rig.arm_ids) - set(active)
@@ -683,24 +683,24 @@ def test_phases(rig):
             print(f"{slot:>3s}  {n}  {seen}  {walls}")
             assert rig.row_partner(slot) in seen
             assert all(slot in w.split("_")[1:] for w in walls)
-            assert len(walls) == (2 if slot in ("2R", "2L") else 1)
+            assert len(walls) == (2 if slot in ("2L", "2R") else 1)
     with pytest.raises(ValueError):
-        rig.obstacles_for("1R", rig.phase(1))
+        rig.obstacles_for("1L", rig.phase(1))
 
 
 def test_obstacles_for_matches_obstacles(rig):
     ph = rig.phase(1)
-    a = rig.obstacles_for("2R", ph, for_planning=False)
+    a = rig.obstacles_for("2L", ph, for_planning=False)
     seen = tuple(p for p in ph.parked
                  if any(c.name.startswith(f"parked{p}:") for c in a.capsules))
-    assert "2L" in seen
-    b = rig.obstacles("2R", parked=seen, walls=tuple(ph.walls), for_planning=False)
+    assert "2R" in seen
+    b = rig.obstacles("2L", parked=seen, walls=tuple(ph.walls), for_planning=False)
     assert [c.name for c in a.capsules] == [c.name for c in b.capsules]
     assert [p.name for p in a.planes] == [p.name for p in b.planes]
 
 
 def test_the_two_live_arms_2L_and_2R():
-    """config/two_arms is config/rig.json with only 2L and 2R mounted (tools/mounted_rig.py):
+    """config/two_arms is config/rig.json with only 2R and 2L mounted (tools/mounted_rig.py):
     every hanger stays, the middle row stays a row, walls go (the row partners never move
     together), fences toward rows 1 and 3."""
     import subprocess
@@ -708,12 +708,12 @@ def test_the_two_live_arms_2L_and_2R():
     two = Rig.load(CONFIG / "two_arms")
     six = Rig.load(CONFIG)
     assert two.arm_ids == ("2L", "2R") and two.slot_names == six.slot_names
-    assert two.rows == (("2L", "2R"),) and two.leader_sets == {1: ("2R",), 2: ("2L",)}
+    assert two.rows == (("2L", "2R"),) and two.leader_sets == {1: ("2L",), 2: ("2R",)}
     assert two.wall_pairs == {1: (), 2: ()}
-    # the empty hangers of row 1 stay; 3L (a floor arm) and 3R (no arm) have none
-    assert len(six.steel) == 13 + 6 * 4 and len(two.steel) == 13 + 4 * 4
-    assert not any(b.owner in ("3L", "3R") for b in two.steel)
-    assert two.row_partner("2R") == "2L" and two.row_partner("1L") is None
+    # every slot has its hanger since 2026-10-08 (row 3 hangs inverted too)
+    assert len(six.steel) == 13 + 6 * 4 and len(two.steel) == 13 + 6 * 4   # all six hangers hang since 2026-10-08
+    assert any(b.owner in ("3R", "3L") for b in two.steel)
+    assert two.row_partner("2L") == "2R" and two.row_partner("1R") is None
     assert tuple(two.drawing_area_m) == (1.72, 0.9)
     assert tuple(two.drawing_area_centre_m) == (0.0, 0.0)
     assert json.loads((CONFIG / "two_arms" / "rig.json").read_text())["about"]["mounted"] == \
@@ -740,21 +740,21 @@ def test_fences_hold_in_every_phase_for_the_planner_and_the_checker():
             names = [p.name for p in obs.planes]
             assert names == ["paper"] + fences
             assert all(p.margin == 0.040 + two.allowance["wall_m"] for p in obs.planes[1:])
-    # a configuration of 2R reaching past y = -0.605 m toward row 1 is refused on both sides
-    arm, T = two.arm("2R"), two.T_table_base("2R")
+    # a configuration of 2L reaching past y = -0.605 m toward row 1 is refused on both sides
+    arm, T = two.arm("2L"), two.T_table_base("2L")
     rng = np.random.default_rng(3)
     Q = rng.uniform(arm.limits.q_min, arm.limits.q_max, size=(2000, 7))
     body = arm.body(Q)
     ys = np.minimum(body.p0 @ T[:3, :3].T, body.p1 @ T[:3, :3].T)[..., 1] + T[1, 3]
     far = np.flatnonzero(ys.min(axis=1) < -0.65)
-    assert len(far) > 10, "no configuration of 2R reaches past the fence"
+    assert len(far) > 10, "no configuration of 2L reaches past the fence"
     reach = Q[far[0]]
-    planner = kernel_clearance(arm.body(reach[None]), two.obstacles_for("2R", two.phase(1)))[0]
+    planner = kernel_clearance(arm.body(reach[None]), two.obstacles_for("2L", two.phase(1)))[0]
     assert planner < 0.0
-    c = kernel_clearance(arm.body(Q[far]), two.obstacles_for("2R", two.phase(1)))
+    c = kernel_clearance(arm.body(Q[far]), two.obstacles_for("2L", two.phase(1)))
     assert np.all(c < 0.0)
     rig_c = read_rig(CONFIG / "two_arms")
-    scene = build_scene(rig_c, "2R", (), ("2L",), drawing=False)
+    scene = build_scene(rig_c, "2L", (), ("2R",), drawing=False)
     chk = clearance(scene, reach[None])
     assert chk.value["walls"][0] < 0.0 and scene.plane_names == tuple(fences)
 
@@ -776,8 +776,8 @@ def test_nominal_tool_is_the_uncalibrated_tool(tmp_path, rig):
     np.testing.assert_array_equal(rig.nominal_tip(), default_tool().tip_hand)
     _write_calibration(tmp_path, pen=default_tool().tip_hand + TIP_SHIFT)
     cal = Rig.load(tmp_path)
-    np.testing.assert_array_equal(cal.nominal_tip(), rig.arm("2R").tool.tip_hand)
-    assert not np.array_equal(cal.nominal_tip(), cal.arm("2L").tool.tip_hand)
+    np.testing.assert_array_equal(cal.nominal_tip(), rig.arm("2L").tool.tip_hand)
+    assert not np.array_equal(cal.nominal_tip(), cal.arm("2R").tool.tip_hand)
     assert cal.pen_name == cal.pen()["name"] == "graphite_4h"
 
 
@@ -786,9 +786,9 @@ def test_nominal_tool_is_the_uncalibrated_tool(tmp_path, rig):
 
 def test_the_ten_marks(rig):
     assert len(rig.marks) == 10
-    xy, share = rig.marks["S12R"]
+    xy, share = rig.marks["S12L"]
     np.testing.assert_array_equal(xy, [0.30, -0.605])
-    assert share == ("1R", "2R")
+    assert share == ("1L", "2L")
     assert rig.marks_for(("2L", "2R")) == ("A", "B")
     assert rig.marks_for(rig.mark_groups["rows12"]) == ("A", "B", "R1a", "R1b", "S12L", "S12R")
     assert set(rig.marks_for(rig.mark_groups["all"])) == set(rig.marks)

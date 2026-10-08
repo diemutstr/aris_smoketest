@@ -163,6 +163,11 @@ def start(st, store: JobStore, kind: str, name: str, work, prepare=None, created
     why = code_mismatch(st)
     if why:
         return Refusal("wrong_code", why)
+    if kind in ("draw", "park", "crosses"):              # they plan on the calibration as is
+        from aris.server.robots import mismatch
+        why = mismatch(st)
+        if why:
+            return Refusal("wrong_robot", why)
     rec = store.admit(kind, name)
     if isinstance(rec, Refusal):
         return rec

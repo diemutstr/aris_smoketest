@@ -83,7 +83,7 @@ area has a centre; walls 40 mm until x/y are calibrated; `aris draw --rest-of <j
 header carries tracking, pen and a note. Two-arm rig = the middle row 2L+2R (Pete, after the
 old numbering misled us into 2R+3R for a day), fences toward rows 1 and 3 (y = ±0.605), area
 1.72 x 0.9 centred (maps 1.76 x 0.96); calibration marks A (0, −0.40) and B (0, +0.40) on the
-centre line (docs/figures/marks_two_arms.png: both arms pivot there; 0.8 m baseline for yaw). Seven six-slot cases 100 % at the new speed (+33-54 % rig
+centre line. Seven six-slot cases 100 % at the new speed (+33-54 % rig
 time from 15 mm/s and the 10 mm/s landings). Quick suite 270 tests, robot 63.
 
 Dead-code audit done (read-only): ~1 500 lines removable; decisions pending Pete on followers,

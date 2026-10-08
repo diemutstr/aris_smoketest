@@ -308,13 +308,15 @@ _slug = slug
 def _phase_json(p: Phase) -> dict:
     return dict(name=p.name, active=list(p.active), parked=list(p.parked),
                 walls=[dict(name=w.name, arms=list(w.arms), point=w.point_table.tolist(),
-                            normal=w.normal_table.tolist()) for w in p.walls])
+                            normal=w.normal_table.tolist()) for w in p.walls],
+                contact=bool(p.contact))
 
 
 def _phase_of(d: dict) -> Phase:
     walls = tuple(Wall(w["name"], tuple(w["arms"]), np.array(w["point"]), np.array(w["normal"]))
                   for w in d["walls"])
-    return Phase(d["name"], tuple(d["active"]), tuple(d["parked"]), walls)
+    return Phase(d["name"], tuple(d["active"]), tuple(d["parked"]), walls,
+                 contact=bool(d.get("contact", False)))
 
 
 class Job:

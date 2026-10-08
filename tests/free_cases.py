@@ -1,5 +1,5 @@
 """The fixed test set of the free-space planner: 1 000 pairs of lift-off configurations for arm
-2L (phase 2) and 1 000 for arm 1L (phase 1).
+2R (phase 2) and 1 000 for arm 1R (phase 1).
 
 Run `../.venv/bin/python tests/free_cases.py [cache_dir]` from the repository root to (re)build
 `tests/data/free_cases_<arm>.npz` (cache_dir: the local planner's kinematic table).  Everything
@@ -32,7 +32,7 @@ from aris.types import DrawRules  # noqa: E402
 DEPLOY = Path(__file__).resolve().parents[1]
 CONFIG = DEPLOY / "config"
 DATA = DEPLOY / "tests" / "data"
-ARMS = {"2L": 2, "1L": 1}                  # arm -> the phase in which it moves (leads)
+ARMS = {"2R": 2, "1R": 1}                  # arm -> the phase in which it moves (leads)
 GROUPS = ("near", "far", "same_branch", "other_branch")
 PER_GROUP = 250
 N_POSES = 12_000                        # candidate tip poses per arm

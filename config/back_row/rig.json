@@ -3,8 +3,8 @@
   "derived_from": "config/rig.json",
   "source_digest": "c0d120cfee29bb61c5f8a1de",
   "mounted": [
-   "2L",
-   "2R"
+   "1L",
+   "1R"
   ],
   "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not edit by hand; change config/rig.json and run the tool again."
  },
@@ -23,12 +23,12 @@
    0.0
   ],
   "drawing_area_m": [
-   1.72,
-   0.9
+   1.64,
+   1.08
   ],
   "drawing_area_centre_m": [
    0.0,
-   0.0
+   -1.24
   ],
   "drawing_area_centre_note": "the centre of the drawing area in the table frame (x, y); [0, 0] when absent. The system planner and the drawing server place the area here (2026-10-02).",
   "drawing_area_note": "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
@@ -40,34 +40,29 @@
   "reference_slot_note": "the meetings calibration holds this slot exactly at its nominal pose (the gauge); decided 2026-10-08",
   "list": [
    {
-    "name": "A",
+    "name": "R1a",
     "xy_m": [
      0.0,
-     -0.4
+     -1.61
     ],
     "shared_by": [
-     "2L",
-     "2R"
+     "1L",
+     "1R"
     ]
    },
    {
-    "name": "B",
+    "name": "R1b",
     "xy_m": [
      0.0,
-     0.4
+     -0.81
     ],
     "shared_by": [
-     "2L",
-     "2R"
+     "1L",
+     "1R"
     ]
    }
   ],
-  "groups": {
-   "row2": [
-    "2L",
-    "2R"
-   ]
-  },
+  "groups": {},
   "groups_note": "the subsets `aris mark --group` takes (DESIGN section 6, 'Subsets')"
  },
  "slots": {
@@ -108,7 +103,7 @@
      1.2693,
      -2.175
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "1R",
@@ -143,7 +138,7 @@
      1.2793,
      2.175
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "2L",
@@ -178,7 +173,7 @@
      1.5627,
      2.175
     ],
-    "mounted": true
+    "mounted": false
    },
    {
     "slot": "2R",
@@ -213,7 +208,7 @@
      1.2335,
      -1.3841
     ],
-    "mounted": true
+    "mounted": false
    },
    {
     "slot": "3L",
@@ -655,7 +650,7 @@
   "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm and for the uncontrolled arms beside a controlled one in its row.",
   "planes": [
    {
-    "name": "fence_row_-1p210",
+    "name": "fence_row_+0p000",
     "point_m": [
      0.0,
      -0.605106,
@@ -663,16 +658,16 @@
     ],
     "normal": [
      0.0,
-     1.0,
+     -1.0,
      0.0
     ],
-    "source": "halfway between the row at y = -1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+    "source": "halfway between the row at y = +0.0000 m (no arm controlled) and the nearest controlled row at y = -1.2102 m"
    },
    {
     "name": "fence_row_+1p210",
     "point_m": [
      0.0,
-     0.605106,
+     0.0,
      0.0
     ],
     "normal": [
@@ -680,7 +675,7 @@
      -1.0,
      0.0
     ],
-    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = -1.2102 m"
    }
   ]
  }

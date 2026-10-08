@@ -21,9 +21,9 @@ from aris.kernel.arm import Arm
 from aris.kernel.tool import with_tip
 from aris.rig import Rig
 
-CASES = [("config/two_arms", "2R", (1.5, -2.0), 0.020, 0.0),
-         ("config/two_arms", "2L", (-2.0, 0.7), -0.015, 1.2),
-         ("config", "1L", (0.4, 1.8), 0.008, -0.6)]
+CASES = [("config/two_arms", "2L", (1.5, -2.0), 0.020, 0.0),
+         ("config/two_arms", "2R", (-2.0, 0.7), -0.015, 1.2),
+         ("config", "1R", (0.4, 1.8), 0.008, -0.6)]
 
 
 def fresh(src, dst, pen=None):
@@ -129,11 +129,11 @@ def test_recovers_tilt_and_height(rigs, cfg, slot, tilt_deg, dz, spin):
 def test_noise_numbers(rigs, capsys):
     """Report recovered errors at 0.5 and 2 mrad joint noise; assert only the 0.5 mrad case."""
     rig = rigs["config/two_arms"]
-    T_true = true_pose(rig, "2R", (1.5, -2.0), 0.020)
+    T_true = true_pose(rig, "2L", (1.5, -2.0), 0.020)
     for noise in (0.5e-3, 2e-3):
         e_tilt, e_h, rms = [], [], []
         for seed in range(10):
-            r = calibrate_plane(rig, "2R", touches(rig, "2R", T_true, 0.0, noise, seed))
+            r = calibrate_plane(rig, "2L", touches(rig, "2L", T_true, 0.0, noise, seed))
             e_tilt.append(max(abs(np.rad2deg(r.roll) - 1.5), abs(np.rad2deg(r.pitch) + 2.0)))
             e_h.append(abs(r.height_change - 0.020))
             rms.append(r.rms)
@@ -149,7 +149,7 @@ def test_noise_numbers(rigs, capsys):
 
 def test_far_plane_refused(rigs):
     rig = rigs["config/two_arms"]
-    r = calibrate_plane(rig, "2R", touches(rig, "2R", true_pose(rig, "2R", (0.5, 0.5), 0.040),
+    r = calibrate_plane(rig, "2L", touches(rig, "2L", true_pose(rig, "2L", (0.5, 0.5), 0.040),
                                            0.0, 0.5e-3, 3))
     assert not r.passed
     assert "from its nominal height" in r.why and "off the plane" not in r.why
@@ -158,18 +158,18 @@ def test_far_plane_refused(rigs):
 
 def test_large_tilt_refused(rigs):
     rig = rigs["config/two_arms"]
-    r = calibrate_plane(rig, "2L", touches(rig, "2L", true_pose(rig, "2L", (3.5, 0.0), 0.0), 0.0))
+    r = calibrate_plane(rig, "2R", touches(rig, "2R", true_pose(rig, "2R", (3.5, 0.0), 0.0), 0.0))
     assert not r.passed and "leans" in r.why and "height" not in r.why
 
 
 def test_slipped_touch_refused(rigs):
     rig = rigs["config/two_arms"]
-    T_true = true_pose(rig, "2R", (1.0, 1.0), 0.010)
-    Q = touches(rig, "2R", T_true, 0.0, 0.5e-3, 4)
+    T_true = true_pose(rig, "2L", (1.0, 1.0), 0.010)
+    Q = touches(rig, "2L", T_true, 0.0, 0.5e-3, 4)
     T_slip = T_true.copy()
     T_slip[2, 3] -= 0.005                 # touch 7 lands 5 mm above the paper
-    Q[7] = touches(rig, "2R", T_slip, 0.0, 0.5e-3, 4)[7]
-    r = calibrate_plane(rig, "2R", Q)
+    Q[7] = touches(rig, "2L", T_slip, 0.0, 0.5e-3, 4)[7]
+    r = calibrate_plane(rig, "2L", Q)
     assert not r.passed and r.worst_index == 7
     assert "touch 7 is" in r.why and "slipped" in r.why
     assert r.max_residual > P.MAX_RESIDUAL_M
@@ -181,23 +181,23 @@ def test_slipped_touch_refused(rigs):
     (np.zeros((5, 6)), "N x 7"),
 ])
 def test_degenerate_inputs_are_refusals(rigs, Q, words):
-    r = calibrate_plane(rigs["config"], "1L", Q)
+    r = calibrate_plane(rigs["config"], "1R", Q)
     assert not r.passed and words in r.why
-    assert np.array_equal(r.T_table_base, rigs["config"].T_table_base("1L"))
+    assert np.array_equal(r.T_table_base, rigs["config"].T_table_base("1R"))
 
 
 def test_collinear_and_unreadable_are_refusals(rigs):
     rig = rigs["config"]
-    Q = touches(rig, "1L", rig.T_table_base("1L"), 0.0)
-    r = calibrate_plane(rig, "1L", Q[[0, 1, 2, 3, 4]])          # one grid row: a line
+    Q = touches(rig, "1R", rig.T_table_base("1R"), 0.0)
+    r = calibrate_plane(rig, "1R", Q[[0, 1, 2, 3, 4]])          # one grid row: a line
     assert not r.passed and "on a line" in r.why
-    r = calibrate_plane(rig, "1L", np.repeat(Q[:1], 12, axis=0))   # one spot, twelve times
+    r = calibrate_plane(rig, "1R", np.repeat(Q[:1], 12, axis=0))   # one spot, twelve times
     assert not r.passed and "on a line" in r.why
     bad = Q.copy()
     bad[3, 2] = np.nan
-    r = calibrate_plane(rig, "1L", bad)
+    r = calibrate_plane(rig, "1R", bad)
     assert not r.passed and "touch 3 has no joint reading" in r.why
-    r = calibrate_plane(rig, "1L", Q[[0, 4, 12, 20, 24]])     # a plane, but too few points
+    r = calibrate_plane(rig, "1R", Q[[0, 4, 12, 20, 24]])     # a plane, but too few points
     assert not r.passed and "only 5 touches" in r.why
 
 
@@ -212,26 +212,26 @@ def _rows(slot, Q, other=None):
 
 def test_from_events_picks_this_slot_in_order(rigs):
     rig = rigs["config/two_arms"]
-    Q = touches(rig, "2R", true_pose(rig, "2R", (1.0, -1.0), 0.005), 0.0, 0.5e-3, 5)
-    a = calibration_from_events(rig, "2R", _rows("2R", Q, other="2L"))
-    b = calibrate_plane(rig, "2R", Q)
+    Q = touches(rig, "2L", true_pose(rig, "2L", (1.0, -1.0), 0.005), 0.0, 0.5e-3, 5)
+    a = calibration_from_events(rig, "2L", _rows("2L", Q, other="2R"))
+    b = calibrate_plane(rig, "2L", Q)
     assert a.passed and np.array_equal(a.T_table_base, b.T_table_base)
     assert np.array_equal(a.residuals, b.residuals)
-    assert not calibration_from_events(rig, "2L", _rows("2R", Q)).passed
+    assert not calibration_from_events(rig, "2R", _rows("2L", Q)).passed
 
 
 # ------------------------------------------------------------------ the file
 
 def test_base_file_loads_through_rig(rigs, tmp_path):
     rig = rigs["config/two_arms"]
-    T_true = true_pose(rig, "2R", (1.2, -0.8), 0.012)
-    r = calibrate_plane(rig, "2R", touches(rig, "2R", T_true, 0.0, 0.5e-3, 6))
+    T_true = true_pose(rig, "2L", (1.2, -0.8), 0.012)
+    r = calibrate_plane(rig, "2L", touches(rig, "2L", T_true, 0.0, 0.5e-3, 6))
     assert r.passed
     cfg = fresh("config/two_arms", tmp_path)
     path = write_base(r, cfg, date="2026-10-02")
-    assert path == cfg / "calibration" / "2R.json"
+    assert path == cfg / "calibration" / "2L.json"
     cal = json.loads(path.read_text())
-    assert cal["slot"] == "2R" and set(cal) == {"slot", "base"}
+    assert cal["slot"] == "2L" and set(cal) == {"slot", "base"}
     b = cal["base"]
     assert b["passed"] is True and b["why"] == "" and b["method"] == "plane"
     assert b["residuals"]["n_points"] == 25 and len(b["height_map_table_m"]) == 25
@@ -239,25 +239,25 @@ def test_base_file_loads_through_rig(rigs, tmp_path):
     assert b["measured_with"]["pen"] == rig.pen_name
 
     loaded = Rig.load(cfg)
-    st = loaded.calibration_status("2R")
-    assert st["base"].startswith("applied: 2R.json base (2026-10-02") and st["pen"] == "none"
-    assert loaded.calibration_status("2L") == {"base": "none", "pen": "none"}
-    T = loaded.T_table_base("2R")
+    st = loaded.calibration_status("2L")
+    assert st["base"].startswith("applied: 2L.json base (2026-10-02") and st["pen"] == "none"
+    assert loaded.calibration_status("2R") == {"base": "none", "pen": "none"}
+    T = loaded.T_table_base("2L")
     assert np.allclose(T, r.T_table_base, atol=1e-12)
     assert np.allclose(T[:3, :3], T_true[:3, :3], atol=1e-3)
     assert abs(T[2, 3] - T_true[2, 3]) < 0.2e-3
-    assert np.allclose(loaded.paper("2R").normal, r.normal_base, atol=1e-9)
+    assert np.allclose(loaded.paper("2L").normal, r.normal_base, atol=1e-9)
 
-    bad = calibrate_plane(rig, "2L", touches(rig, "2L", true_pose(rig, "2L", (0, 0), 0.040), 0.0))
+    bad = calibrate_plane(rig, "2R", touches(rig, "2R", true_pose(rig, "2R", (0, 0), 0.040), 0.0))
     write_base(bad, cfg, date="2026-10-02")
-    assert read(cfg, "2L")["base"]["why"]
+    assert read(cfg, "2R")["base"]["why"]
     loaded = Rig.load(cfg)
-    assert loaded.calibration_status("2L")["base"].startswith("base part not applied")
-    assert np.array_equal(loaded.T_table_base("2L"), rig.T_table_base("2L"))
+    assert loaded.calibration_status("2R")["base"].startswith("base part not applied")
+    assert np.array_equal(loaded.T_table_base("2R"), rig.T_table_base("2R"))
 
     ls = {f["slot"]: f for f in listing(cfg)}
-    assert ls["2R"]["base"]["passed"] is True and ls["2R"]["pen"] is None
-    assert ls["2L"]["base"]["passed"] is False and ls["2L"]["base"]["why"]
+    assert ls["2L"]["base"]["passed"] is True and ls["2L"]["pen"] is None
+    assert ls["2R"]["base"]["passed"] is False and ls["2R"]["base"]["why"]
 
 
 # ------------------------------------------------------------------ the touch-off
@@ -284,9 +284,9 @@ def plane_then_pen(src, dst, slot, tilt, dz, pen_at_plane, pen_now, ref_offset=(
 
 
 def test_touchoff_finds_a_longer_pen(tmp_path):
-    rig, r, _ = plane_then_pen("config/two_arms", tmp_path, "2R", (1.0, -1.5), 0.010, 0.0, 0.0013)
+    rig, r, _ = plane_then_pen("config/two_arms", tmp_path, "2L", (1.0, -1.5), 0.010, 0.0, 0.0013)
     assert r.passed, r.why
-    u = rig.arm("2R").tool.pen_axis_hand
+    u = rig.arm("2L").tool.pen_axis_hand
     shift = r.tip_hand - rig.nominal_tip()
     assert abs(shift @ u - 0.0013) < 0.05e-3
     assert np.linalg.norm(shift - (shift @ u) * u) < 1e-9          # along the axis only
@@ -296,26 +296,26 @@ def test_touchoff_finds_a_longer_pen(tmp_path):
 
 def test_first_touchoff_after_plane_is_zero(tmp_path):
     """The plane job's height already holds the pen it was measured with."""
-    _, r, _ = plane_then_pen("config/two_arms", tmp_path, "2L", (-0.5, 0.5), -0.008, 0.002, 0.002)
+    _, r, _ = plane_then_pen("config/two_arms", tmp_path, "2R", (-0.5, 0.5), -0.008, 0.002, 0.002)
     assert r.passed and abs(r.correction) < 1e-6
 
 
 def test_touchoff_refusals(rigs, tmp_path):
-    _, r, _ = plane_then_pen("config/two_arms", tmp_path / "a", "2R", (0, 0), 0.0, 0.0, 0.008)
+    _, r, _ = plane_then_pen("config/two_arms", tmp_path / "a", "2L", (0, 0), 0.0, 0.0, 0.008)
     assert not r.passed and "+8.00 mm off its nominal length" in r.why
-    _, r, _ = plane_then_pen("config/two_arms", tmp_path / "b", "2R", (0, 0), 0.0, 0.0, 0.001,
+    _, r, _ = plane_then_pen("config/two_arms", tmp_path / "b", "2L", (0, 0), 0.0, 0.0, 0.001,
                              ref_offset=(0.1, 0.05))
     assert r.passed
     rig = Rig.load(tmp_path / "b")
-    far = rig.T_table_base("2R")[:2, 3] + [0.1 + 0.04, 0.05]
-    r2 = touchoff(rig, "2R", r.q, far, rig.pen_name)
+    far = rig.T_table_base("2L")[:2, 3] + [0.1 + 0.04, 0.05]
+    r2 = touchoff(rig, "2L", r.q, far, rig.pen_name)
     assert not r2.passed and "from the reference point" in r2.why
-    r3 = touchoff(rig, "2R", r.q, far, "gel_07")
+    r3 = touchoff(rig, "2L", r.q, far, "gel_07")
     assert not r3.passed and "'gel_07'" in r3.why
-    r4 = touchoff(rig, "2R", r.q[:6], far, rig.pen_name)
+    r4 = touchoff(rig, "2L", r.q[:6], far, rig.pen_name)
     assert not r4.passed and "7 joint readings" in r4.why
     # no base part: the plane must be known first
-    r5 = touchoff(rigs["config/two_arms"], "2R", r.q, far, rig.pen_name)
+    r5 = touchoff(rigs["config/two_arms"], "2L", r.q, far, rig.pen_name)
     assert not r5.passed and "run the plane job first" in r5.why
 
 
@@ -323,7 +323,7 @@ def test_touchoff_noise(tmp_path, capsys):
     """Report the length error of one touch at 0.5 mrad joint noise (not asserted tightly)."""
     errs = []
     for seed in range(10):
-        _, r, _ = plane_then_pen("config/two_arms", tmp_path / str(seed), "2R", (1.0, -1.5),
+        _, r, _ = plane_then_pen("config/two_arms", tmp_path / str(seed), "2L", (1.0, -1.5),
                                  0.010, 0.0, 0.0013, noise=0.5e-3, seed=seed)
         errs.append(abs(r.correction - 0.0013))
     with capsys.disabled():
@@ -333,44 +333,45 @@ def test_touchoff_noise(tmp_path, capsys):
 
 
 def test_two_parts_written_independently(tmp_path):
-    rig, r, cfg = plane_then_pen("config/two_arms", tmp_path, "2R", (1.0, -1.5), 0.010, 0.0,
+    rig, r, cfg = plane_then_pen("config/two_arms", tmp_path, "2L", (1.0, -1.5), 0.010, 0.0,
                                  0.0013)
-    before = read(cfg, "2R")["base"]
-    write_pen(r, cfg, date="2026-10-03")
-    cal = read(cfg, "2R")
+    before = read(cfg, "2L")["base"]
+    write_pen(r, cfg, date="2026-10-03", robot="fr3-71")
+    cal = read(cfg, "2L")
     assert cal["base"] == before
     p = cal["pen"]
     assert p["passed"] is True and p["pen"] == rig.pen_name and p["date"] == "2026-10-03"
+    assert p["robot"] == "fr3-71" and "robot" not in cal["base"]
     assert p["reference_touch"]["q"] == pytest.approx(list(r.q))
     assert abs(p["correction_mm"] - 1.3) < 0.05
     # a new plane job rewrites base and keeps pen
-    plane = calibrate_plane(rig, "2R", touches(rig, "2R", rig.T_table_base("2R"), 0.0))
+    plane = calibrate_plane(rig, "2L", touches(rig, "2L", rig.T_table_base("2L"), 0.0))
     write_base(plane, cfg, date="2026-10-04")
-    cal2 = read(cfg, "2R")
+    cal2 = read(cfg, "2L")
     assert cal2["pen"] == p and cal2["base"]["date"] == "2026-10-04"
 
     loaded = Rig.load(cfg)
-    st = loaded.calibration_status("2R")
+    st = loaded.calibration_status("2L")
     assert st["base"].startswith("applied") and st["pen"].startswith("applied")
-    assert loaded.calibrated("2R") and not loaded.calibrated("2L")
-    assert np.allclose(loaded.arm("2R").tool.tip_hand, r.tip_hand, atol=1e-9)
+    assert loaded.calibrated("2L") and not loaded.calibrated("2R")
+    assert np.allclose(loaded.arm("2L").tool.tip_hand, r.tip_hand, atol=1e-9)
     ls = {f["slot"]: f for f in listing(cfg)}
-    assert ls["2R"]["pen"]["passed"] and ls["2R"]["pen"]["pen"] == rig.pen_name
+    assert ls["2L"]["pen"]["passed"] and ls["2L"]["pen"]["pen"] == rig.pen_name
 
     # another pen in: the pen part stays on disk but is not applied
     other = fresh(cfg, tmp_path / "other", pen="gel_07")
     shutil.copytree(cfg / "calibration", other / "calibration")
-    st = Rig.load(other).calibration_status("2R")
+    st = Rig.load(other).calibration_status("2L")
     assert st["base"].startswith("applied")
-    assert st["pen"].startswith("pen part not applied") and not Rig.load(other).calibrated("2R")
+    assert st["pen"].startswith("pen part not applied") and not Rig.load(other).calibrated("2L")
     assert rig.pen_name in st["pen"] and "gel_07" in st["pen"]
 
 
 def test_writer_refuses_a_foreign_file(tmp_path, rigs):
     cfg = fresh("config/two_arms", tmp_path)
     (cfg / "calibration").mkdir()
-    (cfg / "calibration" / "2R.json").write_text(json.dumps({"slot": "2L"}))
-    r = calibrate_plane(rigs["config/two_arms"], "2R", np.zeros((0, 7)))
+    (cfg / "calibration" / "2L.json").write_text(json.dumps({"slot": "2R"}))
+    r = calibrate_plane(rigs["config/two_arms"], "2L", np.zeros((0, 7)))
     with pytest.raises(ValueError):
         write_base(r, cfg)
 
@@ -384,7 +385,7 @@ from aris.calib.plane import _horizontal_turn  # noqa: E402
 from aris.calib.planar import frame_motion, yaw_between  # noqa: E402
 from aris.calib.simulate import seam_error, simulate_touches, true_marks  # noqa: E402
 
-SIX = ("1L", "1R", "2L", "2R", "3L", "3R")
+SIX = ("1R", "1L", "2R", "2L", "3R", "3L")
 PEN_LONGER = 0.0013
 SPEC = (0.3e-3, 0.3e-3)                  # the brief's guiding error (m) and joint noise (rad)
 ENCODER = (0.1e-3, 0.05e-3)              # a seated dimple and encoder-level joint noise
@@ -465,9 +466,9 @@ def errors(sol, truth, tip, rig_true):
     return xy, yaw, tp, z, seams(sol, rig_true)
 
 
-SEAMS = (("2L", "2R", (0.0, 0.0)), ("1L", "1R", (0.0, -1.21)), ("3L", "3R", (0.0, 1.21)),
-         ("1L", "2L", (-0.2, -0.605)), ("1R", "2R", (0.2, -0.605)),
-         ("2L", "3L", (-0.2, 0.605)), ("2R", "3R", (0.2, 0.605)))
+SEAMS = (("2R", "2L", (0.0, 0.0)), ("1R", "1L", (0.0, -1.21)), ("3R", "3L", (0.0, 1.21)),
+         ("1R", "2R", (-0.2, -0.605)), ("1L", "2L", (0.2, -0.605)),
+         ("2R", "3R", (-0.2, 0.605)), ("2L", "3L", (0.2, 0.605)))
 
 
 def seams(sol, rig_true):
@@ -483,12 +484,12 @@ def seams(sol, rig_true):
 
 
 def scenarios(tmp, noise, seed):
-    """(a) 2L+2R with A and B; (b) six slots, ten marks; (c) rows12 after (b), the marks of (b)
-    known; (d) 2R alone after (b).  -> {label: (solution, truth, tip, rig_true)}."""
+    """(a) 2R+2L with A and B; (b) six slots, ten marks; (c) rows12 after (b), the marks of (b)
+    known; (d) 2L alone after (b).  -> {label: (solution, truth, tip, rig_true)}."""
     out = {}
-    rt, rn, truth, tip = make_truth("config/two_arms", tmp / "a", ("2L", "2R"), seed)
+    rt, rn, truth, tip = make_truth("config/two_arms", tmp / "a", ("2R", "2L"), seed)
     m = true_marks(rn, ("A", "B"), seed=seed)
-    tq = simulate_touches(rt, rn, ("2L", "2R"), m, noise, seed)
+    tq = simulate_touches(rt, rn, ("2R", "2L"), m, noise, seed)
     out["a"] = (solve_marks(rn, tq, base_tips={s: rn.nominal_tip() for s in tq}), truth, tip, rt)
     rt, rn, truth, tip = make_truth("config", tmp / "b", SIX, seed)
     m = true_marks(rn, tuple(rn.marks), seed=seed)
@@ -499,38 +500,38 @@ def scenarios(tmp, noise, seed):
     sub = rn.mark_groups["rows12"]
     tq = simulate_touches(rt, rn, sub, {n: m[n] for n in rn.marks_for(sub)}, noise, seed + 100)
     out["c"] = (solve_marks(rn, tq, known, {s: rn.nominal_tip() for s in sub}), truth, tip, rt)
-    mine = {n: m[n] for n in rn.marks if "2R" in rn.marks[n][1]}
-    tq = simulate_touches(rt, rn, ("2R",), mine, noise, seed + 200)
-    out["d"] = (solve_marks(rn, tq, known, {"2R": rn.nominal_tip()}), truth, tip, rt)
+    mine = {n: m[n] for n in rn.marks if "2L" in rn.marks[n][1]}
+    tq = simulate_touches(rt, rn, ("2L",), mine, noise, seed + 200)
+    out["d"] = (solve_marks(rn, tq, known, {"2L": rn.nominal_tip()}), truth, tip, rt)
     return out
 
 
 def test_pivot_exact_and_refusals(tmp_path):
-    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2L", "2R"))
+    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2R", "2L"))
     m = true_marks(rn, ("A", "B"))
-    Q = simulate_touches(rt, rn, ("2L",), m, (0.0, 0.0))["2L"]["A"]
-    pv = pivot(rn, "2L", Q)
+    Q = simulate_touches(rt, rn, ("2R",), m, (0.0, 0.0))["2R"]["A"]
+    pv = pivot(rn, "2R", Q)
     assert pv.passed and len(Q) == 6 and pv.spread > np.deg2rad(15)
     assert np.linalg.norm(pv.tip_hand - tip) < 1e-9
-    a_base = (np.array([*m["A"], 0.0]) - truth["2L"][:3, 3]) @ truth["2L"][:3, :3]
+    a_base = (np.array([*m["A"], 0.0]) - truth["2R"][:3, 3]) @ truth["2R"][:3, :3]
     assert np.linalg.norm(pv.point_base - a_base) < 1e-9
-    assert np.linalg.norm(touch_point(rn, "2L", Q[0], pv.tip_hand) - a_base) < 1e-9
-    assert "at least 3 needed" in pivot(rn, "2L", Q[:2]).why
+    assert np.linalg.norm(touch_point(rn, "2R", Q[0], pv.tip_hand) - a_base) < 1e-9
+    assert "at least 3 needed" in pivot(rn, "2R", Q[:2]).why
     # turning the hand about one axis only: the spread passes, the tip is not pinned
-    arm = rt.arm("2L")
-    n = truth["2L"][:3, :3].T[:, 2]
+    arm = rt.arm("2R")
+    n = truth["2R"][:3, :3].T[:, 2]
     Th = arm.hand_pose(np.repeat(a_base[None], 4, 0), n, np.deg2rad([0, 90, 180, 270]),
                        np.zeros((4, 2)))
     Qs = np.array([next(q[ok][0] for q7 in np.linspace(-2.8, 2.8, 29)
                         for q, ok in [tuple(x[0] for x in arm.ik(T[None], q7))] if ok.any())
                    for T in Th])
-    r = pivot(rn, "2L", Qs)
+    r = pivot(rn, "2R", Qs)
     assert not r.passed and "tilt the hand" in r.why
-    assert "span only" in pivot(rn, "2L", Qs[[0, 0, 0]] + [0, 0, 0, 0, 0, 0, 1e-3]).why
+    assert "span only" in pivot(rn, "2R", Qs[[0, 0, 0]] + [0, 0, 0, 0, 0, 0, 1e-3]).why
     slip = Q.copy()
-    slip[2] = simulate_touches(rt, rn, ("2L",), {"A": m["A"] + [0.003, 0.0]}, (0.0, 0.0),
-                               pivot_touches=4)["2L"]["A"][2]
-    r = pivot(rn, "2L", slip)
+    slip[2] = simulate_touches(rt, rn, ("2R",), {"A": m["A"] + [0.003, 0.0]}, (0.0, 0.0),
+                               pivot_touches=4)["2R"]["A"][2]
+    r = pivot(rn, "2R", slip)
     assert not r.passed and "pivot touch" in r.why and "slipped" in r.why
 
 
@@ -539,7 +540,7 @@ def test_marks_noiseless_exact(tmp_path):
         assert sol.passed, (label, sol.why)
         xy, yaw, tp, z, seam = errors(sol, truth, tip, rt)
         assert xy < 1e-6 and yaw < 1e-6 and tp < 1e-6 and z < 1e-6 and seam < 1e-6, label
-    assert sol.marks["A"].state == "known" and set(sol.slots) == {"2R"}
+    assert sol.marks["A"].state == "known" and set(sol.slots) == {"2L"}
 
 
 @pytest.mark.slow
@@ -576,63 +577,64 @@ def test_marks_refusals(tmp_path):
     rt, rn, truth, tip = make_truth("config", tmp_path / "six", SIX)
     m = true_marks(rn, tuple(rn.marks))
     full = simulate_touches(rt, rn, SIX, m, (0.0, 0.0))
-    # 1R with one mark it shares (S12R) and one nobody else touched
-    tq = {s: full[s] for s in ("2L", "2R")}
-    tq["1R"] = {"R1a": full["1R"]["R1a"], "S12R": full["1R"]["S12R"]}
+    # 1L with one mark it shares (S12L) and one nobody else touched
+    tq = {s: full[s] for s in ("2R", "2L")}
+    tq["1L"] = {"R1a": full["1L"]["R1a"], "S12L": full["1L"]["S12L"]}
     r = solve_marks(rn, tq)
-    assert not r.passed and r.why == "1R needs a partner: only 1 shared mark"
+    assert not r.passed and r.why == "1L needs a partner: only 1 shared mark"
     # one slot, nothing known: nothing ties it to anything
-    r = solve_marks(rn, {"2R": {"S12R": full["2R"]["A"],     # A's pivot, relabelled
-                                "S23R": full["2R"]["S23R"]}})
-    assert not r.passed and r.why.startswith("2R alone needs marks solved before")
+    r = solve_marks(rn, {"2L": {"S12L": full["2L"]["A"],     # A's pivot, relabelled
+                                "S23L": full["2L"]["S23L"]}})
+    assert not r.passed and r.why.startswith("2L alone needs marks solved before")
     # one known mark cannot hold the frame: it is solved again, with a note
-    r = solve_marks(rn, {s: full[s] for s in ("2L", "2R")}, known={"A": m["A"]})
+    r = solve_marks(rn, {s: full[s] for s in ("2R", "2L")}, known={"A": m["A"]})
     assert r.passed and r.marks["A"].state == "solved" and "cannot hold the frame" in r.notes[0]
     # a mark touched by one slot only is solved but flagged
-    tq = {s: full[s] for s in ("2L", "2R", "3L")}
-    tq["3R"] = {k: v for k, v in full["3R"].items() if k != "R3b"}
+    tq = {s: full[s] for s in ("2R", "2L", "3R")}
+    tq["3L"] = {k: v for k, v in full["3L"].items() if k != "R3b"}
     r = solve_marks(rn, tq)
     assert r.passed and r.marks["R3b"].note == "determined by one arm"
     assert any("R3b determined by one arm" in n for n in r.notes)
     # B moved between the two arms' touches: the pair check names it
-    rt2, rn2, _, _ = make_truth("config/two_arms", tmp_path / "two", ("2L", "2R"))
+    rt2, rn2, _, _ = make_truth("config/two_arms", tmp_path / "two", ("2R", "2L"))
     m2 = true_marks(rn2, ("A", "B"))
-    tq = simulate_touches(rt2, rn2, ("2L",), m2, (0.0, 0.0))
-    tq |= simulate_touches(rt2, rn2, ("2R",), {"A": m2["A"], "B": m2["B"] + [0.0, 0.004]},
+    tq = simulate_touches(rt2, rn2, ("2R",), m2, (0.0, 0.0))
+    tq |= simulate_touches(rt2, rn2, ("2L",), {"A": m2["A"], "B": m2["B"] + [0.0, 0.004]},
                            (0.0, 0.0))
     r = solve_marks(rn2, tq)
     assert not r.passed and "2L and 2R disagree by 4.00 mm on the distance A-B" in r.why
     # one slot 60 mm from its nominal mounting: after the frame fit over six slots it is still
     # about 50 mm off, the others under 30 mm
-    rt3, rn3, _, _ = make_truth("config", tmp_path / "far", SIX, big=("2R", 0.060))
+    rt3, rn3, _, _ = make_truth("config", tmp_path / "far", SIX, big=("2L", 0.060))
     tq = simulate_touches(rt3, rn3, SIX, true_marks(rn3, tuple(rn3.marks)), (0.0, 0.0))
     r = solve_marks(rn3, tq)
-    assert not r.passed and r.why.startswith("refused: 2R 0.0") and "wrong slot" in r.why
+    assert not r.passed and r.why.startswith("refused: 2L 0.0") and "wrong slot" in r.why
     assert r.why.count("refused:") == 1
     # bad input
-    assert "not a mark" in solve_marks(rn2, {"2L": {"Z": np.zeros((4, 7))}}).why
-    assert "K x 7" in solve_marks(rn2, {"2L": {"A": np.zeros((4, 6))}}).why
-    assert "no arm in slot" in solve_marks(rn2, {"1L": {"A": np.zeros((4, 7))}}).why
+    assert "not a mark" in solve_marks(rn2, {"2R": {"Z": np.zeros((4, 7))}}).why
+    assert "K x 7" in solve_marks(rn2, {"2R": {"A": np.zeros((4, 6))}}).why
+    assert "no arm in slot" in solve_marks(rn2, {"1R": {"A": np.zeros((4, 7))}}).why
 
 
 def test_mark_solution_written_and_loaded(tmp_path):
-    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2L", "2R"))
+    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2R", "2L"))
     m = true_marks(rn, ("A", "B"))
-    sol = solve_marks(rn, simulate_touches(rt, rn, ("2L", "2R"), m, SPEC),
-                      base_tips={s: rn.nominal_tip() for s in ("2L", "2R")})
+    sol = solve_marks(rn, simulate_touches(rt, rn, ("2R", "2L"), m, SPEC),
+                      base_tips={s: rn.nominal_tip() for s in ("2R", "2L")})
     assert sol.passed
     cfg = tmp_path / "nom"
-    assert base_tips(cfg, ("2L", "2R")) == {}          # make_truth's plane parts name no tip
-    write_mark_solution(rn, sol, cfg, date="2026-10-05")
-    assert np.allclose(base_tips(cfg, ("2L",))["2L"], sol.slots["2L"].tip_hand, atol=1e-9)
-    for s in ("2L", "2R"):
+    assert base_tips(cfg, ("2R", "2L")) == {}          # make_truth's plane parts name no tip
+    write_mark_solution(rn, sol, cfg, date="2026-10-05", robot={"2L": "fr3-31", "2R": "fr3-71"})
+    assert np.allclose(base_tips(cfg, ("2R",))["2R"], sol.slots["2R"].tip_hand, atol=1e-9)
+    for s in ("2R", "2L"):
         cal = read(cfg, s)
         assert cal["base"]["method"] == "marks" and cal["base"]["plane"]["method"] == "plane"
         assert cal["pen"]["method"] == "pivot" and cal["pen"]["reference_touch"] is None
+        assert cal["base"]["robot"] == cal["pen"]["robot"] == {"2L": "fr3-31", "2R": "fr3-71"}[s]
     marks = json.loads((cfg / "calibration" / "marks.json").read_text())["marks"]
     assert marks["B"]["state"] == "solved" and marks["A"]["state"] == "solved"
     loaded = Rig.load(cfg)
-    for s in ("2L", "2R"):
+    for s in ("2R", "2L"):
         assert loaded.calibrated(s), loaded.calibration_status(s)
         assert np.allclose(loaded.T_table_base(s), sol.slots[s].T_table_base, atol=1e-9)
         assert np.allclose(loaded.arm(s).tool.tip_hand, sol.slots[s].tip_hand, atol=1e-9)
@@ -647,14 +649,14 @@ def test_crosshair_two_arms_seam(tmp_path, capsys):
     independent per touch (0.3 mm), joints 0.3 mrad, a pivot of 6 touches, marks 2-5 cm off
     nominal, the frame fitted onto the nominal mountings.  Measured worst of 5 seeds
     2026-10-05: seam 0.62 mm, x, y 0.22 mm, yaw 0.54 mrad, tip 0.57 mm; pinned: every seed
-    passes and the 2L/2R seam stays under 1.0 mm."""
+    passes and the 2R/2L seam stays under 1.0 mm."""
     worst = np.zeros(5)
     for seed in range(5):
-        rt, rn, truth, tip = make_truth("config/two_arms", tmp_path / str(seed), ("2L", "2R"),
+        rt, rn, truth, tip = make_truth("config/two_arms", tmp_path / str(seed), ("2R", "2L"),
                                         seed)
-        tq = simulate_touches(rt, rn, ("2L", "2R"), true_marks(rn, ("A", "B"), seed=seed),
+        tq = simulate_touches(rt, rn, ("2R", "2L"), true_marks(rn, ("A", "B"), seed=seed),
                               (0.3e-3, 0.3e-3), seed, independent=True)
-        sol = solve_marks(rn, tq, base_tips={s: rn.nominal_tip() for s in ("2L", "2R")})
+        sol = solve_marks(rn, tq, base_tips={s: rn.nominal_tip() for s in ("2R", "2L")})
         assert sol.passed, sol.why
         worst = np.maximum(worst, errors(sol, truth, tip, rt))
     with capsys.disabled():
@@ -665,24 +667,24 @@ def test_crosshair_two_arms_seam(tmp_path, capsys):
 
 
 def test_empty_and_lonely_inputs_are_refusals(tmp_path):
-    """Site 2026-10-06: `aris mark 2L` alone reached the planar solve with no touches and
+    """Site 2026-10-06: `aris mark 2R` alone reached the planar solve with no touches and
     crashed (IndexError).  Every entry point refuses instead."""
     from aris.calib import planar
-    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2L", "2R"))
-    for empty in ({}, None, {"2L": {}}, {"2L": {}, "2R": {}}):
+    rt, rn, truth, tip = make_truth("config/two_arms", tmp_path, ("2R", "2L"))
+    for empty in ({}, None, {"2R": {}}, {"2R": {}, "2L": {}}):
         r = solve_marks(rn, empty)
         assert not r.passed and r.why == "no touches", empty
     for Q in (None, [], np.zeros((0, 7)), np.zeros((4, 6))):
-        assert not pivot(rn, "2L", Q).passed
+        assert not pivot(rn, "2R", Q).passed
     assert planar.solve(rn, [], [], [], {}) == "no touches"
-    assert planar.solve(rn, [], ["2L"], [], {}) == "no touches"
-    assert planar.solve(rn, [("2L", "A", np.zeros(2))], ["2L"], ["A"], {}).startswith(
-        "2L alone needs marks solved before")
-    tq = simulate_touches(rt, rn, ("2L",), true_marks(rn, ("A", "B")), (0.0, 0.0))
+    assert planar.solve(rn, [], ["2R"], [], {}) == "no touches"
+    assert planar.solve(rn, [("2R", "A", np.zeros(2))], ["2R"], ["A"], {}).startswith(
+        "2R alone needs marks solved before")
+    tq = simulate_touches(rt, rn, ("2R",), true_marks(rn, ("A", "B")), (0.0, 0.0))
     r = solve_marks(rn, tq)
-    assert not r.passed and r.why.startswith("2L alone needs marks solved before")
+    assert not r.passed and r.why.startswith("2R alone needs marks solved before")
     r = solve_marks(rn, tq, known={"A": np.zeros(2)})        # one known mark is not enough
-    assert not r.passed and r.why.startswith("2L alone needs marks solved before")
+    assert not r.passed and r.why.startswith("2R alone needs marks solved before")
 
 
 # ================================================================== the paper surface
@@ -709,7 +711,7 @@ def _plane_file(cfg, slot, pts, date="2026-10-07"):
 def test_paper_surface_from_two_grids(tmp_path, capsys):
     cfg = fresh("config/two_arms", tmp_path)
     rng = np.random.default_rng(3)
-    for slot, ax in (("2L", -0.305), ("2R", 0.305)):
+    for slot, ax in (("2R", -0.305), ("2L", 0.305)):
         xy = _grid(ax)
         z = _bumps(xy[:, 0], xy[:, 1]) + 0.05e-3 * rng.standard_normal(len(xy))
         _plane_file(cfg, slot, np.column_stack([xy, z]))
@@ -750,14 +752,14 @@ def test_paper_surface_fallbacks_and_marks(tmp_path):
     P = np.column_stack([xy, np.zeros(len(xy))])
     T_then, T_now = np.eye(4), np.eye(4)
     T_now[:3, 3] = [0.01, -0.02, 0.0]
-    _write(cfg / "calibration" / "2L.json", {"slot": "2L", "base": {
+    _write(cfg / "calibration" / "2R.json", {"slot": "2R", "base": {
         "passed": True, "method": "marks", "T_table_base": T_now.tolist(),
         "plane": {"passed": True, "method": "plane", "date": "2026-10-06",
                   "T_table_base": T_then.tolist(), "height_map_table_m": P.tolist()}}})
     s = PAPER.build_surface(cfg)
     assert np.allclose(s.points[:, :2], xy + [0.01, -0.02])
     # a failed base part gives nothing
-    _write(cfg / "calibration" / "2L.json", {"slot": "2L", "base": {"passed": False}})
+    _write(cfg / "calibration" / "2R.json", {"slot": "2R", "base": {"passed": False}})
     assert PAPER.build_surface(cfg).n_points == 0
 
 
@@ -765,7 +767,7 @@ def test_paper_surface_fallbacks_and_marks(tmp_path):
 
 from aris.calib.meetings import solve_meetings  # noqa: E402
 
-ROW = ("2L", "2R")
+ROW = ("2R", "2L")
 Z_AIR = 0.06                       # meetings 6 cm above the paper
 
 
@@ -820,15 +822,15 @@ def pose_errors(sol, truth):
     return xy, yaw
 
 
-SEVEN = [("1L", "1R", "R1b"), ("2L", "2R", "A"), ("3L", "3R", "R3a"), ("1L", "2L", "S12L"),
-         ("1R", "2R", "S12R"), ("2L", "3L", "S23L"), ("2R", "3R", "S23R")]
+SEVEN = [("1R", "1L", "R1b"), ("2R", "2L", "A"), ("3R", "3L", "R3a"), ("1R", "2R", "S12R"),
+         ("1L", "2L", "S12L"), ("2R", "3R", "S23R"), ("2L", "3L", "S23L")]
 
 
 def test_meetings_row_pair(tmp_path):
     rig = Rig.load(fresh("config/two_arms", tmp_path))
     for seed in range(5):
         truth = world(rig, ROW, seed)
-        sol = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A"), ("2L", "2R", "B")]),
+        sol = solve_meetings(rig, meet(rig, truth, [("2R", "2L", "A"), ("2R", "2L", "B")]),
                              reference="2L")
         assert sol.passed, sol.why
         xy, yaw = pose_errors(sol, truth)
@@ -837,7 +839,7 @@ def test_meetings_row_pair(tmp_path):
         assert np.allclose(sol.slots["2L"].T_table_base[:2, 3], rig.nominal_pose("2L")[:2, 3])
     # one meeting: the shift only, 2R's yaw held nominal and said so
     truth = world(rig, ROW, 3, yaw=False)
-    sol = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A")]), reference="2L")
+    sol = solve_meetings(rig, meet(rig, truth, [("2R", "2L", "A")]), reference="2L")
     assert sol.passed and sol.slots["2R"].yaw_from == "nominal"
     assert "2R's yaw is nominal: it met at one point only; a second meeting (--yaw) " \
            "determines it" in sol.notes
@@ -850,9 +852,9 @@ def test_meetings_six_arms(tmp_path, capsys):
     (measured 2026-10-08, 5 seeds: 1.74 mm / 3.54 mrad; with every row twice 0.94 mm / 1.58
     mrad); pinned at 1.5 times the measured."""
     rig = Rig.load(fresh("config", tmp_path))
-    plans = {"7 pairs + row 2 twice": SEVEN + [("2L", "2R", "B")],
-             "7 pairs + every row twice": SEVEN + [("2L", "2R", "B"), ("1L", "1R", "R1a"),
-                                                   ("3L", "3R", "R3b")]}
+    plans = {"7 pairs + row 2 twice": SEVEN + [("2R", "2L", "B")],
+             "7 pairs + every row twice": SEVEN + [("2R", "2L", "B"), ("1R", "1L", "R1a"),
+                                                   ("3R", "3L", "R3b")]}
     worst = {k: np.zeros(2) for k in plans}
     for seed in range(5):
         truth = world(rig, SIX, seed)
@@ -895,32 +897,32 @@ def test_meetings_refusals_and_server_call(tmp_path):
     from aris.server.meetings import calibrate_from_meetings
     rig = Rig.load(fresh("config", tmp_path / "six"))
     truth = world(rig, SIX, 2)
-    r = solve_meetings(rig, meet(rig, truth, [("1L", "1R", "R1a"), ("1L", "1R", "R1b"),
-                                              ("2L", "2R", "A"), ("2L", "2R", "B")]),
+    r = solve_meetings(rig, meet(rig, truth, [("1R", "1L", "R1a"), ("1R", "1L", "R1b"),
+                                              ("2R", "2L", "A"), ("2R", "2L", "B")]),
                        reference="2L")
     assert not r.passed and r.why == "1L/1R are not linked to 2L by any meeting"
-    r = solve_meetings(rig, meet(rig, truth, [("2L", "2R", "A")]), slots=("2L", "2R", "3L"))
-    assert not r.passed and r.why == "3L met no other arm"
-    m = meet(rig, truth, [("2L", "2R", "A"), ("2L", "2R", "B")])
-    m[1] = m[1][:3] + (meet(rig, truth, [("2L", "2R", (0.0, 0.405))])[0][3], "B")
-    r = solve_meetings(rig, m, reference="2L")                 # 2R 5 mm off at B
+    r = solve_meetings(rig, meet(rig, truth, [("2R", "2L", "A")]), slots=("2R", "2L", "3R"))
+    assert not r.passed and r.why == "3R met no other arm"
+    m = meet(rig, truth, [("2R", "2L", "A"), ("2R", "2L", "B")])
+    m[1] = m[1][:3] + (meet(rig, truth, [("2R", "2L", (0.0, 0.405))])[0][3], "B")
+    r = solve_meetings(rig, m, reference="2L")                 # 2L 5 mm off at B
     assert not r.passed and "do not fit one layout" in r.why and "wrong slot" not in r.why
     far = {s: T.copy() for s, T in truth.items()}
     far["2R"][0, 3] += 0.06
-    r = solve_meetings(rig, meet(rig, far, [("2L", "2R", "A"), ("2L", "2R", "B")]),
+    r = solve_meetings(rig, meet(rig, far, [("2R", "2L", "A"), ("2R", "2L", "B")]),
                        reference="2L")
     assert not r.passed and r.why.startswith("refused: 2R 0.0") and "wrong slot" in r.why
     assert solve_meetings(rig, []).why == "no meetings"
-    assert "must be (slot_a" in solve_meetings(rig, [("2L", np.zeros(7))]).why
-    assert "not 7 numbers" in solve_meetings(rig, [("2L", np.zeros(6), "2R", np.zeros(7),
+    assert "must be (slot_a" in solve_meetings(rig, [("2R", np.zeros(7))]).why
+    assert "not 7 numbers" in solve_meetings(rig, [("2R", np.zeros(6), "2L", np.zeros(7),
                                                     "A")]).why
-    assert "cannot meet itself" in solve_meetings(rig, [("2L", np.zeros(7), "2L", np.zeros(7),
+    assert "cannot meet itself" in solve_meetings(rig, [("2R", np.zeros(7), "2R", np.zeros(7),
                                                          "A")]).why
     # the server's one call writes every solved slot, method "meetings", no pen, no marks
     two = Rig.load(fresh("config/two_arms", tmp_path / "two"))
     truth = world(two, ROW, 4)
     sol, paths = calibrate_from_meetings(tmp_path / "two",
-                                         meet(two, truth, [("2L", "2R", "A"), ("2L", "2R", "B")]),
+                                         meet(two, truth, [("2R", "2L", "A"), ("2R", "2L", "B")]),
                                          date="2026-10-08")
     assert sol.passed and len(paths) == 2
     loaded = Rig.load(tmp_path / "two")

@@ -3,8 +3,12 @@
   "derived_from": "config/rig.json",
   "source_digest": "c0d120cfee29bb61c5f8a1de",
   "mounted": [
+   "1L",
+   "1R",
    "2L",
-   "2R"
+   "2R",
+   "3L",
+   "3R"
   ],
   "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not edit by hand; change config/rig.json and run the tool again."
  },
@@ -23,8 +27,8 @@
    0.0
   ],
   "drawing_area_m": [
-   1.72,
-   0.9
+   1.56,
+   3.56
   ],
   "drawing_area_centre_m": [
    0.0,
@@ -60,12 +64,120 @@
      "2L",
      "2R"
     ]
+   },
+   {
+    "name": "R1a",
+    "xy_m": [
+     0.0,
+     -1.61
+    ],
+    "shared_by": [
+     "1L",
+     "1R"
+    ]
+   },
+   {
+    "name": "R1b",
+    "xy_m": [
+     0.0,
+     -0.81
+    ],
+    "shared_by": [
+     "1L",
+     "1R"
+    ]
+   },
+   {
+    "name": "S12L",
+    "xy_m": [
+     0.3,
+     -0.605
+    ],
+    "shared_by": [
+     "1L",
+     "2L"
+    ]
+   },
+   {
+    "name": "S12R",
+    "xy_m": [
+     -0.3,
+     -0.605
+    ],
+    "shared_by": [
+     "1R",
+     "2R"
+    ]
+   },
+   {
+    "name": "S23L",
+    "xy_m": [
+     0.3,
+     0.605
+    ],
+    "shared_by": [
+     "2L",
+     "3L"
+    ]
+   },
+   {
+    "name": "S23R",
+    "xy_m": [
+     -0.3,
+     0.605
+    ],
+    "shared_by": [
+     "2R",
+     "3R"
+    ]
+   },
+   {
+    "name": "R3a",
+    "xy_m": [
+     0.0,
+     0.81
+    ],
+    "shared_by": [
+     "3L",
+     "3R"
+    ]
+   },
+   {
+    "name": "R3b",
+    "xy_m": [
+     0.0,
+     1.61
+    ],
+    "shared_by": [
+     "3L",
+     "3R"
+    ]
    }
   ],
   "groups": {
+   "all": [
+    "1L",
+    "1R",
+    "2L",
+    "2R",
+    "3L",
+    "3R"
+   ],
    "row2": [
     "2L",
     "2R"
+   ],
+   "rows12": [
+    "1L",
+    "1R",
+    "2L",
+    "2R"
+   ],
+   "rows23": [
+    "2L",
+    "2R",
+    "3L",
+    "3R"
    ]
   },
   "groups_note": "the subsets `aris mark --group` takes (DESIGN section 6, 'Subsets')"
@@ -108,7 +220,7 @@
      1.2693,
      -2.175
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "1R",
@@ -143,7 +255,7 @@
      1.2793,
      2.175
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "2L",
@@ -248,7 +360,7 @@
      1.3231,
      -0.5932
     ],
-    "mounted": false
+    "mounted": true
    },
    {
     "slot": "3R",
@@ -283,7 +395,7 @@
      1.2968,
      2.175
     ],
-    "mounted": false
+    "mounted": true
    }
   ]
  },
@@ -653,35 +765,6 @@
  },
  "fences": {
   "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm and for the uncontrolled arms beside a controlled one in its row.",
-  "planes": [
-   {
-    "name": "fence_row_-1p210",
-    "point_m": [
-     0.0,
-     -0.605106,
-     0.0
-    ],
-    "normal": [
-     0.0,
-     1.0,
-     0.0
-    ],
-    "source": "halfway between the row at y = -1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
-   },
-   {
-    "name": "fence_row_+1p210",
-    "point_m": [
-     0.0,
-     0.605106,
-     0.0
-    ],
-    "normal": [
-     0.0,
-     -1.0,
-     0.0
-    ],
-    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
-   }
-  ]
+  "planes": []
  }
 }

@@ -3,7 +3,7 @@
 Whole drawings in the table frame, over the admissible drawing area of rig.json (canvas,
 drawing_area_m: 1.56 x 3.56 m, centred on the table):
   word       the word "unknown" (tests/local_cases.py), scaled to 0.55 m wide and centred on the
-             table, so it sits between slots 2L and 2R as on the hardware day
+             table, so it sits between slots 2R and 2L as on the hardware day
   hatch      40 parallel lines 1.5 m long across the canvas (along x), evenly spaced along it
   scatter    80 short random lines (5 to 20 cm) anywhere on the canvas
   starburst  24 rays from the table centre to the edge of the canvas

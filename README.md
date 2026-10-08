@@ -71,7 +71,7 @@ the pen is kept 20 mm above the paper when lifted). Leave out `--driver robot` t
 simulated arms instead of the real ones.
 
 **Arms are named by slot** — the place on the frame they hang from: `1L 1R 2L 2R 3L 3R` (row 1
-at the −y end, L at −x). Which robot (serial, address) hangs in which slot is one table,
+at the −y end; L at +x and R at −x: left and right as seen from Diemut's desk at the +y end). Which robot (serial, address) hangs in which slot is one table,
 `site/aris_2026-10.json`; nothing else in the code knows a robot.
 
 **Which slots are controlled** is a fact of the rig file. `config/rig.json` is the full rig; the

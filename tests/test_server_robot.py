@@ -83,16 +83,16 @@ def test_the_operator_pc_runs_a_job_of_the_server(station, tmp_path):
         assert head["rig_digest"] == st.digests()["rig_digest"]
         assert head["pen"] == json.loads(json.dumps(rig.pen()))      # travels with the job
         with pytest.raises(urllib.error.HTTPError) as e:           # not written yet
-            urllib.request.urlopen(f"{srv.url}/jobs/{jid}/queues/phase%201/1L", timeout=10)
+            urllib.request.urlopen(f"{srv.url}/jobs/{jid}/queues/phase%201/1R", timeout=10)
         assert e.value.code == 404
         res = run_job(Remote(srv.url), jid, rig, CONFIG, tmp_path / "robot", arms)
         assert res.status == "done", res.why
         v = _wait(srv.url, jid)
         # the copy is the server's queue byte for byte; offsets resume where asked
-        server_q = st.jobs_dir / jid / "phase_1__1L.queue"
-        assert (tmp_path / "robot" / jid / "phase_1__1L.queue").read_bytes() == \
+        server_q = st.jobs_dir / jid / "phase_1__1R.queue"
+        assert (tmp_path / "robot" / jid / "phase_1__1R.queue").read_bytes() == \
             server_q.read_bytes()
-        with urllib.request.urlopen(f"{srv.url}/jobs/{jid}/queues/phase%201/1L?offset=100",
+        with urllib.request.urlopen(f"{srv.url}/jobs/{jid}/queues/phase%201/1R?offset=100",
                                     timeout=10) as r:
             assert r.read() == server_q.read_bytes()[100:]
     rep = v["report"]
@@ -100,7 +100,7 @@ def test_the_operator_pc_runs_a_job_of_the_server(station, tmp_path):
     assert rep["drawn_m"] == pytest.approx(rep["length_m"]) and rep["left_m"] == 0.0
     assert all(p["end_check_passed"] for p in rep["phases"]) and all(rep["at_park"].values())
     rows = {(r["phase"], r["arm"]): r for r in v["arms"]}
-    assert rows[("phase 1", "2R")]["done"] == rows[("phase 1", "2R")]["queued"] == 5
+    assert rows[("phase 1", "2L")]["done"] == rows[("phase 1", "2L")]["queued"] == 5
     for a, arm in arms.items():
         assert np.max(np.abs(arm.state().q - rig.park_q(a))) <= 1e-9
 
@@ -111,7 +111,7 @@ def test_events_are_taken_once_in_order(station, tmp_path):
     c = TestClient(create_app(st))
     jid = c.post("/jobs", content=SMALL.read_bytes()).json()["id"]
     post = lambda rows: c.post(f"/jobs/{jid}/events", json=dict(source="robot", rows=rows)).json()
-    row = lambda n: dict(seq=n, event="holding", time=float(n), arm="1L", phase="phase 1")
+    row = lambda n: dict(seq=n, event="holding", time=float(n), arm="1R", phase="phase 1")
     assert post([row(0), row(1)]) == dict(accepted=2, next_seq=2, stop=False)
     assert post([row(1), row(2), row(4)]) == dict(accepted=1, next_seq=3, stop=False)
     assert c.post(f"/jobs/{jid}/stop").status_code == 200
@@ -168,8 +168,8 @@ def test_a_growing_queue_is_streamed_reading_each_byte_about_once(station, tmp_p
     app = create_app(st)
     rec = app.state.store.admit("draw", "test")
     job = Job.create(rec.dir, dict(test=True))
-    q = job.queue("phase 1", "1L")
-    p, arm = rig.park_q("1L"), rig.arm("1L")
+    q = job.queue("phase 1", "1R")
+    p, arm = rig.park_q("1R"), rig.arm("1R")
     step = np.array([0.02, -0.02, 0.0, 0.03, 0.0, -0.03, 0.04])
     there = retime(JointPath(np.array([p, p + step])), arm.limits, rig.rules())
     back = retime(JointPath(np.array([p + step, p])), arm.limits, rig.rules())
@@ -187,7 +187,7 @@ def test_a_growing_queue_is_streamed_reading_each_byte_about_once(station, tmp_p
         r0 = _rchar()
         w = threading.Thread(target=write)
         w.start()
-        with c.stream("GET", f"/jobs/{rec.id}/queues/phase%201/1L") as r:
+        with c.stream("GET", f"/jobs/{rec.id}/queues/phase%201/1R") as r:
             for chunk in r.iter_bytes():
                 got.append(chunk)
         w.join()
@@ -198,9 +198,9 @@ def test_a_growing_queue_is_streamed_reading_each_byte_about_once(station, tmp_p
     assert read < 2 * size + 200_000
     # resuming at an offset inside a record, and after the end marker
     with TestClient(app) as c:
-        assert c.get(f"/jobs/{rec.id}/queues/phase%201/1L?offset=1000").content == \
+        assert c.get(f"/jobs/{rec.id}/queues/phase%201/1R?offset=1000").content == \
             q.path.read_bytes()[1000:]
-        assert c.get(f"/jobs/{rec.id}/queues/phase%201/1L?offset={size}").content == b""
+        assert c.get(f"/jobs/{rec.id}/queues/phase%201/1R?offset={size}").content == b""
 
 
 @pytest.mark.slow

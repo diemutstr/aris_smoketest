@@ -21,7 +21,8 @@ _TITLE = dict(steel="steel", links="paper (links)", tool="paper (tool)", pen="pa
               self="self")
 
 
-def check_phase_end(config_dir, phase: Phase, q_by_arm: dict, standing=None) -> Verdict:
+def check_phase_end(config_dir, phase: Phase, q_by_arm: dict, standing=None,
+                    contact=()) -> Verdict:
     """`q_by_arm`: slot ("2R") -> (7,) where it stands.  A parked arm left out stands at its park
     configuration; an active arm left out is a failure.
 
@@ -30,7 +31,11 @@ def check_phase_end(config_dir, phase: Phase, q_by_arm: dict, standing=None) -> 
     Such an arm is accepted wherever it stands: it is where it was, and every motion of the
     phase was checked against that pose.  It still counts in every pair; the rules for one arm
     (steel, paper, itself) apply to the others.  Its configuration is taken from `q_by_arm`,
-    else from `standing`."""
+    else from `standing`.
+
+    `contact`: slots that are meant to end touching each other (a pen-tip meeting whose lift
+    failed leaves them tip to tip).  The arm-to-arm rule is skipped for a pair only when both
+    are in `contact`; the verdict notes each skipped pair."""
     standing = standing if isinstance(standing, dict) else dict.fromkeys(standing or ())
     moved = [a for a in standing if a in phase.active]
     if moved:
@@ -56,12 +61,15 @@ def check_phase_end(config_dir, phase: Phase, q_by_arm: dict, standing=None) -> 
         return _refuse(f"slots {unknown} have no arm on this rig")
 
     ms = [measure("well formed", 1.0, 1.0, "min", "", ranked=False)]
-    ms += _pairs(rig, q)
+    contact = set(contact or ())
+    ms += _pairs(rig, q, contact)
     for a in rig.mounts:
         if a not in standing:
             ms.append(_alone(rig, a, q[a]))
     worst = min((m for m in ms[1:]), key=lambda m: m.value - m.limit)
     notes = rig.notes + sum((m.notes for m in rig.mounts.values()), ())
+    notes += tuple(f"arms {a} and {b}: meant to touch (contact), not held to the arm-to-arm "
+                   f"clearance" for a, b in _pairs_of(rig) if a in contact and b in contact)
     return verdict(ms, worst.value - worst.limit, f"{worst.name}: {worst.detail}", notes)
 
 
@@ -69,7 +77,12 @@ def _refuse(why) -> Verdict:
     return verdict([measure("well formed", 0.0, 1.0, "min", "", why, ranked=False)])
 
 
-def _pairs(rig, q):
+def _pairs_of(rig):
+    ids = list(rig.mounts)
+    return [(a, b) for i, a in enumerate(ids) for b in ids[i + 1:]]
+
+
+def _pairs(rig, q, contact=frozenset()):
     ids = list(rig.mounts)
     bodies = {}
     for a in ids:
@@ -78,15 +91,16 @@ def _pairs(rig, q):
         bodies[a] = (A[0], B[0], m.radius, m.names)
     out = []
     margin = rig.clearance["arm_to_arm_m"]
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            A1, B1, r1, n1 = bodies[a]
-            A2, B2, r2, n2 = bodies[b]
-            d = (geo.segment_segment(A1[:, None], B1[:, None], A2[None], B2[None])
-                 - r1[:, None] - r2[None])
-            k, j = np.unravel_index(np.argmin(d), d.shape)
-            out.append(measure(f"arms {a} and {b}", d[k, j], margin, "min", "m",
-                               f"{n1[k]} / {n2[j]}"))
+    for a, b in _pairs_of(rig):
+        if a in contact and b in contact:
+            continue
+        A1, B1, r1, n1 = bodies[a]
+        A2, B2, r2, n2 = bodies[b]
+        d = (geo.segment_segment(A1[:, None], B1[:, None], A2[None], B2[None])
+             - r1[:, None] - r2[None])
+        k, j = np.unravel_index(np.argmin(d), d.shape)
+        out.append(measure(f"arms {a} and {b}", d[k, j], margin, "min", "m",
+                           f"{n1[k]} / {n2[j]}"))
     return out
 
 

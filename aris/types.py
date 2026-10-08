@@ -280,11 +280,14 @@ class Wall:
 
 @dataclass(frozen=True)
 class Phase:
-    """Who moves, who stands parked, and the walls between those who move."""
+    """Who moves, who stands parked, and the walls between those who move.  `contact`: the
+    phase's active arms are meant to end touching each other (a pen-tip meeting), so the
+    phase-end check does not demand the arm-to-arm clearance between them."""
     name: str
     active: tuple[Slot, ...]
     parked: tuple[Slot, ...]
     walls: tuple[Wall, ...]
+    contact: bool = False
 
 
 # --------------------------------------------------------------------------- rules

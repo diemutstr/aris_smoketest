@@ -94,7 +94,8 @@ def solve(st, rec, plan, run, ref, source):
     result = solver(st.rig, slot, q, np.asarray(ref, float), st.rig.pen_name)
     if not result.passed:
         return "failed", f"the touch-off did not pass: {result.why}", result, None
-    path = write_pen(result, st.config_dir)
+    from aris.server.robots import write_kwargs
+    path = write_pen(result, st.config_dir, **write_kwargs(st, write_pen, slot))
     st.reload()
     return "done", "", result, str(path)
 

@@ -5,7 +5,7 @@
     "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
     "force_sign_note": "per slot: +1 when the paper pushing the pen up reads positive; -1 on the hung (inverted) arms, as found 2026-10-06. The first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
     "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table",
-    "rt_core_note": "each mounted slot's stack runs pinned to its own isolated core (`taskset -c rt_core`, 16-19); link drops ended on 2026-10-07 once each arm's loop had its own core, with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). Real-time priority is set on the control-loop threads only, by the site's helper (README), never on the whole launch: that froze the PC. 3L (the floor arm) and 3R (empty) get none: their robots are never driven."
+    "rt_core_note": "each mounted slot's stack runs pinned to its own isolated core (`taskset -c rt_core`, 16-21); link drops ended on 2026-10-07 once each arm's loop had its own core, with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). Real-time priority is set on the control-loop threads only, by the site's helper (README), never on the whole launch: that froze the PC. Row 3 (robots 13 and 17, inverted like the others since 2026-10-08) has cores 20 and 21: these must be isolated on the Dell as 16-19 are (kernel isolcpus) before row 3 is mounted (README)."
   },
   "server_url": "http://192.168.50.1:8420",
   "site_table": "site/aris_2026-10.json",
@@ -21,11 +21,14 @@
     "contact_n": 3.0,
     "contact_ticks": 15,
     "cap_n": 6.0,
-    "cap_note": "above the air zero at any reading: the arm stops where it is and holds; no way back is flown until a person has looked",
+    "cap_note": "above the hover zero: armed (0.1 s into the flight), a contact found by the cap (backdated to the first reading over contact_n in the last history_s, a row says how fast the force rose), the way back is flown; before arming a failure: the arm stops where it is and holds, no way back until a person has looked",
     "extra_speed": 0.002,
     "extra_max": 0.03,
     "extra_note": "a touch motion may go on past its planned end by its extra_depth, at most extra_max, at extra_speed",
-    "field_note": "on the arms 2026-10-06/07: onset 3 N over 15 readings, cap 6 N; the detector arms only at constant descent speed (a trip in the descent's own acceleration is not a contact)"
+    "arm_after_s": 0.1,
+    "tare_readings": 20,
+    "history_s": 1.0,
+    "field_note": "2026-10-08: the zero is the mean of 20 readings standing still at the hover before the descent (a zero taken during the descent included the press when the paper was higher than planned, and every touch ran into the cap); the detector arms 0.1 s into the flight (the start jolt)"
   },
   "collision": {
     "source": "set for a job (not a mark job) and restored after it, as the old stack raised them before every pass (control-stack briefing 2026-09-09 section 9: 20 N -> 40 N; HARDWARE_DAY1 1.5: the installation operator's 40/40/36/36/32/28/24 Nm, fr3drivers' 'sensitive' 20 Nm / 20 N). Lower and upper thresholds, acceleration and nominal, all set to these.",
@@ -44,8 +47,8 @@
     "1R": {"mounted": false, "force_sign": -1.0, "rt_core": 19},
     "2L": {"mounted": true, "force_sign": -1.0, "rt_core": 16},
     "2R": {"mounted": true, "force_sign": -1.0, "rt_core": 17},
-    "3L": {"mounted": false, "force_sign": 1.0},
-    "3R": {"mounted": false, "force_sign": 1.0}
+    "3L": {"mounted": false, "force_sign": -1.0, "rt_core": 20},
+    "3R": {"mounted": false, "force_sign": -1.0, "rt_core": 21}
   },
   "execution": {
     "source": "what worked on the arms, 2026-10-06 (field report). The start tolerance is the job header's or rig.json execution.start_tolerance_rad (0.03), not here.",

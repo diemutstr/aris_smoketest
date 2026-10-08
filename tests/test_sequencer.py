@@ -35,7 +35,7 @@ def tour_all(arm, bunches, q_start, obstacles, rules, q_end=None, **kw):
 
 @pytest.fixture(scope="module")
 def problem():
-    arm, obs, rules, _ = lc.problem(RIG, "2L")
+    arm, obs, rules, _ = lc.problem(RIG, "2R")
     bunches, left = local.plan(arm, two_lines(), obs, rules)
     assert len(bunches) == 2 and not left
     return arm, obs, rules, bunches
@@ -134,7 +134,7 @@ def test_one_piece_is_one_drawing_motion(problem):
 
 def test_empty_drawing_is_only_the_move_to_q_end(problem):
     arm, obs, rules, _ = problem
-    q0 = RIG.park_q("2L")
+    q0 = RIG.park_q("2R")
     q1 = q0.copy()
     q1[0] -= 0.3
     ms, left, rep = tour_all(arm, [], q0, obs, rules, q_end=q1)
@@ -147,10 +147,10 @@ def test_empty_drawing_is_only_the_move_to_q_end(problem):
 
 def test_a_piece_nothing_can_fly_to_is_a_leftover_with_the_reason(problem):
     arm, obs, rules, bunches = problem
-    q_bad = RIG.park_q("2L").copy()
+    q_bad = RIG.park_q("2R").copy()
     q_bad[3] = arm.limits.q_max[3] - 0.01                        # inside the gate's margin
     rep = TourReport()
-    gen = tour(arm, bunches, q_bad, obs, rules, q_end=RIG.park_q("2L"), report=rep)
+    gen = tour(arm, bunches, q_bad, obs, rules, q_end=RIG.park_q("2R"), report=rep)
     motions = []
     try:
         while True:
@@ -169,16 +169,16 @@ def test_a_piece_under_a_box_is_a_leftover_and_the_rest_is_drawn(problem):
     from aris.types import Box, Obstacles
     # A flat box 20 to 40 mm above line b, known to the sequencer only: no alternative of b
     # can be lifted off (nor drawn); line a is drawn as before.
-    x, y = RIG.T_table_base("2L")[:2, 3]
+    x, y = RIG.T_table_base("2R")[:2, 3]
     T = np.eye(4)
     T[:3, 3] = [x + 0.10, y + 0.325, 0.030]
-    box = Box("lid", RIG.T_base_table("2L") @ T, np.array([0.05, 0.12, 0.010]), 0.0)
+    box = Box("lid", RIG.T_base_table("2R") @ T, np.array([0.05, 0.12, 0.010]), 0.0)
     lid = Obstacles(obs.boxes + (box,), obs.planes, obs.capsules)
-    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), lid, rules)
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2R"), lid, rules)
     assert rep.pieces == 1 and len(left) == 1
     assert left[0].piece.line_id == "b" and left[0].reason in ("no_free_path", "unreachable")
     assert left[0].detail
-    assert_tour(arm, lid, rules, ms, RIG.park_q("2L"), RIG.park_q("2L"))
+    assert_tour(arm, lid, rules, ms, RIG.park_q("2R"), RIG.park_q("2R"))
 
 
 # --------------------------------------------------------------------------- the checker in the loop
@@ -202,7 +202,7 @@ class _Refuse:
 @pytest.mark.parametrize("kind", ["free", "lower", "draw", "lift"])
 def test_a_refused_motion_leaves_its_piece_over_and_the_tour_goes_on(problem, kind):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q("2L")
+    park = RIG.park_q("2R")
     plain, _, _ = tour_all(arm, bunches, park, obs, rules)
     fake = _Refuse(kind)
     ms, left, rep = tour_all(arm, bunches, park, obs, rules, verify=fake)
@@ -226,7 +226,7 @@ def test_a_refused_motion_leaves_its_piece_over_and_the_tour_goes_on(problem, ki
 
 def test_without_verify_nothing_changes(problem):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q("2L")
+    park = RIG.park_q("2R")
     a, la, _ = tour_all(arm, bunches, park, obs, rules)
     b, lb, rep = tour_all(arm, bunches, park, obs, rules,
                           verify=lambda m, q: {"passed": True, "tightest": ""})
@@ -238,7 +238,7 @@ def test_without_verify_nothing_changes(problem):
 
 def test_a_refused_move_home_is_the_end_refusal(problem):
     arm, obs, rules, bunches = problem
-    park = RIG.park_q("2L")
+    park = RIG.park_q("2R")
     n = len(tour_all(arm, bunches, park, obs, rules)[0])
     calls = []
 
@@ -279,7 +279,7 @@ def test_a_drag_only_pen_draws_every_piece_pulled(problem):
     arm, obs, rules, bunches = problem
     drag = replace(rules, drag_only=True)
     paper = [p for p in obs.planes if p.kind == "paper"][0]
-    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), obs, drag)
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2R"), obs, drag)
     assert rep.pieces == 2 and not left
     noted = {x[0].line_id for x in rep.drag_notes}
     for m in ms:
@@ -293,14 +293,14 @@ def test_a_drag_only_pen_draws_every_piece_pulled(problem):
 def test_a_drag_only_pen_flags_a_circle():
     from dataclasses import replace
     from aris import local
-    arm, obs, rules, _ = lc.problem(RIG, "2L")
-    x, y = RIG.T_table_base("2L")[:2, 3]
+    arm, obs, rules, _ = lc.problem(RIG, "2R")
+    x, y = RIG.T_table_base("2R")[:2, 3]
     t = np.linspace(0, 2 * np.pi, 120)
-    circle = RIG.to_base("2L", Line("circle", np.column_stack(
+    circle = RIG.to_base("2R", Line("circle", np.column_stack(
         [x + 0.35 + 0.08 * np.cos(t), y + 0.08 * np.sin(t), np.full(len(t), RIG.paper_z)]),
         "table"))
     bunches, _ = local.plan(arm, [circle], obs, rules)
-    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2L"), obs, replace(rules, drag_only=True))
+    ms, left, rep = tour_all(arm, bunches, RIG.park_q("2R"), obs, replace(rules, drag_only=True))
     drawn = {m.piece for m in ms if m.kind == "draw"}
     flagged = {x[0] for x in rep.drag_notes}
     # the lean turns with the hand around the circle: some piece is pushed somewhere, so it is

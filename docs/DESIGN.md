@@ -246,7 +246,7 @@ as the simple thing draws on the hardware.
 ## 4c. Decided 2026-10-02, after the first word drawn on the hardware
 
 **Slots and robots.** An arm is named by its slot on the frame, `1L 1R 2L 2R 3L 3R` (row 1 at
-the −y end, L at −x). `config/rig.json` describes slots; one table in `site/` says which robot
+the −y end; L at +x, R at −x — left and right as seen from Diemut's desk at the +y end, renamed 2026-10-08). `config/rig.json` describes slots; one table in `site/` says which robot
 (serial, address) hangs in which slot today, and the runner refuses a robot that is not the one
 the table names. The old prime-number ids live on only in that table. Nothing in the planning
 code knows a robot.
@@ -403,7 +403,7 @@ server refuses to draw without a passing calibration.
 **Steps 2 and 3 as built (decided 2026-10-05): marks, pivots, pairs.** Checked against the
 drawable maps, the single four-arm spot of the first design does not work (12 % of the pen
 orientations there, and one point shared across two rows leaves the end rows' yaw free). The
-layout is ten spots, each shared by exactly two neighbouring arms (`docs/figures/marks_six_slots.png`):
+layout is ten spots, each shared by exactly two neighbouring arms:
 the row pairs share two spots on the centre line (A/B at (0, ∓0.40) for the middle row, (0,
 ∓0.81) and (0, ∓1.61) for the end rows), the column pairs share one seam spot each at (±0.20,
 ±0.605). Every arm therefore has at least two shared spots (its yaw), and every seam is tied by

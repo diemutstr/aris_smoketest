@@ -280,7 +280,8 @@ def _solve(st, rec, plan, run):
     result = calibration_from_events(st.rig, arm, rows)
     if not result.passed:
         return "failed", f"the plane fit did not pass: {result.why}", result, None
-    path = write_base(result, st.config_dir)
+    from aris.server.robots import write_kwargs
+    path = write_base(result, st.config_dir, **write_kwargs(st, write_base, arm))
     surface = paper.rebuild(st.config_dir)         # the table's height map, from every slot
     st.reload()                                    # the station runs on the new files now
     return "done", "", result, dict(base=str(path), paper_surface=surface)

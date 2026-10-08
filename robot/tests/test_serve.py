@@ -55,9 +55,8 @@ def _write_job(rig, job, phase_name, arm, motions):
 
 
 def _calibration_file():
-    T = np.eye(4)
-    T[:3, :3] = [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]]
-    T[:3, 3] = [-0.305 + 0.002, -0.001, 0.970 + 0.004]          # slot 2L, 4 mm higher
+    T = np.array(Rig.load(CONFIG).T_table_base("2L"), float)    # slot 2L as the rig has it,
+    T[:3, 3] += [0.002, -0.001, 0.004]                           # 4 mm higher
     return dict(slot="2L", base=dict(date="2026-10-02", passed=True, T_table_base=T.tolist(),
                                      method="test"))
 
@@ -101,8 +100,10 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
     drivers = {a: SimTouchArm(nominal, a, nominal.park_q(a), speed=math.inf, paper_m=0.003)
                for a in ("2L", "2R")}
     with Served(app) as srv:
-        robots = {a: dict(robot=r, ip="192.168.50.1", serial_found=None, identity="unverified")
-                  for a, r in (("2L", "fr3-31"), ("2R", "fr3-71"))}
+        from aris_robot import site as site_mod             # who hangs where: the site table
+        table = site_mod.load(Path(__file__).resolve().parents[1] / "site.json")
+        robots = {a: dict(robot=table.arm(a).robot, ip="192.168.50.1", serial_found=None,
+                          identity="unverified") for a in ("2L", "2R")}
         op = Operator(Remote(srv.url), op_cfg, tmp_path / "work", drivers, tmp_path / "log",
                       idle_s=0.2, wait_s=0.5, robots=robots)
         t = threading.Thread(target=op.serve, daemon=True)
@@ -122,7 +123,7 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
     start = rows[0]
     assert start["event"] == "operator started"
     assert start["code"] == CODE and start["code_text"]           # which code this PC runs
-    assert start["robots"]["2R"]["robot"] == "fr3-71"
+    assert start["robots"]["2R"]["robot"] == robots["2R"]["robot"]
     assert start["robots"]["2R"]["identity"] == "unverified"
     assert set(start["where"]) == {"2L", "2R"} and np.allclose(start["where"]["2L"], p31)
     rep = rows[events.index("report")]

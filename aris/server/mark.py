@@ -12,8 +12,11 @@ shared spot (and with `--yaw` also at the second):
 3. "meet <spot>": both arms active, each a `guide`.  At the arms the person switches both to
    Desk's programming mode, brings the two pen tips together in the air, lets go, and switches
    both back to execution mode with FCI on; each driver answers "check" with the joints at
-   standstill (the executor's "registered" row) and brings its arm back to the hover;
-4. "park <L> after <spot>", "park <R> after <spot>": home, one arm at a time.
+   standstill (the executor's "registered" row) and holds the arm where it stands;
+4. once "meet <spot>" has run, the way home is planned from where the arms REALLY stand (the
+   drivers leave them holding where the person let go): retreats first for an arm too close
+   to the other or past a joint limit, then "park <L> after <spot>", "park <R> after <spot>",
+   one arm at a time.
 
 At the end, per pair, `aris.server.meetings.calibrate_from_meetings(config_dir, (L, R),
 [{L: q, R: q}, ...])` (the calib's `solve_meetings`, written when it passes): where the two tips met is one point, so the joints give the row's
@@ -29,7 +32,7 @@ import numpy as np
 from aris.check import check
 from aris.free import plan as free_plan
 from aris.sequencer.guard import Guard
-from aris.server.steps import Scene, Step, steps_work
+from aris.server.steps import Scene, Step
 from aris.types import Motion, Piece, Refusal, Trajectory
 
 MEET_HEIGHT = 0.030      # m above the paper: where the tips are brought together
@@ -125,63 +128,131 @@ def _fly(st, slot, now, spot, side, half_gap, along) -> tuple | str:
     return Step(slot, phase, (m,), (v,), dict(standing)), h, v, tip
 
 
-def plan_mark(st, where, pairs, yaw: bool) -> MarkPlan:
+def _home(st, now, suffix: str):
+    """Steps from where the arms really stand to their parks (retreats first, then lifts and
+    one park phase per arm), phase names suffixed; or why not."""
     from aris.server.park import plan_park
+    steps = plan_park(st, now)
+    bad = [x for x in steps if x.why and x.why != "already at its park"]
+    if bad:
+        return "; ".join(f"{x.arm}: {x.why}" for x in bad)
+    return [replace(x, phase=replace(x.phase, name=f"{x.phase.name}{suffix}"))
+            for x in steps if x.motions]
+
+
+def plan_meeting(st, now, pair, spot) -> tuple | str:
+    """From the arms parked (`now`): both fly to their hovers at `spot` ("meet A 2L", "meet A
+    2R"), then "meet A" with one guide each.  -> (steps, meeting record) or why not."""
     from aris.execute.queue import verdict_numbers
     rig = st.rig
-    out = MarkPlan(pairs=pairs)
-    parking = plan_park(st, where)
-    bad = [s for s in parking if s.why and s.why != "already at its park"]
-    if bad:
-        out.why = "the arms cannot all be parked first: " + "; ".join(
-            f"{s.arm}: {s.why}" for s in bad)
-        return out
-    out.steps += parking
-    now = {a: rig.park_q(a) for a in rig.arm_ids}
-    for p in pairs:
-        L, R = p["slots"]                       # a row's L and R, or two neighbours in rig order
-        along = rig.T_table_base(R)[:2, 3] - rig.T_table_base(L)[:2, 3]
-        along = along / np.linalg.norm(along)
-        for spot in p["spots"][:2 if yaw and p["kind"] == "row" else 1]:
-            got, why = None, ""
-            for half in HALF_GAPS:
-                trial, at = {}, dict(now)
-                for slot, side in ((L, -1.0), (R, +1.0)):
-                    f = _fly(st, slot, at, spot, side, half, along)
-                    if isinstance(f, str):
-                        why = f
-                        break
-                    trial[slot], at[slot] = f, f[1]
-                if len(trial) == 2:
-                    got, now = trial, at
+    L, R = pair
+    along = rig.T_table_base(R)[:2, 3] - rig.T_table_base(L)[:2, 3]
+    along = along / np.linalg.norm(along)
+    got, why, half = None, "", None
+    for half in HALF_GAPS:
+        trial, at = {}, dict(now)
+        for slot, side in ((L, -1.0), (R, +1.0)):
+            f = _fly(st, slot, at, spot, side, half, along)
+            if isinstance(f, str):
+                why = f
+                break
+            trial[slot], at[slot] = f, f[1]
+        if len(trial) == 2:
+            got, now = trial, at
+            break
+    if got is None:
+        return f"{why} (tips up to {2e3 * HALF_GAPS[-1]:.0f} mm apart tried)"
+    steps, name = [got[L][0], got[R][0]], f"meet {spot}"
+    for slot in (L, R):
+        obs, standing, phase = Scene(rig).of(slot, now, (L, R), (), name)
+        phase = replace(phase, contact=True)     # the two arms may end tip to tip
+        h, v, tip = got[slot][1], got[slot][2], got[slot][3]
+        T = rig.T_base_table(slot)
+        g = Motion("guide", Trajectory(np.zeros(1), h[None], np.zeros((1, 7))),
+                   Piece(spot, 0.0, 0.0), (T[:3, :3] @ tip + T[:3, 3])[None],
+                   checked=dict(verdict_numbers(v), tightest="the hover, held at the free "
+                                "move's end"))
+        steps.append(Step(slot, phase, (g,), (None,), dict(standing)))
+    return steps, dict(pair=[L, R], spot=spot, phase=name, gap_m=2 * half,
+                       hovers={x: got[x][1].tolist() for x in (L, R)})
+
+
+def _phase_end(rec, name, poll=0.05) -> str:
+    """Waits until phase `name` has run (its "phase done") -> "", or the job ended first ->
+    why (a failed phase, a stop, the run's end)."""
+    import time
+    while True:
+        for r in rec.log.read():
+            if r.get("phase") == name and r.get("event") == "phase done":
+                return ""
+            if r.get("event") == "phase failed" or str(r.get("event", "")).startswith("job "):
+                if r.get("event") not in ("job state", "job started"):
+                    return str(r.get("why") or r.get("event"))
+        if rec.stop.is_set():
+            return "stop requested"
+        time.sleep(poll)
+
+
+def _work(pairs, yaw: bool):
+    """The mark job, phase by phase: park, then per meeting the flights and the guides; after
+    each meeting the way on (home, retreats first) is planned from where the arms REALLY stand
+    (the drivers leave them holding where the person let go), then the next meeting."""
+    def work(st, rec, job) -> None:
+        import threading
+        import time
+        from aris.server import runner
+        from aris.server.steps import add_steps, run_queued
+        where = runner.where_now(st, need_all=True)
+        if isinstance(where, Refusal):
+            return runner.fail_job(st, rec, job, where.detail)
+        rec.set_state("planning")
+        t0 = time.perf_counter()
+        plan = MarkPlan(pairs=pairs)
+        box = {}
+        runner_thread = threading.Thread(
+            target=lambda: box.update(run=run_queued(st, rec, job, True, where)), daemon=True)
+        first = _home(st, where, "")
+        if isinstance(first, str):
+            job.end_phases("mark not planned")
+            return runner.fail_job(st, rec, job, f"the arms cannot all be parked first: {first}")
+        add_steps(job, rec, first)
+        plan.steps += first
+        runner_thread.start()
+        rec.set_state("moving")
+        now, why = {a: st.rig.park_q(a) for a in st.rig.arm_ids}, ""
+        for p in pairs:
+            for spot in p["spots"][:2 if yaw and p["kind"] == "row" else 1]:
+                got = plan_meeting(st, now, tuple(p["slots"]), spot)
+                if isinstance(got, str):
+                    why = got
                     break
-            if got is None:
-                out.why = f"{why} (tips up to {2e3 * HALF_GAPS[-1]:.0f} mm apart tried)"
-                return out
-            out.steps += [got[L][0], got[R][0]]
-            name = f"meet {spot}"
-            for slot in (L, R):
-                obs, standing, phase = Scene(rig).of(slot, now, (L, R), (), name)
-                h, v, tip = got[slot][1], got[slot][2], got[slot][3]
-                T = rig.T_base_table(slot)
-                g = Motion("guide", Trajectory(np.zeros(1), h[None], np.zeros((1, 7))),
-                           Piece(spot, 0.0, 0.0), (T[:3, :3] @ tip + T[:3, 3])[None],
-                           checked=dict(verdict_numbers(v), tightest="the hover, held at the "
-                                        "free move's end"))
-                out.steps.append(Step(slot, phase, (g,), (None,), dict(standing)))
-            out.meetings.append(dict(pair=[L, R], spot=spot, phase=name, gap_m=2 * half,
-                                     hovers={a: got[a][1].tolist() for a in (L, R)}))
-            home = plan_park(st, now)
-            bad = [s for s in home if s.why and s.why != "already at its park"]
-            if bad:
-                out.why = f"no way home after {spot}: " + "; ".join(f"{s.arm}: {s.why}"
-                                                                    for s in bad)
-                return out
-            out.steps += [replace(s, phase=replace(s.phase, name=f"{s.phase.name} after "
-                                                   f"{spot}")) if s.phase else s
-                          for s in home if s.motions]
-            now = {a: rig.park_q(a) for a in rig.arm_ids}
-    return out
+                add_steps(job, rec, got[0])
+                plan.steps += got[0]
+                plan.meetings.append(got[1])
+                why = _phase_end(rec, got[1]["phase"])
+                if why:
+                    break
+                real = runner.where_now(st, need_all=True)        # where they really stand
+                if isinstance(real, Refusal):
+                    why = real.detail
+                    break
+                home = _home(st, real, f" after {spot}")
+                if isinstance(home, str):
+                    why = f"no way home after {spot}: {home}"
+                    break
+                add_steps(job, rec, home)
+                plan.steps += home
+                now = {a: st.rig.park_q(a) for a in st.rig.arm_ids}
+            if why:
+                break
+        job.end_phases(why or "mark planned")
+        runner_thread.join()
+        run = box["run"]
+        if why and run.status == "done":
+            run.status, run.why = "failed", why
+        rep, state, why2 = _report(st, rec, plan, run, time.perf_counter() - t0)
+        runner.finish_job(rec, job.dir, rep, state, why2)
+    return work
 
 
 def group_slots(rig, slots=(), group: str | None = None):
@@ -204,9 +275,8 @@ def submit_mark(st, store, slots=(), group: str | None = None, yaw: bool = False
     if short:
         return Refusal("no_second_spot", f"--yaw needs two shared spots; "
                        f"{'/'.join(short[0]['slots'])} share only {short[0]['spots']}")
-    plan = lambda st_, where: plan_mark(st_, where, pairs, yaw)
     return runner.start(st, store, "mark", "mark " + " ".join(chosen) + (" yaw" if yaw else ""),
-                        steps_work(plan, _report),
+                        _work(pairs, yaw),
                         lambda rec: dict(slots=list(chosen), group=group, yaw=yaw,
                                          pairs=pairs, to_do=list(TO_DO)),
                         need_positions=True)

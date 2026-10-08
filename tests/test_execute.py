@@ -1,6 +1,6 @@
 """Tests of the execution path (aris/execute): queue, executor, simulated arm, coordinator.
 
-Quick set: hand-made motions near the parks of arms 1L and 3L (both move in the phases built
+Quick set: hand-made motions near the parks of arms 1R and 3R (both move in the phases built
 here; they hang 2.42 m apart), each passed by the independent checker.  Slow set: the word
 planned by the system planner, queued through the checker while six simulated arms run it.
 """
@@ -25,7 +25,7 @@ from aris.types import JointPath, Motion, Phase, Piece, Trajectory
 
 CONFIG = Path(__file__).resolve().parents[1] / "config"
 DATA = Path(__file__).resolve().parent / "data"
-ARMS = ("1L", "3L")
+ARMS = ("1R", "3R")
 STEP = np.array([0.3, -0.3, 0.0, 0.45, 0.0, -0.45, 0.6])     # rad, a visible move from park
 
 
@@ -89,10 +89,10 @@ def _draw_like(rng, q0) -> Motion:
 
 def test_queue_written_and_read_back_exactly(tmp_path, checked):
     rng = np.random.default_rng(3)
-    motions = [checked["1L"][0][0]]
+    motions = [checked["1R"][0][0]]
     for _ in range(2):
         motions.append(_draw_like(rng, motions[-1].q_end))
-    q = Queue(tmp_path / "a.queue", "one", "1L")
+    q = Queue(tmp_path / "a.queue", "one", "1R")
     for i, m in enumerate(motions):
         assert q.append(m, _Pass()) == i
     assert q.end() is None
@@ -105,8 +105,8 @@ def test_queue_written_and_read_back_exactly(tmp_path, checked):
 
 
 def test_queue_keeps_the_checker_numbers_and_refuses(tmp_path, checked):
-    (m0, v0), (m1, v1), _ = checked["1L"]
-    q = Queue(tmp_path / "b.queue", "one", "1L")
+    (m0, v0), (m1, v1), _ = checked["1R"]
+    q = Queue(tmp_path / "b.queue", "one", "1R")
     assert q.append(m0, v0) == 0
     e = q.read()[0]
     assert e.verdict["passed"] and e.verdict["tightest"] == v0.tightest
@@ -128,7 +128,7 @@ def test_queue_watched_while_written_from_another_thread(tmp_path):
     path = tmp_path / "c.queue"
 
     def writer():
-        q = Queue(path, "one", "3L")
+        q = Queue(path, "one", "3R")
         for m in motions:
             q.append(m, _Pass())
             time.sleep(0.003)
@@ -172,17 +172,17 @@ def _queue_of(tmp_path, checked, arm_id, name="q.queue"):
 
 
 def test_simulated_arm_runs_three_motions_at_50x(tmp_path, rig, checked):
-    q = _queue_of(tmp_path, checked, "1L")
-    arm = SimArm("1L", rig.park_q("1L"), speed=50.0)
+    q = _queue_of(tmp_path, checked, "1R")
+    arm = SimArm("1R", rig.park_q("1R"), speed=50.0)
     assert isinstance(arm, Driver)
     log = EventLog(tmp_path / "events.jsonl")
     w0 = time.perf_counter()
-    run = Executor("1L", arm, log, rig).run(q)
+    run = Executor("1R", arm, log, rig).run(q)
     wall = time.perf_counter() - w0
-    flown = sum(float(m.traj.t[-1]) for m, _ in checked["1L"])
+    flown = sum(float(m.traj.t[-1]) for m, _ in checked["1R"])
     print(f"three motions, {flown:.2f} s of motion, {wall:.3f} s wall at 50x")
     assert run.status == "finished" and run.done == 3 and run.parked
-    last = checked["1L"][-1][0].q_end
+    last = checked["1R"][-1][0].q_end
     assert np.max(np.abs(arm.state().q - last)) < 1e-9
     assert np.all(arm.state().qd == 0.0)
     assert arm.clock == pytest.approx(flown)
@@ -192,31 +192,31 @@ def test_simulated_arm_runs_three_motions_at_50x(tmp_path, rig, checked):
 
 
 def test_injected_failure_stops_at_the_right_motion_and_holds(tmp_path, rig, checked):
-    q = _queue_of(tmp_path, checked, "1L")
-    d = [float(m.traj.t[-1]) for m, _ in checked["1L"]]
+    q = _queue_of(tmp_path, checked, "1R")
+    d = [float(m.traj.t[-1]) for m, _ in checked["1R"]]
     fail_at = d[0] + 0.5 * d[1]
-    arm = SimArm("1L", rig.park_q("1L"), speed=50.0, fail_at=fail_at, fail_why="joint 4 reflex")
+    arm = SimArm("1R", rig.park_q("1R"), speed=50.0, fail_at=fail_at, fail_why="joint 4 reflex")
     log = EventLog(tmp_path / "events.jsonl")
-    run = Executor("1L", arm, log, rig).run(q)
+    run = Executor("1R", arm, log, rig).run(q)
     assert run.status == "failed" and run.failed_index == 1 and run.done == 1
     assert run.why == "joint 4 reflex"
-    m1 = checked["1L"][1][0]
+    m1 = checked["1R"][1][0]
     expect = np.interp(0.5 * d[1], m1.traj.t, m1.traj.q[:, 0])
     assert abs(run.q[0] - expect) < 1e-2                    # where the motion was at the time
     s = arm.state()
     assert not s.ok and "fault: joint 4 reflex" in s.flags and np.all(s.qd == 0.0)
     time.sleep(0.05)
     assert np.array_equal(arm.state().q, run.q)            # it holds there
-    assert arm.move(checked["1L"][2][0].traj).done is False   # and will not move before recover
+    assert arm.move(checked["1R"][2][0].traj).done is False   # and will not move before recover
     assert log.read()[-1]["event"] == "failed" and log.read()[-1]["index"] == 1
 
 
 def test_start_configuration_mismatch_is_refused(tmp_path, rig, checked):
-    q = _queue_of(tmp_path, checked, "3L")
+    q = _queue_of(tmp_path, checked, "3R")
     tol = rig.execution().start_tolerance                     # 0.03 rad since the site day
-    off = rig.park_q("3L") + np.array([0, 0, 0, 0, 2 * tol, 0, 0])
-    arm = SimArm("3L", off, speed=50.0)
-    run = Executor("3L", arm, EventLog(tmp_path / "e.jsonl"), rig).run(q)
+    off = rig.park_q("3R") + np.array([0, 0, 0, 0, 2 * tol, 0, 0])
+    arm = SimArm("3R", off, speed=50.0)
+    run = Executor("3R", arm, EventLog(tmp_path / "e.jsonl"), rig).run(q)
     assert run.status == "failed" and run.failed_index == 0 and run.done == 0
     assert "not at the start: joint 5" in run.why
     assert np.array_equal(arm.state().q, off) and arm.clock == 0.0
@@ -259,15 +259,15 @@ class _Recorder:
 
 def test_draw_lower_and_lift_go_to_draw_free_goes_to_move(tmp_path, rig, checked):
     from dataclasses import replace
-    ms = [replace(m, kind=k) for (m, _), k in zip(checked["1L"], ("lower", "lift", "free"))]
+    ms = [replace(m, kind=k) for (m, _), k in zip(checked["1R"], ("lower", "lift", "free"))]
     ms.append(_draw_like(np.random.default_rng(1), ms[-1].q_end))
-    q = Queue(tmp_path / "k.queue", "one", "1L")
+    q = Queue(tmp_path / "k.queue", "one", "1R")
     for m in ms:
         q.append(m, _Pass())
     q.close()
-    arm = _Recorder(SimArm("1L", rig.park_q("1L"), speed=math.inf))
+    arm = _Recorder(SimArm("1R", rig.park_q("1R"), speed=math.inf))
     assert isinstance(arm, Driver)
-    run = Executor("1L", arm, EventLog(tmp_path / "k.jsonl"), rig).run(q)
+    run = Executor("1R", arm, EventLog(tmp_path / "k.jsonl"), rig).run(q)
     assert run.status == "finished" and run.done == 4
     assert arm.calls == [("draw", "lower"), ("draw", "lift"), ("move", None), ("draw", "draw")]
 
@@ -329,12 +329,12 @@ def test_a_queue_cut_short_ends_the_job_after_its_phase(tmp_path, rig, checked):
         job.add_phase(_phase(rig, name))
         for a in ARMS:
             q = job.queue(name, a)
-            for m, v in checked[a][:2 if (a == "3L" and name == "one") else 3]:
+            for m, v in checked[a][:2 if (a == "3R" and name == "one") else 3]:
                 q.append(m, v)
-            q.close(complete=not (a == "3L" and name == "one"), note="motion 2 refused")
+            q.close(complete=not (a == "3R" and name == "one"), note="motion 2 refused")
     job.end_phases()
     arms = {a: SimArm(a, rig.park_q(a), speed=100.0) for a in ARMS}
     run = Coordinator(job, arms, CONFIG, rig).run()
     assert run.status == "failed" and run.phases_done == []
-    assert "arm 3L" in run.why and "motion 2 refused" in run.why
-    assert np.max(np.abs(run.where["1L"] - rig.park_q("1L"))) < 1e-9     # the other arm finished
+    assert "arm 3R" in run.why and "motion 2 refused" in run.why
+    assert np.max(np.abs(run.where["1R"] - rig.park_q("1R"))) < 1e-9     # the other arm finished

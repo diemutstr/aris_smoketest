@@ -47,17 +47,17 @@ SMALL = ROOT / "tests" / "data" / "server_small.json"
 
 def test_a_reading_that_is_no_reading_is_never_used():
     p, now = Positions(), time.time()
-    p.from_row(dict(event="where", time=now, where={"2L": [0.1] * 7, "2R": None}), "j")
-    assert np.allclose(p.known("2L")[0], 0.1) and p.known("2L")[1] == ""
-    assert p.known("2R") == (None, "no joint states for 2R (FCI off?)")
-    p.from_row(dict(event="motion done", arm="2L", time=now + 1, q=[0.0] * 7), "j")
-    assert p.known("2L") == (None, "no joint states for 2L (FCI off?)")       # all zeros
-    p.from_row(dict(event="motion done", arm="2L", time=now + 2, q=[0.2] * 7,
+    p.from_row(dict(event="where", time=now, where={"2R": [0.1] * 7, "2L": None}), "j")
+    assert np.allclose(p.known("2R")[0], 0.1) and p.known("2R")[1] == ""
+    assert p.known("2L") == (None, "no joint states for 2L (FCI off?)")
+    p.from_row(dict(event="motion done", arm="2R", time=now + 1, q=[0.0] * 7), "j")
+    assert p.known("2R") == (None, "no joint states for 2R (FCI off?)")       # all zeros
+    p.from_row(dict(event="motion done", arm="2R", time=now + 2, q=[0.2] * 7,
                     robot="fr3-0427"), "j")
-    assert p.known("2L")[1] == "" and p.all()["2L"]["robot"] == "fr3-0427"
-    q, why = p.known("2L", now=time.time() + STALE_S + 5)
-    assert q is None and why.startswith("no joint states for 2L (FCI off?): the last reading")
-    assert p.known("1L") == (None, "")                                          # never heard
+    assert p.known("2R")[1] == "" and p.all()["2R"]["robot"] == "fr3-0427"
+    q, why = p.known("2R", now=time.time() + STALE_S + 5)
+    assert q is None and why.startswith("no joint states for 2R (FCI off?): the last reading")
+    assert p.known("1R") == (None, "")                                          # never heard
 
 
 def test_the_robot_server_refuses_to_plan_from_no_reading_and_aris_arms(tmp_path, capsys):
@@ -67,9 +67,9 @@ def test_the_robot_server_refuses_to_plan_from_no_reading_and_aris_arms(tmp_path
     c = TestClient(create_app(st))
     rig = st.rig
     st.positions.from_row(dict(event="where", time=time.time(),
-                               where={"2L": list(rig.park_q("2L")), "2R": [0.0] * 7}), "op")
+                               where={"2R": list(rig.park_q("2R")), "2L": [0.0] * 7}), "op")
     r = c.post("/park").json()
-    assert r["refused"] == "no_joint_states" and "no joint states for 2R" in r["detail"]
+    assert r["refused"] == "no_joint_states" and "no joint states for 2L" in r["detail"]
     r = c.post("/crosses").json()
     assert r["refused"] == "no_joint_states"
     inside = dict(units="mm", frame="table", lines=[dict(id="a", points=[[-300, 100], [-200, 150]])])
@@ -78,13 +78,13 @@ def test_the_robot_server_refuses_to_plan_from_no_reading_and_aris_arms(tmp_path
     while c.get(f"/jobs/{jid}").json()["state"] not in ("failed", "done"):
         assert time.time() - t0 < 30
         time.sleep(0.05)
-    assert "no joint states for 2R (FCI off?)" in c.get(f"/jobs/{jid}").json()["why"]
+    assert "no joint states for 2L (FCI off?)" in c.get(f"/jobs/{jid}").json()["why"]
     assert cli.main(["arms"], http=ClientHttp(c)) == 1
     out = capsys.readouterr().out
-    assert "no joint states for 2R" in out and "FAIL: no reading for 2R" in out
+    assert "no joint states for 2L" in out and "FAIL: no reading for 2L" in out
     arms = c.get("/arms").json()["arms"]
-    assert arms["2L"]["at_park"] is True and arms["2R"]["q"] is None
-    assert arms["2R"]["reading"].startswith("no joint states")
+    assert arms["2R"]["at_park"] is True and arms["2L"]["q"] is None
+    assert arms["2L"]["reading"].startswith("no joint states")
 
 
 def test_the_phase_end_check_waits_for_a_reading_instead_of_judging_zeros(tmp_path):
@@ -92,16 +92,16 @@ def test_the_phase_end_check_waits_for_a_reading_instead_of_judging_zeros(tmp_pa
     from aris.execute.drivers import ArmState
 
     class Blind:
-        arm_id = "2R"
+        arm_id = "2L"
 
         def state(self):
             return ArmState(np.zeros(7), np.zeros(7), True, ("holding",))
 
     rig = Rig.load(TWO)
     job = Job.create(tmp_path / "j", {})
-    coord = Coordinator(job, {"2R": Blind()}, TWO, rig, poll=0.01)
+    coord = Coordinator(job, {"2L": Blind()}, TWO, rig, poll=0.01)
     t0 = time.time()
-    assert coord._fresh_joints(wait=0.2) == "no joint states for 2R (FCI off?)"
+    assert coord._fresh_joints(wait=0.2) == "no joint states for 2L (FCI off?)"
     assert time.time() - t0 >= 0.2
 
 
@@ -111,7 +111,7 @@ def test_aris_arms_on_the_simulated_arms(tmp_path, capsys):
     c = TestClient(create_app(st))
     assert cli.main(["arms"], http=ClientHttp(c)) == 0
     out = capsys.readouterr().out
-    assert "2L" in out and "2R" in out and "yes" in out
+    assert "2R" in out and "2L" in out and "yes" in out
 
 
 # --------------------------------------------------------------------------- 4. rest of a failure
@@ -123,7 +123,7 @@ def test_the_rest_of_a_failed_job(tmp_path):
     st = open_station(ROOT / "config", speed=math.inf, uncalibrated=True, cache_dir=None,
                       jobs_dir=tmp_path / "jobs", workers=4, settings=Settings(grid_step=0.05))
     rig = st.rig
-    st.drivers["3R"] = SimArm("3R", rig.park_q("3R") + 0.05)       # away, not a phase-1 arm
+    st.drivers["3L"] = SimArm("3L", rig.park_q("3L") + 0.05)       # away, not a phase-1 arm
     c = TestClient(create_app(st))
     jid = c.post("/jobs", content=SMALL.read_bytes()).json()["id"]
     t0 = time.time()
@@ -161,7 +161,7 @@ def _two_pens_down(tmp_path):
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
     where = {a: st.rig.park_q(a) for a in st.rig.arm_ids}
-    for a in ("1L", "1R"):                               # row partners: never draw together
+    for a in ("1R", "1L"):                               # row partners: never draw together
         where[a] = _pen_on_paper(st, a)
         assert pen_down(st.rig, a, where[a])
     return st, where
@@ -174,7 +174,7 @@ def test_row_partners_with_pens_down_lift_one_per_phase(tmp_path):
     assert all(not s.why or s.why == "already at its park" for s in steps), \
         [s.why for s in steps]
     moving = [s.phase.name for s in steps if s.motions]
-    assert moving == ["lift pens 1L", "lift pens 1R", "park 1L", "park 1R"]
+    assert moving == ["lift pens 1L", "lift pens 1R", "park 1L", "park 1R"]   # rig order
     assert [s.phase.active for s in steps if s.motions][:2] == [("1L",), ("1R",)]
 
 
@@ -182,7 +182,7 @@ def test_row_partners_with_pens_down_park_cleanly(tmp_path):
     from aris.execute.drivers.sim import SimArm
     st, where = _two_pens_down(tmp_path)
     rig = st.rig
-    for a in ("1L", "1R"):
+    for a in ("1R", "1L"):
         st.drivers[a] = SimArm(a, where[a])
     c = TestClient(create_app(st))
     assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0
@@ -267,7 +267,7 @@ def test_a_plane_job_rebuilds_the_paper_map(tmp_path, monkeypatch):
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     st.drawing_area = st.maps_area = tuple(st.rig.drawing_area_m)
     c = TestClient(create_app(st))
-    assert cli.main(["calibrate", "2L", "--poll", "0.05"], http=ClientHttp(c)) == 0
+    assert cli.main(["calibrate", "2R", "--poll", "0.05"], http=ClientHttp(c)) == 0
     rep = c.get(f"/jobs/{c.get('/jobs').json()[-1]['id']}").json()["report"]
     assert written == [cfg] and rep["written"]["paper_surface"].endswith("paper.json")
     assert rep["paper_surface"]["exists"] and rep["paper_surface"]["points"] == 3
@@ -345,13 +345,13 @@ def test_aris_import_and_draw_an_svg(tmp_path, capsys):
 def test_mounted_rig_for_one_arm_gives_a_working_config(tmp_path):
     import subprocess
     out = tmp_path / "one_arm"
-    r = subprocess.run([sys.executable, str(ROOT / "tools" / "mounted_rig.py"), "--arms", "1R",
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "mounted_rig.py"), "--arms", "1L",
                         "--out", str(out)], capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stderr
     st = open_station(out, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
                       jobs_dir=tmp_path / "jobs", workers=4)
     assert hasattr(st, "rig") and st.area_problem == "", st
-    assert min(st.drawing_area) > 0.3 and st.rig.arm_ids == ("1R",)
+    assert min(st.drawing_area) > 0.3 and st.rig.arm_ids == ("1L",)
 
 
 # --------------------------------------------------------------------------- code versions
@@ -410,16 +410,16 @@ def test_grip_on_the_simulated_arms(tmp_path, capsys):
     st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=None,
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     c = TestClient(create_app(st))
-    assert cli.main(["grip", "2L", "close", "--width", "0.02", "--poll", "0.02"],
+    assert cli.main(["grip", "2R", "close", "--width", "0.02", "--poll", "0.02"],
                     http=ClientHttp(c)) == 0
-    assert "gripper      2L close: width 80.0 mm -> 20.0 mm, grasped" in capsys.readouterr().out
+    assert "gripper      2R close: width 80.0 mm -> 20.0 mm, grasped" in capsys.readouterr().out
     jid = c.get("/jobs").json()[-1]["id"]
     head = json.loads((st.jobs_dir / jid / "job.json").read_text())
-    assert head["kind"] == "grip" and head["slot"] == "2L" and head["verb"] == "close"
+    assert head["kind"] == "grip" and head["slot"] == "2R" and head["verb"] == "close"
     assert head["params"] == {"width_m": 0.02}
     rep = c.get(f"/jobs/{jid}/report").json()
     assert rep["width_before_m"] == 0.08 and rep["width_after_m"] == 0.02
-    assert c.post("/grip/2L", json=dict(verb="squeeze")).json()["refused"] == "verb"
+    assert c.post("/grip/2R", json=dict(verb="squeeze")).json()["refused"] == "verb"
     assert c.post("/grip/9X", json=dict(verb="open")).json()["refused"] == "no_slot"
     assert c.get("/jobs/nope/report").status_code == 404
 
@@ -428,18 +428,18 @@ def test_grip_with_the_robot_waits_for_the_operator_pc(tmp_path):
     st = open_station(TWO, driver="robot", uncalibrated=True, cache_dir=None,
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     c = TestClient(create_app(st))
-    r = c.post("/grip/2R", json=dict(verb="open")).json()
+    r = c.post("/grip/2L", json=dict(verb="open")).json()
     assert r["refused"] == "no_joint_states"                   # never reported: stack down?
     st.positions.from_row(dict(event="where", time=time.time(), where={
         a: list(st.rig.park_q(a)) for a in st.rig.arm_ids}), "op")
-    jid = c.post("/grip/2R", json=dict(verb="open")).json()["id"]
+    jid = c.post("/grip/2L", json=dict(verb="open")).json()["id"]
     assert c.get("/operator").json()["pending"][-1]["kind"] == "grip"
     phases = [json.loads(x) for x in c.get(f"/jobs/{jid}/phases").text.splitlines() if x]
     assert all(x.get("end") for x in phases)                   # no phases, only the end
-    assert c.post("/grip/2L", json=dict(verb="open")).json()["refused"] == "busy"
+    assert c.post("/grip/2R", json=dict(verb="open")).json()["refused"] == "busy"
     c.post(f"/jobs/{jid}/events", json=dict(rows=[
-        dict(seq=0, event="grip started", arm="2R", verb="open", width_m=0.01),
-        dict(seq=1, event="grip done", arm="2R", verb="open", width_before_m=0.01,
+        dict(seq=0, event="grip started", arm="2L", verb="open", width_m=0.01),
+        dict(seq=1, event="grip done", arm="2L", verb="open", width_before_m=0.01,
              width_after_m=0.079, grasped=False, nothing_to_do=False, why=""),
         dict(seq=2, event="job done", why="")]))
     v = _wait_report(c, jid)
@@ -480,8 +480,8 @@ def test_robot_names_from_the_site_table(tmp_path):
     st = open_station(TWO, uncalibrated=True, cache_dir=None, jobs_dir=tmp_path / "jobs",
                       workers=2, with_area=False, site=ROOT / "site" / "aris_2026-10.json")
     c = TestClient(create_app(st))
-    assert c.get("/rig").json()["arms"]["2L"]["robot"] == "fr3-97"
-    assert c.get("/arms").json()["arms"]["2R"]["robot"] == "fr3-71"
+    assert c.get("/rig").json()["arms"]["2R"]["robot"] == "fr3-97"
+    assert c.get("/arms").json()["arms"]["2L"]["robot"] == "fr3-71"
     r = open_station(TWO, uncalibrated=True, with_arms=False, with_area=False,
                      site=tmp_path / "missing.json")
     assert isinstance(r, Refusal) and r.reason == "site"
@@ -519,7 +519,7 @@ def test_crosses_on_the_simulated_arms(tmp_path, capsys):
         got = Queue(st.jobs_dir / jid / f"crosses_{a}__{a}.queue").read()
         entries += got
         drawn[a] = {e.motion.piece.line_id for e in got if e.motion.kind == "draw"}
-    # 2 shapes x 2 spots: 2L both strokes of each cross, 2R each circle, every motion checked
+    # 2 shapes x 2 spots: the L slot both strokes of each cross, the R slot each circle
     assert drawn == {"2L": {"A cross 1", "A cross 2", "B cross 1", "B cross 2"},
                      "2R": {"A circle", "B circle"}}
     assert entries and all(e.verdict["passed"] for e in entries)
@@ -563,7 +563,7 @@ def test_a_group_meets_pair_by_pair_and_solves_once(tmp_path, monkeypatch):
     assert [(a, b, spot) for a, _, b, _, spot in meetings] == [
         ("1L", "1R", "R1a"), ("1L", "2L", "S12L"), ("1R", "2R", "S12R"), ("2L", "2R", "A")]
     s = v["report"]["solved"]
-    assert s["passed"] and set(s["slots"]) == {"1L", "1R", "2L", "2R"} and s["reference"]
+    assert s["passed"] and set(s["slots"]) == {"1R", "1L", "2R", "2L"} and s["reference"]
 
 
 def test_mark_brings_the_tips_together(tmp_path, capsys):
@@ -587,15 +587,17 @@ def test_mark_brings_the_tips_together(tmp_path, capsys):
     # the TRUE tips met: through the true bases both joints put the tip at one point
     for m in (m1, m2):
         tips = [(true[a] @ np.r_[st.rig.arm(a).tip(np.asarray(m["q"][a])[None])[0], 1.0])[:3]
-                for a in ("2L", "2R")]
+                for a in ("2R", "2L")]
         assert np.linalg.norm(tips[0] - tips[1]) < 1.5e-3
     s = rep["solved"]
-    assert s["passed"] and s["slots"]["2R"]["yaw"] == "meetings" and s["residual_mm"] < 1.0
-    assert s["reference"] == "2L" and s["slots"]["2L"]["yaw"] == "reference"
-    # the solved seam (2R seen from 2L) is the true one, within the guiding error
-    T = {a: st.rig.T_table_base(a) for a in ("2L", "2R")}          # reloaded: solved
-    seam = np.linalg.inv(T["2L"]) @ T["2R"]
-    seam_true = np.linalg.inv(true["2L"]) @ true["2R"]
+    ref = st.rig.reference_slot                    # held at its nominal pose
+    other = ({"2L", "2R"} - {ref}).pop()
+    assert s["passed"] and s["slots"][other]["yaw"] == "meetings" and s["residual_mm"] < 1.0
+    assert s["reference"] == ref and s["slots"][ref]["yaw"] == "reference"
+    # the solved seam (2L seen from 2R) is the true one, within the guiding error
+    T = {a: st.rig.T_table_base(a) for a in ("2R", "2L")}          # reloaded: solved
+    seam = np.linalg.inv(T["2R"]) @ T["2L"]
+    seam_true = np.linalg.inv(true["2R"]) @ true["2L"]
     assert np.linalg.norm(seam[:2, 3] - seam_true[:2, 3]) < 1.5e-3
     assert abs(np.arctan2(seam[1, 0], seam[0, 0]) - np.arctan2(seam_true[1, 0],
                                                                seam_true[0, 0])) < 3e-3
@@ -615,8 +617,9 @@ def test_mark_with_one_meeting_keeps_the_yaw(tmp_path):
     v = _wait_report(c, c.post("/mark").json()["id"], 120)
     assert v["state"] == "done", v["why"]
     s = v["report"]["solved"]
-    assert s["slots"]["2R"]["yaw"] == "nominal" and len(v["report"]["meetings"]) == 1
-    assert c.post("/mark?slots=2L").json()["refused"] == "no_pair"
+    other = ({"2L", "2R"} - {st.rig.reference_slot}).pop()
+    assert s["slots"][other]["yaw"] == "nominal" and len(v["report"]["meetings"]) == 1
+    assert c.post("/mark?slots=2R").json()["refused"] == "no_pair"
 
 
 
@@ -637,12 +640,13 @@ def test_park_retreats_from_touching_tips(tmp_path, capsys):
     park = {a: rig.park_q(a) for a in rig.arm_ids}
     xy = rig.marks["A"][0]
     q = {}
-    for a, side in (("2L", -1.0), ("2R", 1.0)):        # tips 20 mm apart, each alone in the scene
+    for a in ("2R", "2L"):                  # tips 20 mm apart, each on its own side, alone
+        side = float(np.sign(rig.T_table_base(a)[0, 3]))
         obs, _, _ = Scene(rig).of(a, park, (a,), (), "x")
         q[a] = hover(st, a, [xy[0] + side * 0.010, xy[1], rig.paper_z + MEET_HEIGHT],
                      Guard(rig.arm(a), obs, st.rules.gates), park[a])
         st.drivers[a] = SimArm(a, q[a])
-    assert retreat.gap(rig, "2L", q["2L"], "2R", q["2R"]) < retreat.clearance(rig)
+    assert retreat.gap(rig, "2R", q["2R"], "2L", q["2L"]) < retreat.clearance(rig)
     c = TestClient(create_app(st))
     small = json.dumps(dict(units="mm", lines=[dict(id="a", points=[[-300, 100], [-200, 150]])]))
     assert c.post("/jobs", content=small.encode()).json()["refused"] == "too_close"
@@ -651,8 +655,8 @@ def test_park_retreats_from_touching_tips(tmp_path, capsys):
     names = [json.loads(x)["phase"]["name"] if "phase" in json.loads(x) else json.loads(x).get("name")
              for x in (st.jobs_dir / jid / "phases.jsonl").read_text().splitlines()
              if x and not json.loads(x).get("end")]
-    assert names == ["retreat 2L", "park 2L", "park 2R"], names
-    got = Queue(st.jobs_dir / jid / "retreat_2L__2L.queue").read()
+    assert names == ["retreat 2R", "park 2L", "park 2R"], names     # the one that can go first
+    got = Queue(st.jobs_dir / jid / "retreat_2R__2R.queue").read()
     assert [e.motion.kind for e in got] == ["retreat"] and all(e.verdict["passed"] for e in got)
     for a, d in st.drivers.items():
         assert np.max(np.abs(d.state().q - rig.park_q(a))) < 1e-6
@@ -664,19 +668,76 @@ def test_park_retreats_from_past_a_joint_limit(tmp_path, capsys):
     st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
                       jobs_dir=tmp_path / "jobs", workers=2, with_area=False)
     rig = st.rig
-    lim, q = rig.arm("2R").limits, rig.park_q("2R").copy()
+    lim, q = rig.arm("2L").limits, rig.park_q("2L").copy()
     j = 5                                                  # joint 6
     low = q[j] - lim.q_min[j] < lim.q_max[j] - q[j]
     q[j] = lim.q_min[j] - 0.047 if low else lim.q_max[j] + 0.047   # as on site: 0.047 past
-    st.drivers["2R"] = SimArm("2R", q)
+    st.drivers["2L"] = SimArm("2L", q)
     c = TestClient(create_app(st))
     assert cli.main(["park", "--poll", "0.05"], http=ClientHttp(c)) == 0, capsys.readouterr().out
     jid = c.get("/jobs").json()[-1]["id"]
-    got = Queue(st.jobs_dir / jid / "retreat_2R__2R.queue").read()
+    got = Queue(st.jobs_dir / jid / "retreat_2L__2L.queue").read()
     assert [e.motion.kind for e in got] == ["retreat"] and all(e.verdict["passed"] for e in got)
     m = got[0].motion
     moved = np.abs(m.q_end - m.q_start) > 1e-9
     assert moved.tolist() == [k == j for k in range(7)]           # only joint 6
-    assert rig.arm("2R").limit_margin(m.q_end[None])[0] >= rig.gates().limit_margin + 0.049
-    assert Queue(st.jobs_dir / jid / "park_2R__2R.queue").read()
-    assert np.max(np.abs(st.drivers["2R"].state().q - rig.park_q("2R"))) < 1e-6
+    assert rig.arm("2L").limit_margin(m.q_end[None])[0] >= rig.gates().limit_margin + 0.049
+    assert Queue(st.jobs_dir / jid / "park_2L__2L.queue").read()
+    assert np.max(np.abs(st.drivers["2L"].state().q - rig.park_q("2L"))) < 1e-6
+
+
+def test_after_a_meeting_the_way_home_starts_where_the_arms_were_left(tmp_path):
+    """As on site: the driver's glide back fails and the arms hold where the person let go,
+    tip to tip; the meet phase ends (contact), and the way home is planned from there:
+    retreats first, then the parks."""
+    from aris.execute.drivers.sim import SimArm
+
+    class Holding(SimArm):
+        def guide(self, motion):
+            r = super().guide(motion)
+            if r.done:
+                with self._lock:
+                    self._q = np.asarray(r.q, float).copy()      # left where it was let go
+            return r
+
+    st = open_station(TWO, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, with_area=False,
+                      sim_base_error=(3.0, 2.0))
+    for a, d in list(st.drivers.items()):
+        st.drivers[a] = Holding(a, st.rig.park_q(a), speed=math.inf, person=d.person)
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st.config_dir = cfg
+    c = TestClient(create_app(st))
+    v = _wait_report(c, c.post("/mark").json()["id"], 120)
+    assert v["state"] == "done", v["why"]
+    jid = v["id"]
+    names = [json.loads(x).get("name") for x in
+             (st.jobs_dir / jid / "phases.jsonl").read_text().splitlines()
+             if x and not json.loads(x).get("end")]
+    assert "meet A" in names and any(n.startswith("retreat") and n.endswith("after A")
+                                     for n in names), names
+    ends = [r for r in c.get(f"/jobs/{jid}/events").json() if r.get("event") == "phase end check"
+            and r.get("phase") == "meet A"]
+    assert ends and ends[0]["passed"]
+    for a, d in st.drivers.items():
+        assert np.max(np.abs(d.state().q - st.rig.park_q(a))) < 1e-6
+
+
+def test_a_calibration_measured_on_another_robot_is_refused(tmp_path):
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    (cfg / "calibration").mkdir(exist_ok=True)
+    (cfg / "calibration" / "2L.json").write_text(json.dumps(dict(
+        slot="2L", base=dict(passed=False, robot="fr3-97", date="2026-10-07"))))
+    st = open_station(cfg, uncalibrated=True, cache_dir=None, jobs_dir=tmp_path / "jobs",
+                      workers=2, with_area=False, site=ROOT / "site" / "aris_2026-10.json")
+    assert st.robots["2L"] == "fr3-71"
+    c = TestClient(create_app(st))
+    r = c.post("/park").json()
+    assert r["refused"] == "wrong_robot" and r["detail"] == (
+        "calibration/2L.json was measured on fr3-97, but 2L is fr3-71 today: recalibrate, or "
+        "rename the files if the slots were renamed")
+    assert c.post("/grip/2L", json=dict(verb="open")).status_code == 200   # no geometry

@@ -28,19 +28,19 @@ WORKERS = max(1, min(32, (os.cpu_count() or 2) - 2))
 # Floors: the shares measured on the fixed set (docs/modules/local.md), rounded down.  A
 # change that draws less than this is a regression.
 # Measured 2026-09-30 at the rig's gates (sigma_min 0.04), real obstacles, no table: drawn
-# 0.935 / 0.894 / 0.951 / 0.822 for arm 2L and 0.935 / 0.954 / 0.955 / 0.877 for arm 1L; length
+# 0.935 / 0.894 / 0.951 / 0.822 for arm 2R and 0.935 / 0.954 / 0.955 / 0.877 for arm 1R; length
 # drawn whole in one piece 0.918 / 0.267 / 0.715 / 0.595 and 0.918 / 0.797 / 0.754 / 0.700.
 # Lowered 2026-10-02 for the rig of that day (slots; walls kept 40 mm from each arm until x/y are
 # calibrated; the fences of the switched-off rows), measured drawn 0.935 / 0.881 / 0.941 /
-# 0.808 (arm 2L) and 0.935 / 0.949 / 0.950 / 0.864 (arm 1L); whole in one piece 0.918 / 0.260 /
+# 0.808 (arm 2R) and 0.935 / 0.949 / 0.950 / 0.864 (arm 1R); whole in one piece 0.918 / 0.260 /
 # 0.686 / 0.577 and 0.918 / 0.797 / 0.723 / 0.673 (more is "blocked" than on 2026-09-30).
-FLOOR_DRAWN = {("2L", "word"): 0.93, ("2L", "corpus"): 0.88, ("2L", "lines"): 0.94, ("2L", "curves"): 0.80,
-               ("1L", "word"): 0.93, ("1L", "corpus"): 0.94, ("1L", "lines"): 0.94, ("1L", "curves"): 0.86}
-FLOOR_SINGLE = {("2L", "word"): 0.91, ("2L", "corpus"): 0.25, ("2L", "lines"): 0.68, ("2L", "curves"): 0.57,
-                ("1L", "word"): 0.91, ("1L", "corpus"): 0.79, ("1L", "lines"): 0.72, ("1L", "curves"): 0.67}
+FLOOR_DRAWN = {("2R", "word"): 0.93, ("2R", "corpus"): 0.88, ("2R", "lines"): 0.94, ("2R", "curves"): 0.80,
+               ("1R", "word"): 0.93, ("1R", "corpus"): 0.94, ("1R", "lines"): 0.94, ("1R", "curves"): 0.86}
+FLOOR_SINGLE = {("2R", "word"): 0.91, ("2R", "corpus"): 0.25, ("2R", "lines"): 0.68, ("2R", "curves"): 0.57,
+                ("1R", "word"): 0.91, ("1R", "corpus"): 0.79, ("1R", "lines"): 0.72, ("1R", "curves"): 0.67}
 
 
-def _problem(arm_id="2L"):
+def _problem(arm_id="2R"):
     return lc.problem(RIG, arm_id)
 
 
@@ -133,19 +133,19 @@ def test_search_lifts_only_when_it_pays_and_leaves_gaps_where_it_must():
 
 
 def test_degenerate_inputs_are_leftovers_with_reasons():
-    arm, obs, rules, gates = _problem("2L")
-    axis = RIG.T_table_base("2L")[:2, 3]
+    arm, obs, rules, gates = _problem("2R")
+    axis = RIG.T_table_base("2R")[:2, 3]
     strut = Box("test_strut", np.eye(4), np.array([0.03, 0.03, 0.2]), 0.05)
     T = np.eye(4)
-    T[:3, 3] = RIG.to_base("2L", Line("c", np.array([[axis[0] + 0.4, 0.0, 0.1]]), "table")).points[0]
+    T[:3, 3] = RIG.to_base("2R", Line("c", np.array([[axis[0] + 0.4, 0.0, 0.1]]), "table")).points[0]
     strut = Box("test_strut", T, np.array([0.03, 0.03, 0.2]), 0.05)
     with_strut = Obstacles(obs.boxes + (strut,), obs.planes, obs.capsules)
     lines = [
-        _base("2L", [[axis[0] + 1.3, -0.1], [axis[0] + 1.3, 0.1]], "far"),
-        _base("2L", [[axis[0] + 0.4, -0.1], [axis[0] + 0.4, 0.1]], "strut"),
-        _base("2L", [[axis[0] + 0.4, 0.3], [axis[0] + 0.403, 0.3]], "3mm"),
+        _base("2R", [[axis[0] + 1.3, -0.1], [axis[0] + 1.3, 0.1]], "far"),
+        _base("2R", [[axis[0] + 0.4, -0.1], [axis[0] + 0.4, 0.1]], "strut"),
+        _base("2R", [[axis[0] + 0.4, 0.3], [axis[0] + 0.403, 0.3]], "3mm"),
         Line("empty", np.zeros((0, 3)), "base"),
-        _base("2L", [[axis[0] + 0.4, 0.3], [axis[0] + 0.4, 0.3]], "same"),
+        _base("2R", [[axis[0] + 0.4, 0.3], [axis[0] + 0.4, 0.3]], "same"),
     ]
     bunches, leftovers = plan(arm, lines, with_strut, rules, gates)
     reasons = {x.piece.line_id: {y.reason for y in leftovers if y.piece.line_id == x.piece.line_id}
@@ -161,15 +161,15 @@ def test_degenerate_inputs_are_leftovers_with_reasons():
 
 
 def test_frame_is_checked():
-    arm, obs, rules, gates = _problem("2L")
+    arm, obs, rules, gates = _problem("2R")
     with pytest.raises(ValueError):
         plan(arm, [Line("t", np.zeros((2, 3)), "table")], obs, rules, gates)
 
 
 def test_a_simple_line_is_one_piece_with_real_alternatives():
-    arm, obs, rules, gates = _problem("2L")
-    axis = RIG.T_table_base("2L")[:2, 3]
-    line = _base("2L", [[axis[0] + 0.3, -0.2], [axis[0] + 0.3, 0.2]])
+    arm, obs, rules, gates = _problem("2R")
+    axis = RIG.T_table_base("2R")[:2, 3]
+    line = _base("2R", [[axis[0] + 0.3, -0.2], [axis[0] + 0.3, 0.2]])
     bunches, leftovers = plan(arm, [line], obs, rules, gates)
     assert not leftovers and len(bunches) == 1
     b = bunches[0]
@@ -177,20 +177,20 @@ def test_a_simple_line_is_one_piece_with_real_alternatives():
     starts = {tuple(np.round(p.q_start, 6)) for p in b.plans}
     ends = {tuple(np.round(p.q_end, 6)) for p in b.plans}
     assert len(starts) == len(b.plans) or len(ends) == len(b.plans)
-    assert not plans_check("2L", [line], bunches)
+    assert not plans_check("2R", [line], bunches)
     tip_err = max(np.abs(p.tip_base - arm.tip(p.q)).max() for p in b.plans)
     assert tip_err < 1e-9
 
 
 def _few():
     """Short lines: two letters, a short line, a short line along the rim."""
-    cases = lc.base_cases(RIG, "2L")
+    cases = lc.base_cases(RIG, "2R")
     return cases["word"][1:3] + [x for x in cases["lines"] if x.id in ("line:any:0",
                                                                       "line:rim:160")]
 
 
 def test_same_answer_with_workers_and_in_a_fresh_process(tmp_path):
-    arm, obs, rules, gates = _problem("2L")
+    arm, obs, rules, gates = _problem("2R")
     lines = _few()
     one = plan(arm, lines, obs, rules, gates, workers=1)
     many = plan(arm, lines, obs, rules, gates, workers=8)
@@ -204,7 +204,7 @@ def test_same_answer_with_workers_and_in_a_fresh_process(tmp_path):
 
 
 def _fresh() -> str:
-    arm, obs, rules, gates = _problem("2L")
+    arm, obs, rules, gates = _problem("2R")
     lines = _few()
     return _digest(plan(arm, lines, obs, rules, gates))
 
@@ -255,13 +255,13 @@ def test_fixed_set(fixed_set):
 def test_the_table_guides_to_the_same_drawing(tmp_path):
     """With the kinematic table the plans are the same up to the grid: same share drawn, and
     every plan still passes the verification (which never looks at the table)."""
-    arm, obs, rules, gates = _problem("2L")
-    cases = lc.base_cases(RIG, "2L")
+    arm, obs, rules, gates = _problem("2R")
+    cases = lc.base_cases(RIG, "2R")
     lines = cases["word"] + cases["lines"][:40:4]
     live = plan(arm, lines, obs, rules, gates, workers=WORKERS)
     table = plan(arm, lines, obs, rules, gates, workers=WORKERS, cache_dir=tmp_path)
     length = sum(float(np.linalg.norm(np.diff(x.points, axis=0), axis=1).sum()) for x in lines)
     drawn = [sum(b.piece.s1 - b.piece.s0 for b in r[0]) / length for r in (live, table)]
     assert abs(drawn[0] - drawn[1]) <= 0.005, drawn
-    assert not plans_check("2L", lines, table[0], WORKERS)
+    assert not plans_check("2R", lines, table[0], WORKERS)
     assert len(list(tmp_path.glob("local_table_*.npy"))) == 2

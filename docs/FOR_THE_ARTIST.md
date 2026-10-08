@@ -29,21 +29,21 @@ Pete fills these in before handing over (ask him if a blank is still empty):
 ## 0. The names of the arms
 
 Every arm is named by its **slot** on the frame, not by the robot's old number. Rows are
-counted along the table: **row 3 is the end at your desk**, row 1 the far end. Careful with the
-letters: **the slots named L are on your RIGHT, the slots named R on your LEFT**, when you stand
-at your desk facing the table (the names come from the technical drawing, which looks at the
-table from the other end; see `docs/figures/table_orientation.png`). The old numbers (13, 17,
-31, 71, 2, 97) are not used anywhere any more; this table translates (picture:
-`docs/figures/table_orientation.png`):
+counted along the table: **row 3 is the end at your desk**, row 1 the far end. **L is your
+left, R your right**, standing at your desk facing the table (since 2026-10-08; before that
+day the letters were the other way round — forget the old table). The old numbers are not used
+anywhere any more; this table translates (picture: `docs/figures/table_orientation.png`):
 
-| slot | where, standing at your desk | old number (confirmed on day one by which address answers) |
+| slot | where, standing at your desk | robot |
 |---|---|---|
-| 2L | middle row, on your RIGHT — **in use** | probably 71 (it drew the half on your right) |
-| 2R | middle row, on your LEFT — **in use** | probably 97 (it drew the half on your left) |
-| 3L, 3R | the row nearest your desk — switched off | 2, 97 or 31 |
-| 1L, 1R | the far row — switched off | 13, 17 |
+| 1L | far row, your left | 31 (.12) |
+| 1R | far row, your right | 2 (.13) |
+| 2L | middle row, your left | 71 (.14) |
+| 2R | middle row, your right | 97 (.15) |
+| 3L | the row at your desk, your left | 13 (.11) |
+| 3R | the row at your desk, your right | 17 (.16) |
 
-If you (or your assistant) catch yourself saying "arm 71", say "2R" instead; every command,
+If you (or your assistant) catch yourself saying "arm 71", say "2L" instead; every command,
 message and file uses the slot.
 
 ## 1. What this is
@@ -145,6 +145,14 @@ On the laptop, one terminal that stays open all day:
 ```
 cd ~/aris-clean/aris && . .venv/bin/activate
 aris serve --config config/two_arms --driver robot --host 0.0.0.0 --uncalibrated
+```
+
+`config/two_arms` is the middle row (2L, 2R). The other rig files in the repository:
+`config/back_row` (1L, 1R), `config/front_row` (3L, 3R) and `config/all_six` (every arm on one
+server, needed for drawings that cross between rows). One server per rig file, each with its own
+`--port` (8420, 8421, …) and its own runner on the robot PC with the matching site file.
+
+```
 ```
 
 (`--uncalibrated` is only needed until the calibration in section 6 has been done once; after

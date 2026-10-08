@@ -1,13 +1,13 @@
 """The acceptance cases of the arm planner, and the script that measures them.
 
-For arm 2L (phase 2 obstacles) and arm 1L (phase 1), from the park configuration back to it:
+For arm 2R (phase 2 obstacles) and arm 1R (phase 1), from the park configuration back to it:
   word          the word "unknown", placed under the arm as in tests/local_cases.py
   corpus:<name> each of the five old corpus drawings, cut to 0.80 m from the arm's axis
   lines         100 random straight lines (every second one of local_cases.random_lines)
 Every motion goes through the independent checker (`aris.check.check`) with the arm's phase.
 
 Run from the repository root:
-    ../.venv/bin/python tests/arm_cases.py [--arms 2L,1L] [--cases word,...] [--figure]
+    ../.venv/bin/python tests/arm_cases.py [--arms 2R,1R] [--cases word,...] [--figure]
 It prints the numbers of docs/modules/sequencer.md and arm_planner.md.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ CONFIG = DEPLOY / "config"
 ARMS = lc.ARMS                                    # arm -> the phase in which it leads
 FIGURE = DEPLOY / "docs" / "modules" / "figures" / "arm_word_31.png"
 DRAW_SPEED = Rig.load(CONFIG).rules().draw_speed
-OLD_WORD_2L = dict(plan_s=66.8, motion_s=67.8)    # the old planner, word, arm 2L
+OLD_WORD_2L = dict(plan_s=66.8, motion_s=67.8)    # the old planner, word, arm 2R
 
 
 def drain(gen):
@@ -271,7 +271,7 @@ def figure(rig: Rig, arm_id: str, motions, path=FIGURE) -> None:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="plan and check the arm planner's cases")
-    ap.add_argument("--arms", default="2L,1L")
+    ap.add_argument("--arms", default="2R,1R")
     ap.add_argument("--cases", default="")
     ap.add_argument("--workers", type=int, default=1, help="local planner processes")
     ap.add_argument("--check-workers", type=int, default=16)
@@ -305,5 +305,5 @@ if __name__ == "__main__":
                 path = DEPLOY / "tests" / "data" / f"arm_stop_{arm_id}_{name.replace(':', '_')}_{k}.npz"
                 save_motion(path, arm_id, ms[i], q_before[i], checks[i][2])
                 print(f"  saved the motion that fails 'never stops' to {path}")
-            if a.figure and arm_id == "2L" and name == "word":
+            if a.figure and arm_id == "2R" and name == "word":
                 figure(rig, arm_id, ms)

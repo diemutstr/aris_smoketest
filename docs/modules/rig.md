@@ -308,7 +308,7 @@ moves its four hanger boxes by exactly that much.
 ## Calibration marks
 
 `rig.json` `marks` lists the ten calibration spots of DESIGN section 6 ("Steps 2 and 3 as
-built", `docs/figures/marks_six_slots.png`), each shared by exactly two neighbouring slots:
+built"), each shared by exactly two neighbouring slots:
 
 | mark | nominal (x, y) m | shared by |
 |---|---|---|

@@ -23,6 +23,36 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, evening — touches fixed, the meeting's point is kept, L/R as seen from the desk, row 3
+
+What changed:
+- **Touches stopped at the force cap** (0 contacts): the detector took its zero after the pen
+  was already on the paper. Now the zero is taken at the hover, and a cap trip counts as the
+  contact (dated back to where the force started rising). `aris calibrate` and `aris touchoff`
+  work again.
+- **The meeting's point is kept** even when the lift afterwards fails; the arm then just holds
+  where it is and the next phase plans its way out (a retreat, then park).
+- **L and R are now as seen from Diemut's desk**: L = her left, R = her right. Every file was
+  renamed: rig, site table, configs, figures, documents. New table: 1L = 31, 1R = 2, 2L = 71,
+  2R = 97, 3L = 13, 3R = 17.
+- **Row 3 hangs** (13 and 17 inverted): `config/front_row` and `config/all_six` exist;
+  `config/back_row` is in the repository now too.
+
+What to do, in this order:
+1. Your own `config/back_row` would block the update: `mv config/back_row config/back_row.local`
+   on both machines before pulling.
+2. Install (**`colcon build` on the robot PC**: the gripper node is new since your build).
+3. **Swap your calibration files** — they are named by slot, and the slots were renamed, so
+   each file now names the other arm. In every config you calibrated (`config/two_arms/
+   calibration/`, your back-row copy):
+   `mv 2L.json x && mv 2R.json 2L.json && mv x 2R.json` (and the same for 1L/1R). The server
+   refuses a file measured on another robot, so a mistake here is caught, not flown.
+4. `robot/site.json` on the Dell: your `mounted` flags are per slot name — swap them too if
+   only one arm of a row was mounted. Row 3: `3L`/`3R` `mounted: true` when you run it, cores
+   20 and 21 must be isolated like 16–19 (README).
+5. `aris arms` (names and robots must match the table above), `aris park`, then the
+   calibration: `aris calibrate`, `aris touchoff`, `aris mark`, `aris crosses`.
+
 ## 2026-10-08, afternoon — an arm past a joint limit frees itself
 
 What changed: `aris park` failed on 2R with "joint 6 is -0.0469 rad from its limit". Now any

@@ -273,10 +273,15 @@ their first shared spot (with `--yaw` also at a row pair's second):
 3. "meet A": both arms active, each a `guide`. At the arms the person switches both to Desk's
    programming mode, brings the two pen tips together in the air, lets go, and switches both
    back to execution mode with FCI on. Each driver answers "check" with the joints at
-   standstill (the "registered" row) and brings its arm back to the hover. The driver's
+   standstill (the "registered" row); the phase has `contact` (the two arms may end tip to
+   tip: the phase-end check does not hold them to the arm-to-arm clearance) and a guide's end
+   is where the arm really stands (the executor's parked test uses it). The driver's
    `instruction` rows (`{event: "instruction", arm, text}`) are printed by `aris mark` and
    shown in the GUI's status line as they come;
-4. "park 2L after A", "park 2R after A": home, one arm at a time.
+4. once "meet A" has run, the way home is planned from where the arms REALLY stand (the
+   drivers leave them holding where the person let go when their glide back fails): retreats
+   first, then "park 2L after A", "park 2R after A", one arm at a time; then the next
+   meeting.
 
 At the end, every registered meeting at once to the graph solve,
 `aris.server.meetings.calibrate_from_meetings(config_dir, [(slot_a, q_a, slot_b, q_b, spot),
@@ -289,7 +294,7 @@ with a row pair sharing only one spot.
 
 **Retreat** (`retreat.py`). Every job that plans from where the arms stand (park, and through
 it mark and crosses; calibrate and touch-off) first moves apart any arm standing closer to
-another than the arm-to-arm clearance (an interrupted meeting), and any arm standing with a
+another than the arm-to-arm clearance (a meeting), and any arm standing with a
 joint closer to its limit than the gates' margin or past it by up to 0.1 rad (more: refused, a
 person must look): a phase "retreat <slot>", one arm at a time in rig order, with first the
 joint retreat (only the offending joints, straight in joint space, to the margin + 0.05 rad,
@@ -297,8 +302,17 @@ timed at the free speed) and then, if still too close to another arm, the up-and
 `retreat` motion: the tip 30 mm straight up, then horizontally
 straight away from the nearest other arm's axis until the bodies are the clearance + 20 mm
 apart (IK along the straight tip path, the hand kept, timed at the free speed), checked as a
-retreat (the distance to every other arm never decreases). A drawing is refused instead
-(`too_close`: "run `aris park` first").
+retreat (the distance to every other arm never decreases). Arms are tried in rig order, in
+passes: one whose retreat is refused is tried again after the others have moved. The
+up-and-away keeps every joint at least the gates' margin from its limit. A drawing is refused
+instead (`too_close`: "run `aris park` first").
+
+**Which robot a calibration belongs to** (`robots.py`). Calibration parts written by the plane
+job and the touch-off carry the slot's `robot` (the operator PC's name for it, else the site
+table's) when the calib writer takes it; a drawing, park or crosses job is refused
+(`wrong_robot`) while a part's `robot` differs from today's robot in its slot:
+"calibration/2L.json was measured on fr3-97, but 2L is fr3-71 today: recalibrate, or rename
+the files if the slots were renamed". Parts without `robot` are not judged.
 
 `aris crosses [slots | --group row2]` (`POST /crosses`, `crosses.py`) is the visual check
 afterwards: every arm parked, then one arm at a time each row's L slot draws a CROSS (two

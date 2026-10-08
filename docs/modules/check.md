@@ -90,7 +90,7 @@ are read on this parameter at 1 kHz.
 
 ## Before the next phase: `check_phase_end`
 
-`check_phase_end(config_dir, phase, q_by_slot, standing=None)` takes where every arm stands, by slot (active arms at the
+`check_phase_end(config_dir, phase, q_by_slot, standing=None, contact=())` takes where every arm stands, by slot (active arms at the
 end of their queues; a parked arm left out stands at its park configuration; an active arm left
 out fails). Everything stands still, so it checks one configuration per arm: every one of the 15
 pairs of arms against each other, whole bodies with their bases, at `arm_to_arm_m` (one row per
@@ -105,6 +105,13 @@ motion of the phase was checked against that pose. It still counts in all 15 pai
 phase moves cannot be standing. Measured: 2L's pen lifted (2L to park) with 2R's pen still on the
 paper passes with 2R standing; without `standing` it fails `arm 2R: paper (pen)`, and a phase
 that leaves the arm it moved at the paper fails `arm 2L: paper (pen)`.
+
+`contact` names slots that are meant to end touching each other (a pen-tip meeting whose lift
+failed leaves them tip to tip; the coordinator passes the active arms of a phase marked
+`contact`). A pair with both members in `contact` gets no arm-to-arm row, and the verdict notes
+it; every other pair and every other rule is as before. Measured: 2L and 2R with tools 44 mm
+apart pass with `contact=("2L", "2R")` and fail `arms 2L and 2R` (45.6 mm) without, or with
+only one of them in `contact`.
 
 ## How the motion between samples is covered
 
