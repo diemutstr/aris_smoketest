@@ -226,12 +226,17 @@ class Motion:
     # contact, where it reads its joints; finding none by the planned end, it may keep going
     # straight on for `extra_depth` before giving up.  The planned path is what is checked;
     # the extra depth is the declared uncertainty of the paper's height.
-    # guide (calibration marks): the arm stands at a hover near a mark; the driver hands it to
-    # the person (programming mode), who seats the pen tip on the mark and presses a pilot
-    # button; the driver takes it back and reads the joints standing still.  `traj` is the
-    # hover (one sample, where the arm is); `piece.line_id` names the mark; `tip_base` the
-    # mark's nominal position.  The registered joints come back as an event row.
-    kind: Literal["draw", "free", "lower", "lift", "touch", "guide"]
+    # guide (calibration): the arm stands at a hover above a meeting spot; the person puts the
+    # arms in programming mode, brings the two pen tips together and puts them back in
+    # execution mode; the driver reads the joints standing still, retreats and returns to
+    # the hover.  `traj` is the hover (one sample, where the arm is); `piece.line_id` names
+    # the spot; `tip_base` its nominal position.  The registered joints come back as a row.
+    # retreat: a short motion that only moves the arm AWAY from the other arms (straight up,
+    # then away from the nearest one) — flown from a pose that is already closer than the
+    # planners' arm-to-arm clearance allows (after a meeting that was interrupted).  The
+    # checker judges it by the distance to every other arm never decreasing, instead of the
+    # fixed clearance; everything else (paper, steel, fences, limits) applies as to a free move.
+    kind: Literal["draw", "free", "lower", "lift", "touch", "guide", "retreat"]
     traj: Trajectory
     piece: Piece | None = None         # draw motions: what is being drawn
     tip_base: np.ndarray | None = None # draw and touch motions: (N, 3) tips, same samples as traj
