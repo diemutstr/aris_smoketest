@@ -75,16 +75,5 @@
     "open_noop_m": 0.055,
     "min_move_m": 0.0005,
     "check_note": "open when wider than open_noop_m is a no-op; after every command the width is read back, and jaws that moved less than min_move_m fail (libfranka reports success for a grasp that moved nothing)"
-  },
-  "guide": {
-    "source": "the mark's hand-guided touch without Desk (decided 2026-10-07 after three days of Desk token failures): the trajectory controller is deactivated at the hover, the person guides with the pilot's enabling button",
-    "settle_s": 2.0,
-    "still_rad": 0.002,
-    "skip_rad": 0.02,
-    "moved_rad": 0.05,
-    "timeout_s": 180.0,
-    "lift_m": 0.03,
-    "lift_speed": 0.01,
-    "note": "registered: after at least one guiding episode, not guiding, every joint within still_rad over settle_s; an episode that moved less than skip_rad means skip; moved_rad is the fallback without a robot mode; timeout_s without any episode fails the motion"
   }
 }

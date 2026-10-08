@@ -453,3 +453,21 @@ def test_a_refused_job_is_told_on_the_job_before_serve_moves_on(tmp_path):
     assert seen and seen[0] == job_rows                 # on the job before serve moved on
     refused = next(r for r in app.state.rows if r["event"] == "run refused")
     assert refused["on_job"] is True
+
+
+def test_where_rows_keep_flowing_while_a_job_runs(tmp_path):
+    """The positions come from the arms, not from a job: a busy serve still says where."""
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    arm = _Faulty(np.zeros(7) + 0.3, fault="")
+    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": arm}, tmp_path / "log",
+                  rows=rows, idle_s=0.05)
+    op.busy.set()                                        # a job is running
+    import threading as th
+    t = th.Thread(target=op._idle, daemon=True)
+    t.start()
+    assert _wait_for(lambda: sum(r["event"] == "where" for r in said) >= 3, 5.0)
+    op.quit.set()
+    t.join(timeout=2)
+    assert all(r["where"]["2L"] == pytest.approx([0.3] * 7) for r in said if r["event"] == "where")

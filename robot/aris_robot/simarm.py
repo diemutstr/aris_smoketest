@@ -72,9 +72,3 @@ class SimTouchArm(SimArm):
         return Result.ok(r.q_contact) if r.done else Result.failed(r.why, pos.q.copy())
 
 
-    def guide(self, motion) -> Result:
-        """A simulated person seats the pen at once, where the arm hovers: registered."""
-        with self._lock:
-            if self._fault or self._stopped:
-                return Result.failed("arm will not move; recover first", self._q.copy())
-            return Result(True, "check", self._q.copy())

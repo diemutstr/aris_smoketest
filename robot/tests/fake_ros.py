@@ -49,7 +49,6 @@ class FakeArmNode:
         self.stalled_at = None
         self._lock = threading.Lock()
         self.goals, self.collision_calls, self.recovery_steps, self.switches = [], [], [], []
-        self.on_switch = None                 # a test's hook: called after every switch
 
     def joints(self):
         with self._lock:
@@ -75,8 +74,6 @@ class FakeArmNode:
             self.switches.append((list(activate), list(deactivate)))
             self.active -= set(deactivate)
             self.active |= set(activate)
-        if self.on_switch is not None:
-            self.on_switch(activate, deactivate)
         return ""
 
     @property

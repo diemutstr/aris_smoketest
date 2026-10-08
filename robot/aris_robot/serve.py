@@ -9,7 +9,7 @@ Started once, at boot (robot/aris-robot.service), and never touched again.  It
     recover an arm, report every arm;
   - fetches the calibration files from the server into its config before every job, so both
     machines hold the same ones (the server owns them);
-  - reports where the arms stand every `idle_s` while no job runs (a "where" row);
+  - reports where the arms stand every `idle_s`, while a job runs too (a "where" row);
   - says everything as rows to the server (`POST /operator/rows`) and to its log directory
     (rows.jsonl and serve.log); it needs no terminal.
 
@@ -374,12 +374,11 @@ class Operator:
 
     def _idle(self) -> None:
         while not self.quit.wait(self.idle_s):
+            # where the arms stand, read from the arms (not from a job): also while one runs
+            self.rows.say("where", **self.where_fields())
             if not self.busy.is_set():
-                self.rows.say("where", **self.where_fields())
                 self._auto_recover()            # first: a link drop recovers by itself
                 self._restart_stale()           # second: a stack that does not read restarts
-            else:
-                self.rows.flush()
 
     def _restart_stale(self) -> None:
         """Restart the stack of every arm whose joint states have not been fresh for

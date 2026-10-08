@@ -313,7 +313,7 @@ def test_a_job_raises_the_thresholds_and_restores_them(rig, tmp_path, tracking):
 def test_the_header_sets_the_start_tolerance(rig, tmp_path):
     server_dir = tmp_path / "server"
     server_dir.mkdir()
-    header = dict(_header(rig), kind="mark", execution=dict(start_tolerance_rad=0.04))
+    header = dict(_header(rig), execution=dict(start_tolerance_rad=0.04))
     job = Job.create(server_dir / "mk", header)
     app = create_app(server_dir)
     arm = ModeRecording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
@@ -321,7 +321,7 @@ def test_the_header_sets_the_start_tolerance(rig, tmp_path):
         _writer(rig, job, ("2L",), _motions(rig, "2L"), pause=0.0).join()
         res = run_job(Remote(srv.url), "mk", rig, CONFIG, tmp_path / "robot", {"2L": arm})
     assert res.status == "done", res.why
-    assert arm.collision == ["job", "normal"]        # a mark job too: the stack stays up
+    assert arm.collision == ["job", "normal"]
     assert app.state.received["mk"][0]["start_tolerance"] == 0.04
 
 
@@ -392,4 +392,15 @@ def test_a_job_planned_by_other_code_is_refused_before_anything_moves(rig, tmp_p
         assert res.reason == "wrong_code" and "planned by unknown" in res.detail
         # the same code passes this check (the job then waits for its phases: stopped here)
         assert describe(mine) == "515bbad+local changes"
+    assert arm.calls == []
+
+
+def test_a_mark_job_is_refused_before_anything_moves(rig, tmp_path):
+    server_dir = tmp_path / "server"
+    server_dir.mkdir()
+    Job.create(server_dir / "mk", dict(_header(rig), kind="mark"))
+    arm = Recording(SimArm("2L", rig.park_q("2L"), speed=math.inf))
+    with Served(create_app(server_dir)) as srv:
+        res = run_job(Remote(srv.url), "mk", rig, CONFIG, tmp_path / "w", {"2L": arm})
+    assert isinstance(res, Refusal) and res.detail == "hand-guiding is not available on this rig"
     assert arm.calls == []

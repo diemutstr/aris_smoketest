@@ -52,7 +52,6 @@ class Site:
     touch: dict              # the touch (touch.TouchSettings.from_site)
     arms: tuple[SiteArm, ...]
     collision: dict = field(default_factory=dict)   # "job" and "normal" thresholds
-    guide: dict = field(default_factory=dict)       # the mark's hand-guided touch
     execution: dict = field(default_factory=dict)   # rest_qd, settle_s, auto_recover
     gripper: dict = field(default_factory=dict)     # the gripper's parameters (gripper.py)
     hardware_component: str = "FrankaHardwareInterface"
@@ -107,7 +106,7 @@ def load(path) -> Site:
     return Site(path, table_path, str(d["server_url"]).rstrip("/"),
                 str(ros.get("joint_prefix", "fr3")), str(ros.get("rmw", "rmw_fastrtps_cpp")),
                 dict(d.get("touch", {})), tuple(arms),
-                dict(d.get("collision", {})), dict(d.get("guide", {})),
+                dict(d.get("collision", {})),
                 dict(d.get("execution", {})), dict(d.get("gripper", {})),
                 str(ros.get("hardware_component", "FrankaHardwareInterface")))
 

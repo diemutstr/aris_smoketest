@@ -234,6 +234,8 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
         return Refusal("wrong_code", f"the job was planned by {describe(header.get('code'))}, "
                                      f"this PC runs {describe(mine)}: update both machines to "
                                      f"the same commit")
+    if header.get("kind") == "mark":            # its touches are hand-guided
+        return Refusal("no_hand_guiding", "hand-guiding is not available on this rig")
     if header.get("kind") == "grip":            # no plan, no motion, no thresholds
         return run_grip(remote, job_id, header, drivers, progress)
     why = check_header(header, rig)

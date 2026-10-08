@@ -94,35 +94,20 @@ at boot (`robot/aris-robot.service`, restart always) and:
   into its config before every job, and removes local files the server does not have. The
   drivers take the new pen and paper. The job's digests then agree, unless rig.json itself
   differs (another commit), which is still refused.
-- **Says where the arms are.** A "where" row every 10 s while idle, besides the rows of every
-  run (above).
+- **Says where the arms are.** A "where" row every 10 s, read from the arms, also while a job
+  runs, besides the rows of every run (above).
 - **Needs no terminal.** Everything goes to the server as rows (`POST /operator/rows`) and to
   `out/operator/rows.jsonl` and `serve.log`. A command that fails is a row; the process goes
   on.
 
-## The mark calibration: the hand-guided touch (`RosArm.guide`)
+## The mark calibration
 
-At the hover the trajectory controller is deactivated. The hardware keeps reading and the
-broadcasters keep publishing, so the person can guide the arm with the pilot's enabling
-button. The row is "guide: your turn on 2L". A `GuideWatch` reads the robot mode and the
-joints:
-- **Episode:** `robot_mode` == 3 (Guiding), from the field `robot_mode` of
-  `franka_msgs/FrankaRobotState` on `/arm_<slot>/franka_robot_state_broadcaster/robot_state`.
-  The joints come from `/arm_<slot>/franka/joint_states`.
-- **Sample:** after at least one episode, not guiding, every joint within 0.002 rad over
-  2 s. The result is why "check", or "circle" when that last episode moved less than 0.02 rad
-  (a skip). A new pinch restarts the clock. These are the answers the pilot buttons used to
-  give, so the executor and the server are unchanged.
-- **Timeout:** no episode within 180 s fails the motion.
-- **No robot mode** (fake hardware): an episode is the joints moving more than 0.05 rad from
-  the hover.
-
-Then the controller is activated again (if that fails, the recover sequence runs). The pen
-goes straight up 3 cm and straight back to the hover, so the queue's next motion starts where
-it was planned.
+Not available: on these FR3s the pilot's enabling buttons release the arm only in Desk's
+programming mode, not under FCI with the controller off (site, 2026-10-08). A job of kind
+"mark" is refused before anything moves: "hand-guiding is not available on this rig".
 
 The Desk/panda-py calibration driver was removed on 2026-10-07 after three days of token
-failures; it lives at 7d93a14.
+failures; it lives at 7d93a14. Hand-guided registration lives at b26aecd.
 
 **From the arms (2026-10-06).**
 - **No zeros.** An arm without a reading (stack down, stale joints) is `"q": null` with a
@@ -225,10 +210,6 @@ paper stands in for the force estimate.
   - thresholds the robot will not take are noted in the first row, and the job runs;
   - the first row carries the pen with its press and the robots;
   - refused before anything moves: a mode other than position, and a robot mismatch.
-- **Guide** (a fake person on the fake ROS node): it hands over, registers after a guiding
-  episode and 2 s still, takes the arm back, flies the lift and the next motion. A second
-  pinch restarts the clock; a brief pinch is a skip; nobody guiding fails after the timeout;
-  without a robot mode the joints tell.
 - **The pen** of the header is recorded in the first row, or the rig file's when the header
   has none, and the row says which.
 - **serve.** Against the stand-in server: report, two runs (a drawing-like job and a

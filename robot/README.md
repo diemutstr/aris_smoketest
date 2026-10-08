@@ -148,7 +148,7 @@ What it does, on its own:
   person has looked (never in user stop or guiding); "report" reports every arm.
 - before each job, fetches the calibration files from the server into `config/calibration/`
   (the server owns them; a local file the server does not have is removed).
-- every 10 s while no job runs, reports where every arm stands.
+- every 10 s, also while a job runs, reports where every arm stands.
 - says everything as rows to the server and to `out/operator/rows.jsonl`; its own log is
   `out/operator/serve.log`. It needs no terminal.
 
@@ -198,25 +198,9 @@ an emergency on this PC, `aris-robot grip 2L close` does the same with the stack
 
 ## 6. The mark calibration
 
-The mark calibration (`aris mark` on the planning PC, DESIGN 6) has a person seat the pen on
-taped spots. It runs on each arm's normal stack, with nothing to install and no Desk (decided
-2026-10-07). At each spot the arm flies to its hover. serve then switches its trajectory
-controller off: the hardware keeps reading, and the arm is idle under FCI. The row says
-"guide: your turn on 2L".
-
-**What the person does**: nothing at a computer.
-1. Pinch the enabling buttons, seat the pen tip on the spot, let go.
-2. When the arm has stood still for 2 s after the pinch, its joints are the sample.
-- To redo: pinch again before the 2 s are up; the clock restarts.
-- To skip the spot: pinch briefly without moving anything (less than 0.02 rad).
-- Nobody guiding within 180 s fails that touch.
-
-After the sample the trajectory controller holds the arm again. It lifts the pen straight
-up 3 cm and goes back to its hover. The settings are site.json `guide`.
-
-The robot mode (Guiding while the buttons are pinched) is read from the robot state topic.
-On fake hardware there is no robot mode, and the joints tell instead: moved more than
-0.05 rad from the hover, then still for 2 s.
+Not available on this rig: the FR3s release the arm to the enabling buttons only in Desk's
+programming mode. A mark job is refused before anything moves ("hand-guiding is not
+available on this rig").
 
 **Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
 it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,
