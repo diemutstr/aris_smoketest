@@ -346,6 +346,6 @@ def test_a_drag_only_pen_gives_every_piece_of_the_word_a_direction(tmp_path_fact
     plain = plan_detailed(arm, lines, obs, RIG.park_q("2R"), rules, None, 8, cache)
     ms, left, st = plan_detailed(arm, lines, obs, RIG.park_q("2R"),
                                  replace(rules, drag_only=True), None, 8, cache)
-    assert st.tour.pieces == plain[2].tour.pieces and len(left) == len(plain[1])
+    assert st.tour.pieces == plain[2].tour.pieces + st.tour.drag_splits and len(left) == len(plain[1])
     assert sum(st.tour.drag_drawn.values()) == st.tour.pieces
     assert len(st.tour.drag_notes) == st.tour.drag_drawn.get("none", 0) <= 3

@@ -109,8 +109,27 @@ Measured on arm 2L (rig of 2026-10-06): the word, 50 alternatives: 36 pulled one
 over 74 %, word:9 and word:10 over 50 %); time on the rig 308.8 s against 313.9 without the flag.
 100 random lines, 360 alternatives: 237 one way, 123 neither; of 103 pieces drawn, 60 pulled
 throughout and 43 noted (pulled over 55 to 99 %: the lean turns with the hand's spin along a
-line); time on the rig 3 979 s against 3 945 (+0.9 %), one more piece left over. Splitting a
-piece where the pull changes side is not done.
+line); time on the rig 3 979 s against 3 945 (+0.9 %), one more piece left over. (Those numbers
+are from before the cutting below.)
+
+**Cutting where the pull changes side (2026-10-08).** A bent line drawn in one go is pulled on
+one leg and pushed on the other (a V across the lean: 50 % pushed). With `rules.drag_only` each
+piece is cut where the sign of the drawing direction against the lean changes: at a corner, or
+along a curve where the tangent crosses the lean's perpendicular (`drag.runs`, `drag.split_bunch`).
+Each part becomes a piece of its own (own set-down, drawing, lift-off), drawn in its pulled
+direction. The cuts are those of the alternative pushed least once cut (then the fewest parts,
+then the first); every alternative is cut at the same arc lengths (an alternative with no sample
+within 1.5 mm of a cut is dropped). A part shorter than `rules.min_piece` joins its longer
+neighbour and is drawn in that neighbour's direction; its pushed length is reported in
+`drag_notes`, now `(piece, share pulled, metres pushed)`. `TourReport.drag_splits` counts the
+pieces added. A piece pulled one way throughout is not cut (straight lines: unchanged). Within a
+piece, an alternative pulled throughout is tried first; one not pulled throughout waits until the
+pulled ones are dead (no lift-off, no drawing), so it is a fallback, not a choice of the price.
+
+Measured arm 2R (tests): the V (two 0.172 m legs) in one go 0.172 m pushed of 0.344, cut 2 pieces,
+2 set-downs, 0 pushed; the circle (r 8 cm) in one go 0.222 m pushed of 0.503, cut 3 arcs, 0.0015 m
+pushed (the timed motion around the cuts, where the tangent is across the lean); the word 15 pieces
+instead of 13 (2 cuts), none noted (was 3), 246.7 s on the rig against 235.4 s without the flag.
 
 ## The drawing motion
 
@@ -257,4 +276,5 @@ arm 2L.
 
 Tests: `tests/test_sequencer.py` (the price, the lift-off going straight up and the set-down
 being the same backwards, one piece being one drawing motion, an empty drawing, a start nothing can leave, a
-piece under a box that is left over while the rest is drawn).
+piece under a box that is left over while the rest is drawn; drag-only: a V cut at its corner,
+a straight line left whole, a circle drawn in its pulled arcs, `min_piece` kept).

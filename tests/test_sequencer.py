@@ -307,3 +307,104 @@ def test_a_drag_only_pen_flags_a_circle():
     # flagged, or the local planner split the circle into pieces each pulled throughout
     assert flagged or len(drawn) > 1
     assert rep.drag_drawn.get("none", 0) == len(flagged)
+
+
+# --------------------------------------------------------------------------- drag-only: cut where the pull changes side
+
+
+def _table_line(lid, xy):
+    xy = np.asarray(xy, float)
+    return RIG.to_base("2R", Line(lid, np.column_stack([xy, np.zeros(len(xy))]), "table"))
+
+
+@pytest.fixture(scope="module")
+def v_and_circle():
+    """A V whose legs cross the lean (pen leaning along table y under arm 2R: one leg is pulled,
+    the other pushed whichever way it is drawn in one go), and a circle."""
+    arm, obs, rules, _ = lc.problem(RIG, "2R")
+    x, y = RIG.T_table_base("2R")[:2, 3]
+    v = _table_line("V", [[x + 0.25, y - 0.08], [x + 0.35, y + 0.06], [x + 0.45, y - 0.08]])
+    t = np.linspace(0, 2 * np.pi, 120)
+    c = _table_line("circle", np.column_stack([x + 0.35 + 0.08 * np.cos(t), y + 0.08 * np.sin(t)]))
+    bv, lv = local.plan(arm, [v], obs, rules)
+    bc, lcirc = local.plan(arm, [c], obs, rules)
+    assert len(bv) == 1 and len(bc) == 1 and not lv and not lcirc
+    return arm, obs, rules, bv, bc
+
+
+def _pushed(arm, paper, ms):
+    """Metres of the drawing motions on which the pen is pushed, and the length drawn."""
+    from aris.sequencer.drag import pulled_shares
+    from aris.types import DrawPlan
+    pushed = total = 0.0
+    for m in ms:
+        if m.kind != "draw":
+            continue
+        fake = DrawPlan(m.piece, m.traj.q, np.zeros(len(m.traj.q)), m.tip_base, 0.0, 0.0)
+        ln = float(np.linalg.norm(np.diff(m.tip_base, axis=0), axis=1).sum())
+        pushed += (1.0 - pulled_shares(arm, fake, paper.normal)[0]) * ln
+        total += ln
+    return pushed, total
+
+
+def test_drag_only_cuts_a_v_at_its_corner(v_and_circle):
+    from dataclasses import replace
+    arm, obs, rules, bv, _ = v_and_circle
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    park = RIG.park_q("2R")
+    one, _, _ = tour_all(arm, bv, park, obs, replace(rules, drag_only=True, min_piece=0.25))
+    p1, L = _pushed(arm, paper, one)
+    assert p1 > 0.4 * L                                          # in one go: one leg pushed
+    ms, left, rep = tour_all(arm, bv, park, obs, replace(rules, drag_only=True))
+    assert not left and rep.pieces == 2 and rep.drag_splits == 1 and rep.drag_notes == []
+    assert sum(m.kind == "lower" for m in ms) == 2
+    p2, L2 = _pushed(arm, paper, ms)
+    assert p2 < 1e-3 and abs(L2 - L) < 2e-3
+    a, b = sorted((m.piece for m in ms if m.kind == "draw"), key=lambda x: x.s0)
+    assert a.s0 == bv[0].piece.s0 and b.s1 == bv[0].piece.s1 and abs(a.s1 - b.s0) < 1e-9
+    assert_tour(arm, obs, replace(rules, drag_only=True), ms, park, park)
+
+
+def test_drag_only_leaves_a_straight_line_whole(problem):
+    from aris.sequencer.drag import split_bunch
+    arm, obs, rules, bunches = problem
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    for b in bunches:
+        assert split_bunch(arm, b, paper.normal, rules.min_piece) == [b]
+
+
+def test_drag_only_draws_a_circle_in_its_pulled_arcs(v_and_circle):
+    from dataclasses import replace
+    arm, obs, rules, _, bc = v_and_circle
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    ms, left, rep = tour_all(arm, bc, RIG.park_q("2R"), obs, replace(rules, drag_only=True))
+    draws = [m for m in ms if m.kind == "draw"]
+    assert not left and len(draws) > 1 and rep.drag_splits == len(draws) - 1
+    assert sum(m.kind == "lower" for m in ms) == len(draws)
+    assert all(m.piece.s1 - m.piece.s0 >= rules.min_piece for m in draws)
+    pushed, total = _pushed(arm, paper, ms)
+    assert pushed < 0.005 * total, (pushed, total)               # was 0.22 m of 0.50 in one go
+    assert rep.drag_notes == []
+
+
+def test_drag_only_cuts_keep_the_shortest_piece(v_and_circle):
+    from aris.sequencer.drag import runs, split_bunch
+    arm, obs, rules, bv, bc = v_and_circle
+    paper = [p for p in obs.planes if p.kind == "paper"][0]
+    for bunch in (bv[0], bc[0]):
+        for mp in (0.01, 0.05, 0.12):
+            for plan in bunch.plans:
+                rr = runs(arm, plan, paper.normal, mp)
+                ln = np.linalg.norm(np.diff(plan.tip_base, axis=0), axis=1)
+                assert len(rr) == 1 or min(ln[a:b].sum() for a, b, _, _ in rr) >= mp
+                assert [r[0] for r in rr[1:]] == [r[1] for r in rr[:-1]]   # they join up
+            parts = split_bunch(arm, bunch, paper.normal, mp)
+            assert parts[0].piece.s0 == bunch.piece.s0 and parts[-1].piece.s1 == bunch.piece.s1
+            assert all(len(p.plans) >= 1 for p in parts)
+    # legs of 0.172 m under a 0.25 m minimum: one piece, its pushed leg reported
+    from dataclasses import replace
+    ms, left, rep = tour_all(arm, bv, RIG.park_q("2R"), obs,
+                             replace(rules, drag_only=True, min_piece=0.25))
+    assert rep.pieces == 1 and rep.drag_splits == 0 and len(rep.drag_notes) == 1
+    piece, share, pushed = rep.drag_notes[0]
+    assert piece == bv[0].piece and abs(share - 0.5) < 0.05 and abs(pushed - 0.172) < 0.01

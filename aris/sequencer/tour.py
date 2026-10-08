@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from aris import free
-from aris.sequencer.drag import pulled_shares
+from aris.sequencer.drag import pulled_shares, split_bunch
 from aris.sequencer.draw import draw_motions, oriented
 from aris.sequencer.guard import Guard
 from aris.sequencer.lift import end_lift, trim
@@ -62,8 +62,10 @@ class TourReport:
     free_length: float = 0.0       # rad, joint-space length of the moves between lift-offs
     free_calls: int = 0            # free-space planner calls
     cut: float = 0.0               # m cut off pieces because rule 1 failed at an end (rule 2)
-    drag_notes: list = field(default_factory=list)  # drag-only pens: (piece, share pulled) of
-                                   # pieces drawn though neither direction is pulled throughout
+    drag_notes: list = field(default_factory=list)  # drag-only pens: (piece, share pulled,
+                                   # metres pushed) of pieces drawn though neither direction is
+                                   # pulled throughout
+    drag_splits: int = 0           # drag-only: pieces added by cutting where the pull changes side
     drag_alternatives: dict = field(default_factory=dict)  # drag-only: alternatives whose
                                    # directions are "both" pulled, "one", "none" (wholly)
     drag_drawn: dict = field(default_factory=dict)  # the same, over the alternatives drawn
@@ -112,7 +114,7 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
     s = _State(arm, bunches, obstacles, rules, TourOptions(), intensity or {}, rep)
     q_cur = np.array(q_start, float)
     q_end = q_cur.copy() if q_end is None else np.array(q_end, float)
-    alive = list(range(len(bunches)))
+    alive = list(range(len(s.bunches)))
     leftovers: list[Leftover] = []
     more = iter(()) if batches is None else iter(batches)
 
@@ -161,7 +163,7 @@ def tour(arm, bunches: list[Bunch], q_start, obstacles: Obstacles, rules: DrawRu
             kind = s.drag_kind[(b, s.chosen_plan)]
             rep.drag_drawn[kind] = rep.drag_drawn.get(kind, 0) + 1
         if (b, s.chosen_plan) in s.drag_note:
-            rep.drag_notes.append((s.bunches[b].piece, s.drag_note[(b, s.chosen_plan)]))
+            rep.drag_notes.append((s.bunches[b].piece, *s.drag_note[(b, s.chosen_plan)]))
         rep.lifts += 1
         rep.move_time += float(move.traj.t[-1])
         rep.free_length += _length(move)
@@ -235,7 +237,10 @@ class _State:
             raise ValueError(f"the obstacles must hold exactly one paper plane, not {len(papers)}")
         self.paper: Plane = papers[0]
         self.chosen_plan = -1          # the alternative of the piece found last
-        self.drag_note: dict = {}      # (b, p) -> share pulled, where neither direction is pulled
+        self.drag_note: dict = {}      # (b, p) -> (share pulled, metres pushed), where neither
+                                       # direction is pulled throughout
+        self.fallback: set = set()     # (b, p) not pulled throughout, of a piece that has an
+                                       # alternative that is: tried only once those are dead
         self.drag_kind: dict = {}      # (b, p) -> "both", "one", "none" (drag-only pens)
         self.lifts: dict = {}          # (b, p, end 0/1) -> (Lift, cut) | str
         self.draws: dict = {}          # (b, p, backwards) -> [Motion] | str
@@ -246,6 +251,11 @@ class _State:
     def add(self, bunches) -> list[int]:
         """More bunches (a batch); -> their indices."""
         first = len(self.bunches)
+        if self.rules.drag_only:
+            cut = [split_bunch(self.arm, x, self.paper.normal, self.rules.min_piece)
+                   for x in bunches]
+            self.rep.drag_splits += sum(len(c) - 1 for c in cut)
+            bunches = [x for c in cut for x in c]
         self.bunches.extend(bunches)
         new = [(b, p, d) for b in range(first, len(self.bunches))
                for p in range(len(self.bunches[b].plans)) for d in (0, 1)]
@@ -256,6 +266,9 @@ class _State:
             for b in range(first, len(self.bunches)):
                 for p in range(len(self.bunches[b].plans)):
                     self._drag(b, p)
+                kinds = [self.drag_kind[(b, p)] for p in range(len(self.bunches[b].plans))]
+                if any(k != "none" for k in kinds):
+                    self.fallback |= {(b, p) for p, k in enumerate(kinds) if k == "none"}
         return list(range(first, len(self.bunches)))
 
     def _drag(self, b, p) -> None:
@@ -266,7 +279,8 @@ class _State:
         whole = 1.0 - 1e-9
         keep = [d for d, f in ((0, fwd), (1, back)) if f >= whole] or [0 if fwd >= back else 1]
         if max(fwd, back) < whole:
-            self.drag_note[(b, p)] = max(fwd, back)
+            length = float(np.linalg.norm(np.diff(plan.tip_base, axis=0), axis=1).sum())
+            self.drag_note[(b, p)] = (max(fwd, back), (1.0 - max(fwd, back)) * length)
         kind = "both" if len(keep) == 2 else ("one" if max(fwd, back) >= whole else "none")
         self.drag_kind[(b, p)] = kind
         self.rep.drag_alternatives[kind] = self.rep.drag_alternatives.get(kind, 0) + 1
@@ -280,7 +294,9 @@ class _State:
     def step(self, q_cur, alive):
         """-> (found or None, {bunch: [refusals]} of this step, [(bunch, why)] dead for good)."""
         live = set(alive)
-        idx = [i for i, c in enumerate(self.cands) if c[0] in live and c not in self.dead]
+        held = self._held(live)
+        idx = [i for i, c in enumerate(self.cands)
+               if c[0] in live and c not in self.dead and c[:2] not in held]
         cost = price(q_cur, self.entry[idx], self.rules, self.arm.limits.qd_max)
         refused: dict = {}
         tries = 0
@@ -302,6 +318,15 @@ class _State:
             return (b, move, entry, draw, exit_, cut_off), refused, \
                 self._dead_pieces(live, {b})
         return None, refused, self._dead_pieces(live, set(refused))
+
+    def _held(self, live) -> set:
+        """Drag-only: the alternatives not pulled throughout of the pieces that still have a live
+        candidate pulled throughout; they wait until those are dead."""
+        if not self.fallback:
+            return set()
+        pulled = {b for b, p, d in self.cands
+                  if b in live and (b, p) not in self.fallback and (b, p, d) not in self.dead}
+        return {bp for bp in self.fallback if bp[0] in pulled}
 
     def _dead_pieces(self, live, skip):
         """Pieces all of whose candidates are dead for good."""
