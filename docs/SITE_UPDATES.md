@@ -23,6 +23,27 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, night — one server for rows 1 and 2 (`config/rows12`)
+
+`aris mark --group rows12` needs the four arms on ONE server. The config is `config/rows12`
+(1L, 1R, 2L, 2R; drawing area 1.56 × 2.25 m about (0, −0.63)). Run it instead of the two
+row servers (stop those first — one runner per arm, an arm can only be in one stack):
+
+On the Dell, a site file with the four slots mounted — copy `robot/site.json` to
+`robot/site_rows12.json` and set `"mounted": true` on 1L, 1R, 2L, 2R (cores 16–19 are already
+assigned), `server_url` to the laptop's port 8420 — then run the one runner with it:
+```
+sudo systemctl stop aris-robot      # or stop your two runners
+aris-robot --site robot/site_rows12.json serve --config config/rows12
+```
+(`--site` goes before `serve`; or put both in the systemd unit's `ExecStart`.)
+
+On the laptop, one server: `aris serve --config config/rows12 --driver robot --host 0.0.0.0
+--site site/aris_2026-10.json`. Then `aris arms` must list all four with joints; copy the four
+calibration files (`1L.json 1R.json 2L.json 2R.json`, already swapped as below) into
+`config/rows12/calibration/`; `aris park`; `aris mark --group rows12` (four meetings, pair by
+pair: 1L–1R, 1L–2L, 1R–2R, 2L–2R); `aris crosses --group rows12`.
+
 ## 2026-10-08, evening — touches fixed, the meeting's point is kept, L/R as seen from the desk, row 3
 
 What changed:

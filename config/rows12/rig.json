@@ -1,0 +1,725 @@
+{
+ "about": {
+  "derived_from": "config/rig.json",
+  "source_digest": "c0d120cfee29bb61c5f8a1de",
+  "mounted": [
+   "1L",
+   "1R",
+   "2L",
+   "2R"
+  ],
+  "note": "Written by tools/mounted_rig.py: the rig with only these slots mounted. Do not edit by hand; change config/rig.json and run the tool again."
+ },
+ "table": {
+  "source": "scripts/draw_axes_frame.py (Pete's tape, 2026-09-16: 416.6 cm long)",
+  "size_x_m": 2.188,
+  "size_y_m": 4.1656,
+  "paper_surface_z_m": 0.0
+ },
+ "canvas": {
+  "source": "old layout.SHEET_FINAL6 = (1.8034, 3.63064), centred on the table. The task sheet rounds the length to 3.6306.",
+  "size_x_m": 1.8034,
+  "size_y_m": 3.63064,
+  "centre_xy_m": [
+   0.0,
+   0.0
+  ],
+  "drawing_area_m": [
+   1.56,
+   2.25
+  ],
+  "drawing_area_centre_m": [
+   0.0,
+   -0.63
+  ],
+  "drawing_area_centre_note": "the centre of the drawing area in the table frame (x, y); [0, 0] when absent. The system planner and the drawing server place the area here (2026-10-02).",
+  "drawing_area_note": "Chosen for the mounted arms by hand (a first guess), around drawing_area_centre_m; it must lie inside the area the drawable maps give, which the server checks when it starts (aris/server/station.py)."
+ },
+ "marks": {
+  "source": "the meeting spots of DESIGN section 6 (2026-10-08: the two arms of a pair meet pen tip to pen tip in the air above the spot; nothing is drawn on the table): ten spots, each shared by exactly two neighbouring slots; the row pairs share two spots on the centre line, the column pairs one at the seam between the rows, on their side (L = table +x, Diemut's left).",
+  "frame": "the reference slot (reference_slot) is held exactly at its nominal pose; every other solved slot is placed relative to it. Decided 2026-10-08 (before: a rigid fit of the solved positions onto the nominal ones).",
+  "reference_slot": "2L",
+  "reference_slot_note": "the meetings calibration holds this slot exactly at its nominal pose (the gauge); decided 2026-10-08",
+  "list": [
+   {
+    "name": "A",
+    "xy_m": [
+     0.0,
+     -0.4
+    ],
+    "shared_by": [
+     "2L",
+     "2R"
+    ]
+   },
+   {
+    "name": "B",
+    "xy_m": [
+     0.0,
+     0.4
+    ],
+    "shared_by": [
+     "2L",
+     "2R"
+    ]
+   },
+   {
+    "name": "R1a",
+    "xy_m": [
+     0.0,
+     -1.61
+    ],
+    "shared_by": [
+     "1L",
+     "1R"
+    ]
+   },
+   {
+    "name": "R1b",
+    "xy_m": [
+     0.0,
+     -0.81
+    ],
+    "shared_by": [
+     "1L",
+     "1R"
+    ]
+   },
+   {
+    "name": "S12L",
+    "xy_m": [
+     0.3,
+     -0.605
+    ],
+    "shared_by": [
+     "1L",
+     "2L"
+    ]
+   },
+   {
+    "name": "S12R",
+    "xy_m": [
+     -0.3,
+     -0.605
+    ],
+    "shared_by": [
+     "1R",
+     "2R"
+    ]
+   }
+  ],
+  "groups": {
+   "row2": [
+    "2L",
+    "2R"
+   ],
+   "rows12": [
+    "1L",
+    "1R",
+    "2L",
+    "2R"
+   ]
+  },
+  "groups_note": "the subsets `aris mark --group` takes (DESIGN section 6, 'Subsets')"
+ },
+ "slots": {
+  "about": "An arm is named by its SLOT on the frame, not by the robot that hangs there (decided 2026-10-02): rows 1, 2, 3 along table y (-1.21, 0, +1.21 m; row 3 at Diemut's desk), and L/R AS SEEN FROM DIEMUT'S DESK (decided 2026-10-08 on her request): L = her left = table x = +0.305, R = her right = table x = -0.305. (Until 2026-10-08 L meant table -x, the arms' own left; every file and figure was renamed that day.) Which robot hangs in which slot is in site/ (site/aris_2026-10.json) and nowhere in the planning code.",
+  "hanger_note": "per slot, default true: whether hanger steel (struts, plate, clamp) is there today. Since 2026-10-08 all six slots hang inverted (row 3 was a floor arm and an empty slot until then). It counts only for a slot that is not mounted: a mounted slot always has its hanger.",
+  "source": "axis positions: scripts/draw_axes_frame.py, x = +-0.305 exactly; y = the old model's rows at 1/6, 1/2 and 5/6 of the 3.63064 canvas, i.e. +-1.2102133 (the drawing rounds to 1210.2 mm). Height: underside of the mounting plate 0.970 above the paper (old rig at h = 0.970). Orientation: the old model hangs every arm with R = Ry(180 deg), yaw 0, so the arm's base +x points to table -x and its base z points down. Park configurations: old aris_sixarm/layout.py Q_PARK_PROPOSED (re-derived 2026-09-10 at h = 0.970 and, for slot 2L (then arm 31), 2026-09-14 against the seam bars, at the lateral holder tool).",
+  "list": [
+   {
+    "slot": "1L",
+    "axis_xy_m": [
+     0.305,
+     -1.2102133333333334
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     -0.723,
+     -1.0365,
+     -1.5768,
+     -2.1834,
+     2.0188,
+     1.2693,
+     -2.175
+    ],
+    "mounted": true
+   },
+   {
+    "slot": "1R",
+    "axis_xy_m": [
+     -0.305,
+     -1.2102133333333334
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     -0.6162,
+     1.0125,
+     1.3275,
+     -1.7335,
+     2.1074,
+     1.2793,
+     2.175
+    ],
+    "mounted": true
+   },
+   {
+    "slot": "2L",
+    "axis_xy_m": [
+     0.305,
+     0.0
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     0.9167,
+     -1.1814,
+     1.2489,
+     -2.2444,
+     -2.0707,
+     1.5627,
+     2.175
+    ],
+    "mounted": true
+   },
+   {
+    "slot": "2R",
+    "axis_xy_m": [
+     -0.305,
+     0.0
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     0.3615,
+     1.0868,
+     -1.1631,
+     -1.5285,
+     -2.1041,
+     1.2335,
+     -1.3841
+    ],
+    "mounted": true
+   },
+   {
+    "slot": "3L",
+    "axis_xy_m": [
+     0.305,
+     1.2102133333333334
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     0.0046,
+     -1.0778,
+     1.7029,
+     -1.8578,
+     -2.0201,
+     1.3231,
+     -0.5932
+    ],
+    "mounted": false
+   },
+   {
+    "slot": "3R",
+    "axis_xy_m": [
+     -0.305,
+     1.2102133333333334
+    ],
+    "base_z_m": 0.97,
+    "R_table_base": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      1.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    "park_q_rad": [
+     0.0003,
+     1.0443,
+     1.4169,
+     -1.8606,
+     2.0498,
+     1.2968,
+     2.175
+    ],
+    "mounted": false
+   }
+  ]
+ },
+ "rows_and_phases": {
+  "source": "docs/DESIGN.md section 3 (Pete, 2026-09-29): three rows of two arms; phase 1 leaders are the checkerboard 1R, 2L, 3R and phase 2 the other three (named after the 2026-10-08 L/R renaming; the physical pattern is unchanged)",
+  "rows": [
+   [
+    "1L",
+    "1R"
+   ],
+   [
+    "2L",
+    "2R"
+   ],
+   [
+    "3L",
+    "3R"
+   ]
+  ],
+  "leaders": {
+   "1": [
+    "1R",
+    "2L",
+    "3R"
+   ],
+   "2": [
+    "1L",
+    "2R",
+    "3L"
+   ]
+  },
+  "walls": {
+   "1": [
+    [
+     "1R",
+     "2L"
+    ],
+    [
+     "2L",
+     "3R"
+    ]
+   ],
+   "2": [
+    [
+     "1L",
+     "2R"
+    ],
+    [
+     "2R",
+     "3L"
+    ]
+   ]
+  },
+  "walls_note": "a wall only between leaders that can reach each other (the diagonal pairs, 1.355 apart); the two end leaders of a column are 2.42 apart and cannot"
+ },
+ "hanger": {
+  "source": "the steel each arm hangs from, placed relative to its own axis, the same for all six arms (one clocking: every plate sits 25.15 mm toward table -x of its axis since the frame was found turned 180 degrees against the sheet, see turned_note; the two columns are not mirrored). Pete, 2026-09-30: placed from the technical drawings, not from his tape. docs/drawings/plan_centre_datum.pdf, sheet 3 of 4 'PLAN, CENTRE DATUM, SIGNED' (2026-09-16), panel D 'STRUT FACE SCHEDULE' and panel B: left column (axis -305.00) strut faces -476.75..-400.55 and -159.15..-82.95, plate -392.76..-166.94; right column (axis +305.00) strut faces +133.25..+209.45 and +450.85..+527.05, plate +217.24..+443.06 (mm, table x). So: axis to outside face 171.75 on -x and 222.05 on +x, pair 393.8 outside to outside, 241.4 clear between. Struts 3 x 6 in, long side along y, centred on the row line.",
+  "strut_size_x_m": 0.0762,
+  "strut_size_y_m": 0.1524,
+  "axis_to_minus_x_outer_face_m": 0.22205,
+  "axis_to_plus_x_outer_face_m": 0.17175,
+  "turned_note": "the drawing's frame turned 180 degrees (site, 2026-10-06: confirmed by the artist with drawn crosses, and with the sheet's offsets 1L planned through its own inner strut). The slot positions are symmetric and do not change; the asymmetric hanger numbers turn: axis to outside face 222.05 mm on -x and 171.75 mm on +x (the sheet's 171.75 / 222.05 swapped), and the plate centre now sits 25.15 mm toward table -x of the J1 axis, i.e. the J1 axis is offset 25.15 mm toward table +x of the plate centre (on the sheet it was toward -x). BASE YAW KEPT (R_table_base unchanged): the site drew legible letters with it, which a 180-degree yaw error would have turned upside down; so with the turned hanger numbers the model's J1 axis sits 25 mm toward the base's BACK of the plate centre, the opposite of an FR3's footprint. The drawing itself flagged the plate-offset direction as an open item (sheet 3, panel C). Someone on site should look at which way the base connectors face; until then the mirrored steel and the kept yaw are what the hardware confirmed.",
+  "strut_bottom_z_m": 0.90502,
+  "strut_top_z_m": 1.62362,
+  "strut_source": "section and x positions: sheet 3 of 4, plan_centre_datum.pdf, panel D. Bottom: the old model (system_model POST_OVER) has the posts end 34.98 mm below the plate underside; nobody will measure it, so on Pete's instruction (2026-09-30) every strut is made 0.030 longer to be conservative: 64.98 mm below the plate underside (0.970 - 0.06498). Top: old system_model GRID_U, the runway underside 1.62362.",
+  "plate_size_x_m": 0.22582,
+  "plate_size_y_m": 0.19,
+  "plate_bottom_z_m": 0.97,
+  "plate_top_z_m": 0.9827,
+  "plate_centre_offset_x_m": -0.02515,
+  "plate_source": "size: old system_model PLATE (drawing down_plate 225.82 x 190 x 12.7 mm); its underside is the mount plane. Position: sheet 3 of 4, panel D, plate centre 25.15 mm from the axis (8.0 mm free to each strut), toward table -x because the frame is the sheet turned 180 degrees (see turned_note).",
+  "clamp_size_x_m": 0.226,
+  "clamp_size_y_m": 0.1524,
+  "clamp_bottom_z_m": 0.9827,
+  "clamp_top_z_m": 1.0784,
+  "clamp_source": "old system_model CLAMP (drawing down_clamps 226 x 152.4 x 95.7 mm), sitting on the plate, same centre as the plate. Envelope only; no part number in the drawing.",
+  "exempt_links": [
+   "link1"
+  ],
+  "exempt_links_note": "for the arm that hangs from this hanger only (a neighbour's hanger exempts nothing): its link 1 is not checked against these boxes per pose. Link 1 turns about the base axis only, 50.8 to 62.4 mm from the strut ends, so its clearance to its own hanger is a fact about the rig; tests/test_rig.py checks it once over all of joint 1 at clearances.link1_to_own_mount_m. Orchestrator, 2026-09-30. With the struts at the drawing's position link 1 keeps even the 0.050 steel clearance, by 0.8 mm, but not 0.050 + the 0.003 planning allowance (short on a third of the joint 1 range), which is why the exemption is kept.",
+  "own_hardware_note": "an arm's own struts, plate and clamp are obstacles for it like any other steel. Its base (the kernel's link0 capsules, marked fixed) sits among them and is not checked against obstacles, because it cannot move."
+ },
+ "steel": {
+  "source": "the cage, in the table frame, as axis-aligned boxes (lo_m and hi_m corners). From old aris_sixarm/system_model.py cage_bodies() and mounts.SEAM_BARS_MM, shifted into the table frame. Gussets are left out: they are ASSUMED in the old model, placed on the old post positions, and sit 1.50 m and more above the paper.",
+  "boxes": [
+   {
+    "name": "runway_row0",
+    "lo_m": [
+     -1.016,
+     -1.2864133333333334,
+     1.62362
+    ],
+    "hi_m": [
+     1.016,
+     -1.1340133333333333,
+     1.69982
+    ],
+    "source": "old system_model runway_r0_S + runway_r0_N (drawing: central double beam, 2 x 76.2 mm, on the row line), merged into one box"
+   },
+   {
+    "name": "runway_row1",
+    "lo_m": [
+     -1.016,
+     -0.0762,
+     1.62362
+    ],
+    "hi_m": [
+     1.016,
+     0.0762,
+     1.69982
+    ],
+    "source": "old system_model runway_r1_S + runway_r1_N (the two butted half-cage end rails), merged into one box"
+   },
+   {
+    "name": "runway_row2",
+    "lo_m": [
+     -1.016,
+     1.1340133333333333,
+     1.62362
+    ],
+    "hi_m": [
+     1.016,
+     1.2864133333333334,
+     1.69982
+    ],
+    "source": "old system_model runway_r2_S + runway_r2_N, merged into one box"
+   },
+   {
+    "name": "seam_bar_W",
+    "lo_m": [
+     -1.0922,
+     -0.0762,
+     -0.02738
+    ],
+    "hi_m": [
+     -1.016,
+     0.0762,
+     1.62362
+    ],
+    "source": "old mounts.SEAM_BARS_MM: REPRESENTATIVE seam support, 'a bar as wide as two of the corner struts' (Pete, 2026-09-14), tabletop to runway underside; not measured"
+   },
+   {
+    "name": "seam_bar_E",
+    "lo_m": [
+     1.016,
+     -0.0762,
+     -0.02738
+    ],
+    "hi_m": [
+     1.0922,
+     0.0762,
+     1.62362
+    ],
+    "source": "old mounts.SEAM_BARS_MM, as seam_bar_W; not measured"
+   },
+   {
+    "name": "side_rail_W",
+    "lo_m": [
+     -1.0922,
+     -2.00582,
+     1.62362
+    ],
+    "hi_m": [
+     -1.016,
+     2.00582,
+     1.69982
+    ],
+    "source": "old system_model frame_side_W (drawing: 3 in perimeter rail at the grid plane)"
+   },
+   {
+    "name": "side_rail_E",
+    "lo_m": [
+     1.016,
+     -2.00582,
+     1.62362
+    ],
+    "hi_m": [
+     1.0922,
+     2.00582,
+     1.69982
+    ],
+    "source": "old system_model frame_side_E"
+   },
+   {
+    "name": "end_rail_S",
+    "lo_m": [
+     -1.016,
+     -2.00582,
+     1.62362
+    ],
+    "hi_m": [
+     1.016,
+     -1.92962,
+     1.69982
+    ],
+    "source": "old system_model frame_end_S"
+   },
+   {
+    "name": "end_rail_N",
+    "lo_m": [
+     -1.016,
+     1.92962,
+     1.62362
+    ],
+    "hi_m": [
+     1.016,
+     2.00582,
+     1.69982
+    ],
+    "source": "old system_model frame_end_N"
+   },
+   {
+    "name": "leg_SW",
+    "lo_m": [
+     -1.0922,
+     -2.00582,
+     -0.02738
+    ],
+    "hi_m": [
+     -1.016,
+     -1.92962,
+     1.62362
+    ],
+    "source": "old system_model leg_FL (ASSUMED in the old model: section and plan position mirror the drawing's corner post)"
+   },
+   {
+    "name": "leg_SE",
+    "lo_m": [
+     1.016,
+     -2.00582,
+     -0.02738
+    ],
+    "hi_m": [
+     1.0922,
+     -1.92962,
+     1.62362
+    ],
+    "source": "old system_model leg_FR (ASSUMED in the old model)"
+   },
+   {
+    "name": "leg_NW",
+    "lo_m": [
+     -1.0922,
+     1.92962,
+     -0.02738
+    ],
+    "hi_m": [
+     -1.016,
+     2.00582,
+     1.62362
+    ],
+    "source": "old system_model leg_BL (ASSUMED in the old model)"
+   },
+   {
+    "name": "leg_NE",
+    "lo_m": [
+     1.016,
+     1.92962,
+     -0.02738
+    ],
+    "hi_m": [
+     1.0922,
+     2.00582,
+     1.62362
+    ],
+    "source": "old system_model leg_BR (ASSUMED in the old model)"
+   }
+  ]
+ },
+ "reach": {
+  "source": "how far any part of an arm's body can be from its shoulder, fully stretched. Bound: shoulder -> elbow 0.3266, elbow -> wrist 0.3928, wrist -> flange 0.1385 (FR3 DH), plus 0.25 for the hand, holder and pen, plus 0.08 for the fattest capsule radius = 1.188, rounded up. tests/test_rig.py checks it against the old capsule model on random configurations and against kernel.arm when present.",
+  "shoulder_below_base_m": 0.333,
+  "body_reach_from_shoulder_m": 1.2
+ },
+ "clearances": {
+  "source": "the old gates (docs/STAGED_LESSONS_2026-09-29.md L135); they do not change. The checker demands these.",
+  "steel_m": 0.05,
+  "arm_to_arm_m": 0.05,
+  "wall_m": 0.04,
+  "wall_note": "0.040 until the arms' x and y are calibrated (they are 1-2 cm off today; orchestrator, 2026-10-02); then back to 0.025, half of arm_to_arm, so that two arms on opposite sides of a wall are arm_to_arm apart. Fences use the same clearance.",
+  "body_to_paper_m": 0.02,
+  "pen_lifted_to_paper_m": 0.02,
+  "pen_lifted_to_paper_note": "20 mm until the calibration routine is proven on the rig; then 3 mm (Pete and the orchestrator, 2026-09-30). The sequencer lifts the pen this far plus 2 mm, and the free-space planner keeps it at least this far above the paper.",
+  "tool_to_paper_m": 0.0,
+  "tool_to_paper_note": "Chosen by Pete, 2026-09-30: the tool (gripper, blades, pen holder) must not touch the paper, and nothing more. There will be no measured holder height; we work with the CAD and pen models as they are. It is also the limit on how far a pen may wear.",
+  "self_m": 0.02,
+  "link1_to_own_mount_m": 0.02,
+  "link1_to_own_mount_note": "link 1 against the arm's OWN hanger steel (struts, plate, clamp). Link 1 and that steel are bolted to the same plate, so the 0.050 steel gate, which pays for not knowing where separate parts stand relative to each other, does not apply between them; the self clearance does. Link 1 turns about the base axis only, so this is checked once by the rig (tests/test_rig.py) and not by the collision check. Orchestrator, 2026-09-30."
+ },
+ "planning_allowance": {
+  "source": "added on top of the demanded clearances when a planner asks (for_planning=True), so that the checker is a second opinion and not a coin toss (lesson L32). Set by the orchestrator 2026-09-29. The old numbers (0.013 on steel) paid for the old checker's sampling error: 0.010 half-step along a capsule plus 0.00275 between samples. The new distances are exact and both planner and checker bound the motion between samples to better than 0.001, so 0.003 covers the difference between the two with room to spare. The demanded clearances above are unchanged.",
+  "steel_m": 0.003,
+  "arm_to_arm_m": 0.003,
+  "arm_to_arm_note": "a parked arm is as still as the steel, so it gets the steel allowance",
+  "wall_m": 0.0015,
+  "wall_note": "half of arm_to_arm, because both arms at a wall pay it",
+  "body_to_paper_m": 0.0,
+  "pen_lifted_to_paper_m": 0.0,
+  "tool_to_paper_m": 0.0,
+  "paper_note": "zero: a pen that hovers a few millimetres over the paper before touching down cannot pay more",
+  "self_m": 0.003
+ },
+ "gates": {
+  "source": "what a configuration must satisfy to count as usable. Pete, 2026-09-30, after the reach measurement (docs/modules/kernel_arm.md, 'Reach at the paper and what limits it'): sigma_min lowered from 0.08 to 0.04, because it was the only gate limiting reach at the paper, costing 2 cm at full stretch, and self-collision passes at the rim. The self margin is not here: it is clearances.self_m plus planning_allowance.self_m.",
+  "limit_margin_rad": 0.15,
+  "sigma_min": 0.04,
+  "sigma_min_note": "smallest singular value of the tip Jacobian (metres of tip motion per radian); no unit suffix because it is a ratio",
+  "pen_lean_max_deg": 15.0
+ },
+ "drawing": {
+  "source": "how drawing motions are timed and shaped (Pete, 2026-09-30; the numbers the planners used as type defaults until now). The speed on the paper and the press belong to the pen: pens.table.<pen>.speed_m_per_s and press_m (2026-10-02).",
+  "landing_speed_m_per_s": 0.003,
+  "landing_speed_note": "the pen tip's speed over the last millimetres of a lower, as it meets the paper: 3 mm/s was needed on the hardware (site, 2026-10-06; a rigid pen landing fast trips the reflex). The descent above that is flown at the normal speed.",
+  "min_piece_m": 0.01,
+  "speed_fraction": 0.3,
+  "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
+ },
+ "pens": {
+  "source": "the pens the holder can carry; `current` names the one that is in (DESIGN 4c, 2026-10-02). rig.pen() hands out the current entry (plus its name) and the server copies it into every job header; rig.rules() takes press and drawing speed from it; the tool model takes its length and capsule radius from it unless the slot's calibration has a passing pen part for this pen.",
+  "current": "graphite_4h",
+  "table": {
+   "graphite_4h": {
+    "source": "2 mm 4H graphite in the lateral holder. Press and speed: the word 'unknown' drawn on 2026-10-01 under joint position control (DESIGN 4c). Length and capsule: the tool model aris/kernel/tool.py (graphite 20 mm past the cap's outer face, a 5 mm capsule).",
+    "press_m": 0.0016,
+    "press_measured_note": "0.0016 (site, 2026-10-07: 2R ripped the paper at 0.0021); 0.0021 on 2026-10-06; 0.0035 before",
+    "press_note": "the drawing surface lies this far below the measured paper: with position control the pen is pressed into the paper by planning it there",
+    "speed_m_per_s": 0.015,
+    "speed_note": "speed of the tip along a line on the paper",
+    "tip_length_nominal_m": 0.02,
+    "tip_length_note": "how far the graphite stands past the cap's outer face, along the bore; the tool model is built for 0.020. A different length moves the tip along the pen axis. A passing pen part of the slot's calibration replaces it with the measured tip.",
+    "capsule_radius_m": 0.005
+   },
+   "gel_g2": {
+    "source": "gel pen G2 in the lateral holder (site, 2026-10-06). A gel pen skids when pushed and draws when pulled: drag_only tells the planner to draw it only pulled. Length and capsule as the graphite until measured.",
+    "press_m": 0.0025,
+    "speed_m_per_s": 0.015,
+    "tip_length_nominal_m": 0.02,
+    "capsule_radius_m": 0.005,
+    "drag_only": true
+   }
+  }
+ },
+ "execution": {
+  "source": "what the executor checks before it runs a motion (orchestrator, 2026-09-30)",
+  "start_tolerance_rad": 0.03,
+  "start_tolerance_measured_note": "0.005 until 2026-10-06; 0.03 from the hardware: an arm holding position drifts between motions by more than 0.005 (measured on 2L/2R, site 2026-10-06)",
+  "start_tolerance_note": "per joint: what a joint trajectory controller accepts before it starts; the executor refuses a motion whose start is further than this from the measured configuration in any joint"
+ },
+ "checker": {
+  "source": "the independent checker's own numerical allowances (aris/check/config.py Tolerances; read by aris/check only). None relaxes a limit of the rig; each says how finely it is judged. Orchestrator, 2026-10-02, from the values the checker used as defaults.",
+  "step_m": 0.001,
+  "step_note": "the most any capsule point moves between two clearance samples; with the bound between samples, a contact anywhere along the motion is found",
+  "clearance_tol_m": 0.00025,
+  "clearance_tol_note": "how far under the true minimum a reported clearance may lie; intervals that could hide more are halved and measured again",
+  "rate_tol": 0.05,
+  "rate_tol_note": "the 1 kHz and 4 kHz readings of velocity, acceleration and jerk may differ this much; more means a corner in the trajectory the driver would feel",
+  "tip_height_tol_m": 0.0005,
+  "tip_height_tol_note": "the tip off the drawing surface while drawing, and at the paper end of a lower, lift or touch: catches a pen that floats or digs",
+  "line_tol_m": 0.0002,
+  "line_tol_note": "the tip off the planned line while drawing: catches a drawing that leaves its line",
+  "back_tol_m": 1e-05,
+  "back_tol_note": "numerical allowance on 'the pen never goes backwards along its line'",
+  "speed_tol": 0.03,
+  "speed_tol_note": "the tip may run this share over the pen's speed on the paper (the timing overshoots by up to 2.9 % where it speeds up or slows down): catches a drawing timed too fast",
+  "stop_speed_m_per_s": 0.00025,
+  "stop_speed_note": "slower than this along the line mid-way is a stop: catches a pen that halts on the paper. Absolute, not a share of the drawing speed: a sharp corner slows the pen to about 1 mm/s at any speed, a real stop reads 1e-7 m/s"
+ },
+ "fences": {
+  "source": "walls that hold in every phase and job: every controlled arm's whole body stays on the normal's side, at the wall clearance. Written by tools/mounted_rig.py for the rows without a controlled arm and for the uncontrolled arms beside a controlled one in its row.",
+  "planes": [
+   {
+    "name": "fence_row_+1p210",
+    "point_m": [
+     0.0,
+     0.605106,
+     0.0
+    ],
+    "normal": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "source": "halfway between the row at y = +1.2102 m (no arm controlled) and the nearest controlled row at y = +0.0000 m"
+   }
+  ]
+ }
+}
