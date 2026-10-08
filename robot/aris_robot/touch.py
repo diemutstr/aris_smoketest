@@ -137,6 +137,46 @@ def straight_on(arm, limits, rules, q, direction, depth: float, speed: float,
                   dataclasses.replace(rules, draw_speed=speed), s=d)
 
 
+def glide(arm, limits, rules, q, tip_to, R_to=None, q7_to=None, step: float = 0.001,
+          tip_budget_m: float = 0.001):
+    """From q, the pen tip along the straight line to `tip_to` while the hand turns (slerp)
+    to `R_to` and joint 7 goes linearly to `q7_to` (default: both kept): joints by the arm's
+    IK (the branch nearest the previous sample), timed at the free speed (the joint limits
+    alone, no cap along the line), the tip within `tip_budget_m` of the line.
+    -> Trajectory, or a Refusal."""
+    from scipy.spatial.transform import Rotation, Slerp
+    q = np.asarray(q, float)
+    T0 = arm.fk(q[None])[0]
+    p0 = arm.tip(q[None])[0]
+    tip_to = np.asarray(tip_to, float)
+    R_to = T0[:3, :3] if R_to is None else np.asarray(R_to, float)
+    q7_to = q[6] if q7_to is None else float(q7_to)
+    length = float(np.linalg.norm(tip_to - p0))
+    turn = Rotation.from_matrix(T0[:3, :3]).inv() * Rotation.from_matrix(R_to)
+    n = max(2, int(np.ceil(max(length / step, turn.magnitude() / 0.01,
+                               abs(q7_to - q[6]) / 0.01))) + 1)
+    u = np.linspace(0.0, 1.0, n)
+    Rs = Slerp([0.0, 1.0], Rotation.from_matrix([T0[:3, :3], R_to]))(u).as_matrix()
+    path, prev = [q], q
+    for k in range(1, n):
+        T = np.eye(4)
+        T[:3, :3] = Rs[k]
+        T[:3, 3] = p0 + u[k] * (tip_to - p0) - Rs[k] @ arm.tool.tip_hand
+        Q, ok = arm.ik(T[None], q[6] + u[k] * (q7_to - q[6]))
+        if not ok[0].any():
+            return Refusal("unreachable", f"no arm configuration {u[k] * length * 1000:.0f} mm "
+                           "along the line")
+        cand = Q[0][ok[0]]
+        prev = cand[np.argmin(np.abs(cand - prev).max(axis=1))]
+        if np.abs(prev - path[-1]).max() > 0.05:
+            return Refusal("branch", "the line would jump between arm shapes")
+        path.append(prev)
+    if length < 1e-6:                                   # a turn on the spot: no line to time
+        return retime(JointPath(np.array(path)), limits, rules)
+    return retime(JointPath(np.array(path)), limits, rules, s=u * length, smooth=True,
+                  speed_cap=lambda u_: np.full(np.shape(u_), np.inf), tip_of=arm.tip, tip_budget_m=tip_budget_m)
+
+
 @dataclass(frozen=True)
 class Kinematics:
     """What the touch needs of the arm and the rig: the arm model, its limits, the rules, the

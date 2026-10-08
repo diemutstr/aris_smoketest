@@ -224,7 +224,18 @@ def test_a_guide_survives_fci_off_and_samples_where_the_person_left_the_pen(
         < events.index("guide: trajectory controller back")
     assert node.recovery_steps == ["hardware FrankaHardwareInterface", "error recovery"]
     assert "fr3_arm_controller" in node.active
-    assert np.allclose(node.q_d, hover, atol=1e-6)
+    assert np.abs(node.q_d - hover).max() < 1e-3
+    # the retreat: lift, then away; the tip never comes closer to the partner's tip (3 mm
+    # off ours at the meeting, on the far side from our hover) than it was at the sample
+    assert "guide: retreat away" in events
+    arm_model = rig.arm("2L")
+    tip_m, tip_h = arm_model.tip(moved[None])[0], arm_model.tip(hover[None])[0]
+    n = arm.kin.normal / np.linalg.norm(arm.kin.normal)
+    away = (tip_h - tip_m) - ((tip_h - tip_m) @ n) * n
+    partner = tip_m - 0.003 * away / np.linalg.norm(away)
+    trace = np.vstack([arm_model.tip(g.q) for g in node.goals])
+    d = np.linalg.norm(trace - partner, axis=1)
+    assert abs(d[0] - 0.003) < 1e-6 and d.min() >= d[0] - 1e-6
     nxt = _chain(rig, "2L", ("free",))[0]
     assert arm.move(nxt.traj).done
 

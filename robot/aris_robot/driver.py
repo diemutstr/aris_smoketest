@@ -215,10 +215,14 @@ class RosArm:
         self.say("guide: link back")
 
     def _back_to_hover(self, q_hover, q) -> str:
-        """The pen straight up `lift_m` (or 2/3, 1/3 of it where the arm cannot reach), then a
-        straight joint move to the hover, so the queue's next motion starts where planned."""
-        from aris.kernel.retime import retime
-        from aris.types import JointPath, Refusal
+        """The retreat after a meeting: the pen straight up `lift_m` (or 2/3, 1/3 of it where
+        the arm cannot reach), then the tip on a straight horizontal line (the paper's plane)
+        to above the hover, the hand turning to the hover's orientation and joint 7 to its
+        angle on the way, then straight along the normal to the hover's height; IK-tracked,
+        at the free speed.  The hover lies on the arm's own side, so the line runs away from
+        the meeting point and the partner's tip: the two arms, returning at once, only ever
+        move apart.  Ends at the hover's joints, where the queue's next motion starts."""
+        from aris.types import Refusal
         lift, speed = float(self.guide_cfg.get("lift_m", 0.03)), float(
             self.guide_cfg.get("lift_speed", 0.01))
         for h in (lift, 2 * lift / 3, lift / 3):
@@ -232,11 +236,29 @@ class RosArm:
         if not r.done:
             return f"the lift failed: {r.why}"
         self.say("guide: lifted")
-        if float(np.abs(q_hover - up.q[-1]).max()) > 1e-9:
-            r = self._follow(retime(JointPath(np.array([up.q[-1], q_hover])),
-                                    self.kin.arm.limits, self.kin.rules))
+        arm = self.kin.arm
+        n = np.asarray(self.kin.normal, float) / np.linalg.norm(self.kin.normal)
+        q_up = np.asarray(up.q[-1], float)
+        tip_up, tip_hover = arm.tip(q_up[None])[0], arm.tip(q_hover[None])[0]
+        above = tip_hover + float((tip_up - tip_hover) @ n) * n      # the hover's x, y
+        R_hover = arm.fk(q_hover[None])[0][:3, :3]
+        legs = (("away", above, R_hover, q_hover[6]), ("to the hover height", tip_hover,
+                                                       R_hover, q_hover[6]))
+        q_now = q_up
+        for name, to, R, q7 in legs:
+            if float(np.linalg.norm(to - arm.tip(q_now[None])[0])) < 1e-4 and name != "away":
+                continue
+            leg = T.glide(arm, arm.limits, self.kin.rules, q_now, to, R, q7)
+            if isinstance(leg, Refusal):
+                return f"cannot retreat ({name}): {leg.detail}"
+            r = self._follow(leg)
             if not r.done:
-                return f"the way back to the hover failed: {r.why}"
+                return f"the retreat ({name}) failed: {r.why}"
+            q_now = np.asarray(leg.q[-1], float)
+            self.say(f"guide: retreat {name}")
+        if float(np.abs(q_now - q_hover).max()) > 1e-3:
+            return (f"the retreat ended {np.abs(q_now - q_hover).max():.3f} rad from the hover's "
+                    "joints (another arm shape)")
         self.say("guide: back at the hover")
         return ""
 

@@ -213,8 +213,11 @@ phase, each with one `guide` motion at its hover, and each arm's watch runs on i
    - the sample is the joints once the arm has been still (`still_rad`) for `settle_s` (2 s).
    A sample within `moved_rad` (0.02 rad) of the hover gets the row "nobody moved <slot>;
    waiting" and the watch keeps waiting. After `timeout_s` (600 s) the guide fails.
-3. Then the controller is activated (it holds where the arm is). The pen goes 3 cm straight
-   up and the arm flies back to the hover. The result is done, why "check", with the sampled
+3. Then the controller is activated (it holds where the arm is). The arm retreats: the pen
+   goes 3 cm straight up, then the tip moves on a straight horizontal line to above the hover
+   (away from the partner's tip, since the hover is on the arm's own side), then straight
+   down (or up) to the hover. Both legs are IK-tracked at the free speed and end at the
+   hover's joints. Both arms retreat at once and only ever move apart. The result is done, why "check", with the sampled
    joints.
 Every stage is a "guide: ..." row on the job and the operator rows.
 
