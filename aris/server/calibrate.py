@@ -230,9 +230,15 @@ UNCAL_HOVER = 0.150      # m above the nominal paper: the first hover of an arm 
                          # flight to the hover is planned clear of a paper up to
                          # UNCAL_HOVER - FOUND_HOVER - FOUND_SLACK above it
 UNCAL_DEPTH = 0.040      # m past the nominal paper its first touch may go
-FOUND_HOVER = 0.020      # m above the first contact: every later hover of that job
+FOUND_TILT = 0.050       # m: how far above the FIRST contact the paper may stand elsewhere on
+                         # the grid.  An unmeasured arm is tilted against the table (that is
+                         # what this job measures): 1L, 2026-10-09, 23 mm/m in x and 22 in y,
+                         # the paper 18 mm higher at the far points than at the first one.
+                         # With a flat paper at the first contact's height the later flights
+                         # had no clearance there and one ended on the table.
+FOUND_HOVER = 0.020      # m above that highest paper: every later hover of the job
 FOUND_SLACK = 0.005      # m: the free moves keep their pen clearance from a paper this much
-                         # below the one found (the hovers sit just at that clearance)
+                         # below it (the hovers sit just at that clearance)
 
 
 def base_applied(st, arm) -> bool:
@@ -244,8 +250,9 @@ def _staged_work(arm, cfg):
     touch first, from UNCAL_HOVER above the nominal paper and down to UNCAL_DEPTH below it
     (the free move there kept as high as that hover allows: the paper may be well above the
     nominal one);
-    then, from where the arm really stands, every other point from FOUND_HOVER above the
-    height that touch found, the free moves kept clear of the paper there."""
+    then, from where the arm really stands, every other point from a hover FOUND_TILT +
+    FOUND_HOVER above the height that touch found, the free moves kept clear of a paper up to
+    FOUND_TILT above it (the arm's tilt is not known yet), each touch straight down."""
     def work(st, rec, job) -> None:
         import threading
         import time
@@ -285,7 +292,7 @@ def _staged_work(arm, cfg):
         if not why:
             q = np.asarray(rows[-1]["q"], float)
             dz = float(st.rig.to_table(arm, st.rig.arm(arm).tip(q[None])[0])[2] - st.rig.paper_z)
-            top = UNCAL_HOVER - FOUND_HOVER - FOUND_SLACK
+            top = UNCAL_HOVER - FOUND_TILT - FOUND_HOVER - FOUND_SLACK
             if dz > top:
                 # nothing can be planned from a paper this close under the hover, and a real
                 # paper there is unlikely: say what it is instead of "no point can be touched"
@@ -302,10 +309,10 @@ def _staged_work(arm, cfg):
             low = float(pl.pen_margin if pl.pen_margin is not None else pl.margin) + FOUND_SLACK
             rest = np.delete(pts, k0, axis=0)
             second = plan_calibrate(st, arm, real if isinstance(real, dict) else where,
-                                    replace(cfg, hover=max(dz + FOUND_HOVER, low),
+                                    replace(cfg, hover=max(dz + FOUND_TILT + FOUND_HOVER, low),
                                             extra_depth=UNCAL_DEPTH),
                                     points=rest, min_points=MIN_CONTACTS - 1,
-                                    paper_dz=dz - FOUND_SLACK)
+                                    paper_dz=dz + FOUND_TILT - FOUND_SLACK)
             plan = Plan(arm, second.phase, first.steps + second.steps,
                         np.vstack([first.points_table, second.points_table]),
                         first.dropped + second.dropped, second.spin, second.why)
