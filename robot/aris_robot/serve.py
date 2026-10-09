@@ -232,7 +232,10 @@ def sync_calibration(remote, config_dir) -> list[int] | Refusal:
     d.mkdir(parents=True, exist_ok=True)
     for p in d.glob("*.json"):
         if p.stem not in files:
-            p.unlink()
+            # taken out of the way, never deleted: a measured calibration is hours of work
+            # (2026-10-09: a test's empty server emptied the real folder)
+            (d / "removed").mkdir(exist_ok=True)
+            os.replace(p, d / "removed" / f"{p.stem}.{time.strftime('%Y%m%d-%H%M%S')}.json")
     for a, f in files.items():
         tmp = d / f"{a}.json.tmp"
         tmp.write_text(json.dumps(f, indent=1, sort_keys=True))

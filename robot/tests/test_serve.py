@@ -28,6 +28,22 @@ from sim_touch import hover_q, touch_motion
 CONFIG = Path(__file__).resolve().parents[2] / "config"
 
 
+def _config(tmp_path) -> Path:
+    """A copy of the repository's config folder for an Operator.  An Operator mirrors the
+    server's calibration files into its config folder and takes the others away; given the
+    real folder, a test run on the planning laptop deleted the four calibrations measured
+    that day (2026-10-09).  No test hands an Operator the real folder."""
+    d = tmp_path / "config"
+    if not d.exists():
+        d.mkdir()
+        for f in ("rig.json", "pens.json"):
+            if (CONFIG / f).exists():
+                shutil.copy(CONFIG / f, d / f)
+        if (CONFIG / "calibration").is_dir():
+            shutil.copytree(CONFIG / "calibration", d / "calibration")
+    return d
+
+
 class Passed:
     passed, tightest, min_clearance, min_clearance_at = True, "test", 0.1, "test"
 
@@ -254,7 +270,7 @@ def test_link_drops_recover_by_themselves_once_per_window_and_where_is_never_zer
     said = []
     rows.say = lambda event, **f: said.append(dict(event=event, **f))
     drop, other = _Faulty(np.zeros(7) + 0.1), _Faulty(np.zeros(7) + 0.2, "fault: joint_reflex")
-    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": drop, "2R": other, "1L": _Down()},
+    op = Operator(_NoServer(), _config(tmp_path), tmp_path / "w", {"2L": drop, "2R": other, "1L": _Down()},
                   tmp_path / "log", rows=rows)
     op.auto_recover = dict(on=True, every_s=120, patterns=["communication_constraints_violation"])
     op._auto_recover()
@@ -323,7 +339,7 @@ def test_a_park_after_a_stack_restart_runs(tmp_path):
     app = create_app(jobs)
     app.state.commands.append(dict(id="c", command="run", job="p1"))
     with Served(app) as srv:
-        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w", drivers, tmp_path / "log",
+        op = Operator(Remote(srv.url), _config(tmp_path), tmp_path / "w", drivers, tmp_path / "log",
                       stacks=stacks, idle_s=5.0, wait_s=0.3)
         t0 = time.monotonic()
         assert _serve_until(app, op, "run ended")
@@ -361,7 +377,7 @@ def test_a_job_that_cannot_start_fails_with_a_row_instead_of_hanging(tmp_path):
     app = create_app(jobs)
     app.state.commands.append(dict(id="c", command="run", job="p2"))
     with Served(app) as srv:
-        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w", drivers, tmp_path / "log",
+        op = Operator(Remote(srv.url), _config(tmp_path), tmp_path / "w", drivers, tmp_path / "log",
                       idle_s=5.0, wait_s=0.3)
         op.start_timeout_s = 0.5
         assert _serve_until(app, op, "run failed", timeout=10.0)
@@ -401,7 +417,7 @@ def test_serve_restarts_a_stack_that_never_reads(tmp_path):
     rows = Rows(_NoServer(), tmp_path)
     said = []
     rows.say = lambda event, **f: said.append(dict(event=event, **f))
-    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": arm}, tmp_path / "log",
+    op = Operator(_NoServer(), _config(tmp_path), tmp_path / "w", {"2L": arm}, tmp_path / "log",
                   stacks=Stacks(), rows=rows)
     op.stale_restart_s, op.restart_every_s = 0.2, 0.5
     op._restart_stale()                                  # stale only just now: nothing
@@ -435,7 +451,7 @@ def test_a_refused_job_is_told_on_the_job_before_serve_moves_on(tmp_path):
     app.state.commands += [dict(id="a", command="run", job="wc"),
                            dict(id="b", command="report")]
     with Served(app) as srv:
-        op = Operator(Remote(srv.url), CONFIG, tmp_path / "w",
+        op = Operator(Remote(srv.url), _config(tmp_path), tmp_path / "w",
                       {"2L": SimTouchArm(rig, "2L", rig.park_q("2L"), speed=math.inf)},
                       tmp_path / "log", idle_s=5.0, wait_s=0.3)
         seen = []
@@ -461,7 +477,7 @@ def test_where_rows_keep_flowing_while_a_job_runs(tmp_path):
     said = []
     rows.say = lambda event, **f: said.append(dict(event=event, **f))
     arm = _Faulty(np.zeros(7) + 0.3, fault="")
-    op = Operator(_NoServer(), CONFIG, tmp_path / "w", {"2L": arm}, tmp_path / "log",
+    op = Operator(_NoServer(), _config(tmp_path), tmp_path / "w", {"2L": arm}, tmp_path / "log",
                   rows=rows, idle_s=0.05)
     op.busy.set()                                        # a job is running
     import threading as th
