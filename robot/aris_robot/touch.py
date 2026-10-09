@@ -90,6 +90,11 @@ class TouchSettings:
     rest_wait_s: float = 6.0       # s waited for it at most
     force_cap_n: float = 8.0       # N over the zero: the safety stop
     force_ticks: int = 3           # readings in a row over the cap
+    cap_behind_m: float = 0.0001   # m: a stop by the force cap is the paper when the tip is at
+                                   # least this far behind its command.  Where the arm is stiff
+                                   # 8 N are reached 0.3 mm into the paper (1L, 2026-10-09:
+                                   # 0.26, 0.43, 0.64 mm), before the other rules can speak;
+                                   # in the air the tip is within 0.1 mm of where it should be
     extra_speed: float = 0.002     # m/s past the planned end (the descent itself is timed by
                                    # the planner)
     back_speed: float = 0.030      # m/s of the pen tip on the way back up to the hover (it
@@ -461,7 +466,7 @@ class _Watch:
             behind = max([x for x in (short, res) if x is not None], default=None)
             self.rule, self.force_at, self.lag_at = "force cap", f, behind
             self.stop_at = dict(t=t, depth_m=da + self.off, commanded_m=dc + self.off)
-            if behind is not None and behind >= s.lag_m:
+            if behind is not None and behind >= s.cap_behind_m:
                 self.contact_q = self._rest(back)
             else:
                 self.why = (f"stopped by the force cap in the air: {f:.1f} N over the zero "

@@ -116,9 +116,13 @@ class Executor:
                     # the calibration reads these rows: where the pen met the paper
                     self._log("contact", phase, index=item.index, q=r.q)
                     r = Result.ok(self.driver.state().q)
-                elif r.why.startswith("no contact") and not stop.is_set():
-                    # no paper within the declared depth: not a fault; the arm is back at the
-                    # hover and the calibration counts the point as missed
+                elif not stop.is_set() and (r.why.startswith("no contact")
+                                            or self._stands_at(item.motion.q_end)):
+                    # no paper within the declared depth, or a touch that failed for another
+                    # reason and left the arm standing at its hover, able to move: not a
+                    # fault.  The calibration counts the point as missed and the job goes on
+                    # (until 2026-10-09 any other failed touch ended the whole job and threw
+                    # away the contacts already made).
                     self._log("no contact", phase, index=item.index, q=r.q, why=r.why)
                     r = Result.ok(self.driver.state().q)
             if not r.done:
@@ -129,6 +133,19 @@ class Executor:
             # glide back to the hover fails): parked means standing still there
             last_end = np.asarray(r.q, float) if kind == "guide" else item.motion.q_end
             self._log("motion done", phase, index=item.index, q=r.q)
+
+    def _stands_at(self, q) -> bool:
+        """The arm is able to move and stands at `q` (to the start tolerance), given REST_WAIT
+        to come to rest there."""
+        t_end = time.monotonic() + REST_WAIT
+        while True:
+            s = self.driver.state()
+            if s.ok and np.all(np.isfinite(s.q)) and \
+                    float(np.max(np.abs(s.q - np.asarray(q, float)))) <= self.start_tol:
+                return True
+            if not s.ok or time.monotonic() >= t_end:
+                return False
+            time.sleep(0.05)
 
     def _refuse_start(self, motion) -> str:
         s = self.driver.state()

@@ -297,8 +297,11 @@ def _staged_work(arm, cfg):
                 and r.get("phase") == first.phase.name and r.get("arm") == arm]
         plan = first
         if not why and not rows:
-            why = (f"the first touch found no paper down to {UNCAL_DEPTH * 1e3:.0f} mm below "
-                   "the nominal paper")
+            said = [r.get("why") for r in rec.log.read() if r.get("event") == "no contact"
+                    and r.get("phase") == first.phase.name and r.get("arm") == arm]
+            why = "the first touch found no paper: " + (said[-1] if said and said[-1] else
+                                                        f"none down to {UNCAL_DEPTH * 1e3:.0f} mm "
+                                                        "below the nominal paper")
         if not why:
             q = np.asarray(rows[-1]["q"], float)
             dz = float(st.rig.to_table(arm, st.rig.arm(arm).tip(q[None])[0])[2] - st.rig.paper_z)

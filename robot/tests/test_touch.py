@@ -300,6 +300,13 @@ def test_a_stiff_paper_trips_the_force_cap_and_that_is_the_contact(rig, setup):
     assert r.force_at_contact > 8.0 and r.lag_at_contact >= 0.0004
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
     assert np.abs(pos.q - q0).max() <= 1e-9
+    # stiffer still (1L, job 018: 8.9 N with the tip 0.26 mm behind): the paper all the same
+    paper = FakePaper(kin, rig.paper(ARM), height=0.0, k=30000.0, bias=2.3)
+    pos = SimPositionArm(q0, paper)
+    r = touch(m, pos, kin, TouchSettings())
+    assert r.done and r.rule == "force cap", (r.why, r.rule, r.stats)
+    assert 0.0001 <= r.lag_at_contact < 0.0004
+    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
 
 
 def test_the_descent_waits_for_the_arm_to_stand_still(rig, setup):
