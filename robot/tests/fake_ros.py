@@ -13,7 +13,7 @@ import numpy as np
 
 STUBS = ["rclpy", "rclpy.action", "rclpy.executors", "action_msgs", "action_msgs.msg",
          "builtin_interfaces", "builtin_interfaces.msg", "control_msgs", "control_msgs.action",
-         "controller_manager_msgs", "controller_manager_msgs.srv", "franka_msgs",
+         "control_msgs.msg", "controller_manager_msgs", "controller_manager_msgs.srv", "franka_msgs",
          "franka_msgs.action", "franka_msgs.msg", "franka_msgs.srv", "sensor_msgs",
          "sensor_msgs.msg", "trajectory_msgs", "trajectory_msgs.msg", "lifecycle_msgs",
          "lifecycle_msgs.msg"]

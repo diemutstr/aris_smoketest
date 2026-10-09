@@ -120,12 +120,15 @@ class RosArm:
             if why:
                 return Result.failed(why, self.state().q)
             r = T.touch(motion, _Position(self), self.kin, self.ts)
-            self.last_report = dict(kind="touch", air_zero=r.air_zero, held=r.held,
-                                    depth_past_end=r.depth_past_end, why=r.why,
-                                    armed_zero=r.armed_zero, early_trips=r.early_trips,
-                                    by_cap=r.by_cap)
-            if r.by_cap:
-                self.say("touch: contact found by the cap", text=r.by_cap)
+            self.last_report = dict(kind="touch", air_zero=r.air_zero, lag0=r.lag0,
+                                    rule=r.rule, lag_at_contact=r.lag_at_contact,
+                                    force_at_contact=r.force_at_contact,
+                                    depth_past_end=r.depth_past_end, why=r.why)
+            self.say("touch: " + (f"contact by {r.rule}" if r.done else "no contact"),
+                     rule=r.rule or None, lag_at_contact_m=r.lag_at_contact,
+                     force_at_contact_n=r.force_at_contact, lag0_m=r.lag0,
+                     depth_past_end_m=r.depth_past_end, why=r.why,
+                     text=("stopped by the force cap" if r.rule == "force cap" else None))
             if r.held:
                 self._stopped = True             # stands where it hit; a person looks first
             if r.done:
@@ -368,25 +371,30 @@ class RosArm:
         return None
 
     def _follow(self, traj, watch=None) -> Result:
-        """The trajectory controller flies `traj`; `watch(q, F)` sees every reading and may
-        cancel it (True): then failed("cancelled") with the arm standing where it stopped."""
+        """The trajectory controller flies `traj`; `watch(q, F, t)` sees every reading (actual
+        joints, force, the reading's time on the trajectory's clock, counted from when the goal
+        was sent) and may cancel it (True): then failed("cancelled") with the arm standing
+        where it stopped."""
         client = self.ros.follow
         if not client.wait_for_server(timeout_sec=2.0):
             return Result.failed("the trajectory controller is not available", self.state().q)
-        handle = wait(client.send_goal_async(self.ros.trajectory_goal(traj)), 5.0)
+        goal = self.ros.trajectory_goal(traj)
+        self.ros.drain_readings(self.fake)
+        t_sent = time.monotonic()
+        handle = wait(client.send_goal_async(goal), 5.0)
         if handle is None or not handle.accepted:
             return Result.failed("the trajectory controller refused the trajectory",
                                  self.state().q)
         result = handle.get_result_async()
         deadline = time.monotonic() + float(traj.t[-1] - traj.t[0]) + 5.0
-        self.ros.drain_readings(self.fake)
         while not result.done():
             if self._halt.is_set():
                 wait(handle.cancel_goal_async(), 2.0)
                 return Result.failed("stopped", self.state().q)
             if watch is not None:
-                for q, f in self.ros.drain_readings(self.fake):
-                    if watch(q, self.fake_paper.force(q) if self.fake else f):
+                for q, f, rx, q_ref in self.ros.drain_readings(self.fake):
+                    t = float(traj.t[0]) + (rx - t_sent)    # the fallback for q_ref
+                    if watch(q, self.fake_paper.force(q) if self.fake else f, t, q_ref):
                         wait(handle.cancel_goal_async(), 2.0)
                         time.sleep(0.05)                    # the controller holds where it is
                         return Result.failed("cancelled", self.state().q)
@@ -432,7 +440,8 @@ class _Position:
         a = self.arm
         a.ros.drain_readings(a.fake)
         time.sleep(seconds)
-        return [a.fake_paper.force(q) if a.fake else f for q, f in a.ros.drain_readings(a.fake)]
+        return [a.fake_paper.force(q) if a.fake else f
+                for q, f, *_ in a.ros.drain_readings(a.fake)]
 
     def joints(self):
         return self.arm.state().q

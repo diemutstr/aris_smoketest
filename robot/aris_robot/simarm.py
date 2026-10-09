@@ -15,27 +15,50 @@ TICK = 0.004            # s of motion between two readings
 
 
 class SimPosition:
-    """Flies a trajectory exactly, one reading every TICK of motion time, the force from the
-    fake paper (plus noise); a cancel stops it where it is."""
+    """Flies a trajectory under position control, one reading every TICK of motion time: the
+    actual joints follow the commanded ones exactly until the pen tip meets the fake paper,
+    where the tip stops (the commanded joints go on: the lag); the force is the paper's for
+    where the commanded tip would be (plus noise).  A cancel stops it where it is."""
 
-    def __init__(self, q0, paper: T.FakePaper, noise: float = 0.02, seed: int = 0):
-        self.q, self.paper = np.array(q0, float), paper
+    def __init__(self, q0, paper: T.FakePaper, noise: float = 0.02, seed: int = 0,
+                 trail_s: float = 0.0):
+        self.q, self.paper, self.trail_s = np.array(q0, float), paper, trail_s
         self.rng = np.random.default_rng(seed)
         self.noise, self.flights = noise, []
 
     def _F(self, q):
         return self.paper.force(q) + self.noise * self.rng.standard_normal(3)
 
+    def _above(self, q) -> bool:
+        return self.paper is None or \
+            float(self.paper.kin.tip(q)[0] @ self.paper.n) >= self.paper.c
+
     def fly(self, traj, watch) -> str:
+        """`trail_s`: the actual arm follows the commanded trajectory that much late (a
+        controller that trails), and catches up after its end."""
         gap = float(np.abs(traj.q[0] - self.q).max())
         if gap > 1e-6:
             return f"the trajectory starts {gap:.3g} rad away"
         self.flights.append(traj)
-        for t in np.arange(traj.t[0], traj.t[-1] + TICK, TICK):
-            self.q = sample(traj, [min(t, traj.t[-1])])[0][0]
-            if watch(self.q, self._F(self.q)):
+        t0, t1 = traj.t[0], traj.t[-1]
+        at = lambda u: sample(traj, [min(max(u, t0), t1)])[0][0]       # noqa: E731
+        u_free, stopped = t0, None
+        for t in np.arange(t0, t1 + self.trail_s + TICK, TICK):
+            u = min(t, t1 + self.trail_s) - self.trail_s    # where the actual arm would be
+            q_free = at(u)
+            if stopped is None and not self._above(q_free):
+                lo, hi = u_free, u                       # where the tip meets the paper
+                for _ in range(40):
+                    mid = 0.5 * (lo + hi)
+                    lo, hi = (mid, hi) if self._above(at(mid)) else (lo, mid)
+                stopped = at(lo)
+            if stopped is None:
+                u_free = u
+            self.q = q_free if stopped is None else stopped
+            if watch(self.q, self._F(at(t)), min(t, t1)):
                 return "cancelled"
-        self.q = traj.q[-1].copy()
+        if stopped is None:
+            self.q = traj.q[-1].copy()
         return ""
 
     def forces(self, seconds: float) -> list:

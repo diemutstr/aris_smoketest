@@ -151,14 +151,16 @@ failures; it lives at 7d93a14. The guide under FCI (enabling buttons with the co
 - A reading older than 2 s is stale: `q` null, with "stale joint states (last x s ago)".
 
 **2026-10-08.**
-- **Touch zero at the hover.** Every touch stopped at the cap with no contact: the zero was
-  taken during the descent, and with the paper higher than planned it included the press. The
-  zero is now the mean of 20 readings standing still at the hover before the descent. The
-  detector arms 0.1 s (planned time) into each flight. Contact is 3 N over that zero for 15
-  readings. The cap (6 N over it) after arming is a contact found by the cap: the touch is the
-  first reading of the last run over 3 N in the last 1 s of readings, with the row "contact
-  found by the cap: the force rose a → b N within t s", and the way back is flown. A cap
-  before arming is a failure and the arm holds.
+- **Touch by position lag** (7e2572c, rows12: plane fits of 1L/1R at RMS 15-22 mm; the force
+  estimate of arms 31 and 2 is worthless at 3 N). Contact is where the tip stopped: the lag of
+  the actual tip behind the commanded one along the descent, less its median over the first
+  0.3 s of the descent at speed (in the air), over
+  0.3 mm for 3 readings; the touch is the actual joints of the first. The force (8 N over the
+  hover zero) is only the safety stop, and also a contact at that reading ("stopped by the
+  force cap"). The 3 N threshold and the arming are gone. A row per touch: rule, lag and
+  force at contact.
+- **Stacks start one at a time:** the next arm's once the previous one's joint states are fresh,
+  or after 40 s (the Dell froze launching four).
 - **Row 3** hangs inverted (robots 13, 17): `force_sign` −1, cores 20 and 21, not mounted by
   default.
 - **Old services.** `aris-session@*`, the orchestrators and the keep-runners must be disabled
@@ -196,21 +198,25 @@ draw and lift to `draw`).
 ## The touch (`aris_robot/touch.py`, no ROS)
 
 The calibration's `touch` motions (DESIGN 6 step 1), under position control with the stock
-trajectory controller: the encoders say where the paper is, the force only when. The air zero
-is taken standing at the hover. The arm flies the descent half of the motion at its own slow
-timing. The detector arms only once the descent runs at constant speed (its acceleration ramp
-plus 0.1 s). It then takes its own zero, the mean of 20 readings. Contact is 3 N above that
-zero over 15 readings in a row. The trajectory is then cancelled, and the joints of the first of
-those readings are the answer. A trip before arming is the descent's own jolt: it is counted,
-and the descent goes on. If the planned end comes without contact, the arm goes straight on in
-the same direction for the motion's `extra_depth` (at most 30 mm), at 2 mm/s, the hand keeping
-its orientation. This flight arms after its own ramp and keeps the first zero. Then it gives up
-with "no contact within … mm". In both cases it flies back to the hover along the path flown.
-Over 6 N above the hover's air zero, at any reading, it stops and holds where it is, flies no
-way back, and the arm refuses to move until it is recovered. With no force readings at all, the
-touch is refused before moving. The executor logs a "contact" row with the joints. The first
-`aris touchoff <slot>` from the planning PC also checks the force sign. On fake hardware a fake
-paper stands in for the force estimate.
+trajectory controller: the encoders say where the paper is. The arm flies the descent half of
+the motion at its own slow timing. At every reading the tip of the commanded joints (the
+controller's own `controller_state` reference when it publishes one; else the planned sample
+at the reading's time, counted from when the goal was sent) and the tip of the actual joints
+give the lag along the descent. Its baseline is the median lag over the first 0.3 s of the
+descent at speed (in the air: every descent starts 20 mm or more above the paper), so a
+controller that trails while moving is no contact; the lag rule waits for it, the force cap
+does not.
+Contact is a lag over 0.3 mm for 3 readings in a row: the trajectory is cancelled, and the
+ACTUAL joints of the first of those readings are the answer. The force estimate is only the
+safety stop: over 8 N above the hover zero (20 readings standing at the hover) it stops, and
+that reading's actual joints are the contact ("stopped by the force cap"). If the planned end
+comes without contact, the arm goes straight on in the same direction for the motion's
+`extra_depth` (at most 30 mm), at 2 mm/s, the hand keeping its orientation, under the same
+rules; then it gives up with "no contact within … mm" (and the largest lag seen). In every case
+it flies back to the hover along the path flown. With no force readings at all, the touch is
+refused before moving. The driver posts a row per touch (rule, lag and force at contact, lag at
+the hover); the executor logs a "contact" row with the joints. On fake hardware the actual
+joints follow the commanded ones exactly, so only the fake paper's force cap finds contact.
 
 ## Tested here (no ROS), 2026-10-07
 
@@ -228,14 +234,13 @@ paper stands in for the force estimate.
   are written. No stack is written for a robot the site table says this rig never drives.
 - **Touch.** Simulated position control and a fake paper (5000 N/m, an air reading of 2.3 N
   with noise).
-  - Paper 5 mm high, at the plan, and 4 mm low: contact read where 3 N lies (0.6 mm in, within
-    0.25 mm); back at the hover to 1e-9.
+  - The simulated tip stops at the paper while the commanded joints go on. Paper 5 mm high, at
+    the plan, and 4 mm low: contact by the lag at the paper within 0.3 mm; back at the hover.
   - Paper 12 mm low: the extension goes on straight (within 20 µm) at no more than 2 mm/s and
     finds it.
   - Paper 50 mm low: it gives up after exactly the planned descent plus 20 mm and comes back.
-  - Steel instead of paper: the cap stops and holds, with no way back flown.
-  - A 5 N jolt at the start of every flight is not taken for the paper; the contact is found
-    where it is.
+  - A force spike (6 N) with no lag is no contact; a force over the cap (10 N) is a contact
+    at that reading, and the way back is flown.
   - Refused before moving: an extra depth over the cap, or no force readings at all. A 9 N
     air reading is no reason to stop.
   - Through the executor, the "contact" row carries the joints at the paper.

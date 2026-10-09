@@ -177,9 +177,9 @@ that one.
 
 **Fake hardware**: `aris-robot --fake serve` (add `--fake` to the unit's command line). The
 stacks start on fake hardware, with the trajectory controller on the position interface
-(fake hardware ignores torques). A touch works as on a real arm: the fake hardware has no force estimate, so a fake paper stands
-in for it, at `--fake-paper-mm` above the nominal paper (default 0: the touch meets it at the
-planned end of its descent). `aris-robot serve --sim-speed inf` runs without ROS at all, on
+(fake hardware ignores torques). A touch finds contact by the position lag on a real arm; fake hardware follows the
+commanded joints exactly (no lag), so there only a fake paper's force, at `--fake-paper-mm`
+above the nominal paper, finds contact, through the 8 N force cap (about 1.6 mm in). `aris-robot serve --sim-speed inf` runs without ROS at all, on
 simulated arms that also touch a fake paper. It is useful for trying the server's commands on
 any PC.
 

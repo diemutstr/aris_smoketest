@@ -83,10 +83,15 @@ class Rows:
 
 
 class Stacks:
-    """One child process per arm, kept running; `restart(arm)` stops one and starts it again."""
+    """One child process per arm, kept running; `restart(arm)` stops one and starts it again.
+    The stacks start ONE AT A TIME (the Dell froze launching four at once, 2026-10-08): the
+    next arm's only once `ready(arm)` says the previous one has fresh joint states, or after
+    `ready_timeout` s."""
 
     def __init__(self, commands: dict, rows: Rows, log_dir: Path, first_pause: float = 1.0,
-                 max_pause: float = 60.0, env: dict | None = None):
+                 max_pause: float = 60.0, env: dict | None = None, ready=None,
+                 ready_timeout: float = 40.0):
+        self.ready, self.ready_timeout = ready, ready_timeout
         self.commands, self.rows, self.dir = commands, rows, Path(log_dir)
         self.first_pause, self.max_pause, self.env = first_pause, max_pause, env
         self.state = {a: dict(running=False, starts=0, last_exit=None, paused=False)
@@ -99,9 +104,31 @@ class Stacks:
                          for a in commands]
 
     def start(self) -> "Stacks":
-        for t in self._threads:
-            t.start()
+        self._starter = threading.Thread(target=self._one_by_one, daemon=True)
+        self._starter.start()
         return self
+
+    def _one_by_one(self) -> None:
+        arms = list(self.commands)
+        for k, (arm, t) in enumerate(zip(arms, self._threads)):
+            if self._quit.is_set():
+                return
+            t.start()
+            if k == len(arms) - 1:
+                return
+            t_end, ok = time.monotonic() + self.ready_timeout, False
+            while not self._quit.is_set() and time.monotonic() < t_end:
+                try:
+                    ok = self.ready is None or bool(self.ready(arm))
+                except Exception:                           # noqa: BLE001 (a reading error)
+                    ok = False
+                if ok and self.state[arm]["running"]:
+                    break
+                ok = False
+                self._quit.wait(0.1)
+            self.rows.say("stack ready" if ok else "stack not ready, starting the next",
+                          arm=arm, next=arms[k + 1],
+                          **({} if ok else dict(waited_s=self.ready_timeout)))
 
     def _keep(self, arm) -> None:
         pause, st = self.first_pause, self.state[arm]
@@ -185,7 +212,8 @@ class Stacks:
                 os.killpg(p.pid, signal.SIGKILL)
                 p.wait()
         for t in self._threads:
-            t.join(timeout=1.0)
+            if t.is_alive():
+                t.join(timeout=1.0)
 
 
 def sync_calibration(remote, config_dir) -> list[int] | Refusal:

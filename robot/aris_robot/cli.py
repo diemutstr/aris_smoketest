@@ -15,6 +15,8 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
+
 from aris.rig import Rig
 
 from aris_robot import bringup, site as site_mod, tools
@@ -63,9 +65,12 @@ def cmd_serve(a, site, rig) -> int:
         from aris_robot.driver import RosArm
         files = [f for f in bringup.write(rig, site, a.out, fake=a.fake)
                  if json.loads(f.read_text())["arm"] in mounted]
-        stacks = Stacks(launch_commands(files, site), rows, log_dir).start()
         drivers = {i: RosArm(site, rig, i, fake=a.fake, fake_paper_m=a.fake_paper_mm / 1000.0)
                    for i in mounted}
+        # one stack at a time: the next once this one's joint states are fresh (or 40 s)
+        stacks = Stacks(launch_commands(files, site), rows, log_dir,
+                        ready=lambda arm: bool(np.all(np.isfinite(drivers[arm].state().q)))
+                        ).start()
         for i, d in drivers.items():          # recovery steps as rows; a stalled stack restarts
             d.say = lambda event, _i=i, **f: rows.say(event, arm=_i, **f)
             d.restart_stack = lambda _i=i: stacks.restart(_i)

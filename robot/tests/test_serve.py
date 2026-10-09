@@ -139,8 +139,7 @@ def test_serve_takes_every_command_from_the_server(tmp_path):
     contact = next(r for r in cal_rows if r["event"] == "contact")
     kin = Kinematics.of(rig, "2L")
     paper = FakePaper(kin, rig.paper("2L"), 0.003)
-    assert abs(float(kin.tip(np.array(contact["q"]))[0] @ paper.n) - paper.c
-               + 3.0 / 5000.0) < 0.00025
+    assert abs(float(kin.tip(np.array(contact["q"]))[0] @ paper.n) - paper.c) < 0.0003
     assert rows[events.index("recovered")]["arm"] == "2L"
     assert "not a mounted arm" in rows[events.index("recover refused")]["why"]
     assert all(set(r["where"]) == {"2L", "2R"} for r in rows if r["event"] == "where")
@@ -472,3 +471,27 @@ def test_where_rows_keep_flowing_while_a_job_runs(tmp_path):
     op.quit.set()
     t.join(timeout=2)
     assert all(r["where"]["2L"] == pytest.approx([0.3] * 7) for r in said if r["event"] == "where")
+
+
+def test_stacks_start_one_at_a_time(tmp_path):
+    """The next arm's stack starts only once the previous one has fresh joint states (or
+    after the timeout): never all at once."""
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    lasting = [sys.executable, "-c", "import time; time.sleep(100)"]
+    fresh = set()
+    st = Stacks({"1L": lasting, "1R": lasting, "2L": lasting}, rows, tmp_path,
+                ready=lambda arm: arm in fresh, ready_timeout=1.0).start()
+    assert _wait_for(lambda: st.state["1L"]["running"], 10.0)
+    time.sleep(0.4)
+    assert not st.state["1R"]["running"]                       # 1L not fresh yet
+    fresh.add("1L")
+    assert _wait_for(lambda: st.state["1R"]["running"], 5.0)
+    assert not st.state["2L"]["running"]
+    # 1R never comes up fresh: the next starts after the timeout
+    assert _wait_for(lambda: st.state["2L"]["running"], 5.0)
+    events = [(r["event"], r["arm"]) for r in said if r["event"].startswith("stack ")]
+    assert events.index(("stack ready", "1L")) < events.index(("stack started", "1R"))
+    assert ("stack not ready, starting the next", "1R") in events
+    st.stop(grace=5.0)

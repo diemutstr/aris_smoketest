@@ -5,6 +5,8 @@ This is the only file besides driver.py and tools.py that imports ROS.  Names, a
   franka/joint_states                                    sensor_msgs/JointState (100 Hz)
   franka_robot_state_broadcaster/robot_state             franka_msgs/FrankaRobotState
   fr3_arm_controller/follow_joint_trajectory             control_msgs action
+  fr3_arm_controller/controller_state                    control_msgs/JointTrajectoryControllerState
+                                                         (its `reference`: what is commanded now)
   action_server/error_recovery                           franka_msgs/ErrorRecovery action
   controller_manager/{list,switch}_controller(s), set_hardware_component_state
   service_server/set_full_collision_behavior             franka_msgs/SetFullCollisionBehavior
@@ -23,6 +25,7 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
 from control_msgs.action import FollowJointTrajectory
+from control_msgs.msg import JointTrajectoryControllerState
 from controller_manager_msgs.srv import (ListControllers, SetHardwareComponentState,
                                          SwitchController)
 from franka_msgs.action import ErrorRecovery, Grasp, Homing, Move
@@ -66,9 +69,12 @@ class ArmNode:
         self.q = self.qd = None
         self.joint_stamp, self.joint_rx = None, None   # the newest joint state: stamp, arrival
         self.robot_state = None
-        self.readings = collections.deque(maxlen=4096)   # (q, F) per robot state, for touch
+        self.readings = collections.deque(maxlen=4096)   # (q, F, t, q_ref) per robot state
+        self.reference = None                            # (q_ref, arrival) from the JTC
         self.joint_readings = collections.deque(maxlen=4096)   # q per joint state
         n.create_subscription(JointState, f"{ns}/franka/joint_states", self._on_joints, 10)
+        n.create_subscription(JointTrajectoryControllerState,
+                              f"{ns}/{TRAJECTORY}/controller_state", self._on_controller, 10)
         n.create_subscription(FrankaRobotState, f"{ns}/franka_robot_state_broadcaster/robot_state",
                               self._on_robot_state, 10)
         self.follow = ActionClient(n, FollowJointTrajectory,
@@ -98,6 +104,21 @@ class ArmNode:
             return None
         return [idx[n] for n in self.names]
 
+    def _on_controller(self, m) -> None:
+        idx = {name: i for i, name in enumerate(m.joint_names)}
+        if not all(n in idx for n in self.names) or \
+                len(m.reference.positions) < len(m.joint_names):
+            return
+        q_ref = np.array([m.reference.positions[idx[n]] for n in self.names])
+        with self._lock:
+            self.reference = (q_ref, time.monotonic())
+
+    def _reference_now(self):
+        """The JTC's newest commanded joints if they are recent (50 ms), else None (the
+        topic is not there: the caller falls back to the planned sample at the time)."""
+        r = self.reference
+        return None if r is None or time.monotonic() - r[1] > 0.05 else r[0]
+
     def _on_joints(self, m: JointState) -> None:
         order = self._ordered(m)
         if order is None:
@@ -106,7 +127,7 @@ class ArmNode:
         qd = np.array([m.velocity[i] for i in order]) if len(m.velocity) else np.zeros(7)
         with self._lock:
             self.q, self.qd = q, qd
-            self.joint_readings.append(q)
+            self.joint_readings.append((q, time.monotonic(), self._reference_now()))
             self.joint_stamp = m.header.stamp.sec + 1e-9 * m.header.stamp.nanosec
             self.joint_rx = time.monotonic()
 
@@ -118,7 +139,8 @@ class ArmNode:
             self.robot_state = m
             if order is not None:
                 self.readings.append((np.array([js.position[i] for i in order]),
-                                      np.array([f.x, f.y, f.z])))
+                                      np.array([f.x, f.y, f.z]), time.monotonic(),
+                                      self._reference_now()))
 
     def _on_gripper(self, m) -> None:
         if len(m.position):
@@ -151,11 +173,12 @@ class ArmNode:
             return self.joint_stamp, time.monotonic() - self.joint_rx
 
     def drain_readings(self, joints_only: bool = False) -> list:
-        """Every (q, F) from the robot state since the last call; `joints_only`: every q from
-        the joint states instead (fake hardware has no robot state), with F None."""
+        """Every (q, F, t, q_ref) from the robot state since the last call (t: time.monotonic()
+        when it arrived; q_ref: the JTC's commanded joints then, or None); `joints_only`:
+        every q from the joint states instead (fake hardware has no robot state), F None."""
         with self._lock:
             if joints_only:
-                out = [(q, None) for q in self.joint_readings]
+                out = [(q, None, t, r) for q, t, r in self.joint_readings]
                 self.joint_readings.clear()
             else:
                 out = list(self.readings)
