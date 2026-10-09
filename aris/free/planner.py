@@ -15,6 +15,7 @@ Everything is in the arm's base frame; obstacles arrive as geometry.  Seven step
 from __future__ import annotations
 
 import hashlib
+import dataclasses
 import time
 from dataclasses import dataclass, field
 
@@ -199,7 +200,11 @@ def _time_and_verify(checker, arm, path, rules, gates, options, st) -> Motion | 
     while budgets:
         budget = budgets.pop(0)
         t = time.perf_counter()
-        res = retime_detailed(JointPath(path), arm.limits, rules, deviation=budget)
+        # a free flight has its own shares of the speed and acceleration limits (rig.json
+        # drawing.free_*): at 0.3 and 0.9 the arms wobbled where a flight ended (2026-10-09)
+        slow = dataclasses.replace(rules, speed_fraction=rules.free_speed_fraction)
+        res = retime_detailed(JointPath(path), arm.limits, slow, deviation=budget,
+                              accel_fraction=rules.free_accel_fraction)
         st.t_time += time.perf_counter() - t
         if isinstance(res, Refusal):
             why = f"retime: {res.reason} {res.detail}"

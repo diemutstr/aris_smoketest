@@ -376,7 +376,10 @@ def test_rules(rig):
     r = rig.rules()
     # press and speed on the paper are the current pen's (graphite_4h, 2026-10-01)
     assert r.draw_speed == 0.015 and r.press == 0.0016 and r.landing_speed == 0.003
-    assert r.speed_fraction == 0.30 and abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
+    assert r.speed_fraction == 0.30
+    # flights between poses at 0.15 of the joint speed and acceleration limits (2026-10-09)
+    assert r.free_speed_fraction == 0.15 and r.free_accel_fraction == 0.15
+    assert abs(r.lean_max - np.deg2rad(15.0)) < 1e-15
     assert r.gates == rig.gates()
 
 

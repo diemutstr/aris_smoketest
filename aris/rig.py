@@ -473,7 +473,9 @@ class Rig:
                          landing_speed=d.get("landing_speed_m_per_s", 0.010),
                          lean_max=float(np.deg2rad(self.gate_cfg["pen_lean_max_deg"])),
                          min_piece=d["min_piece_m"], speed_fraction=d["speed_fraction"],
-                         accel_fraction=float(d.get("accel_fraction", 0.9)),
+                         free_speed_fraction=float(d.get("free_speed_fraction",
+                                                         d["speed_fraction"])),
+                         free_accel_fraction=float(d.get("free_accel_fraction", 0.9)),
                          gates=self.gates())
 
     AT_PARK_RAD = 1e-6                 # a configuration this close to the park counts as parked

@@ -1,7 +1,7 @@
 {
  "about": {
   "derived_from": "config/rig.json",
-  "source_digest": "c0d120cfee29bb61c5f8a1de",
+  "source_digest": "dc3c7ffe9129550948d4a645",
   "mounted": [
    "2L",
    "2R"
@@ -599,7 +599,10 @@
   "landing_speed_note": "the pen tip's speed over the last millimetres of a lower, as it meets the paper: 3 mm/s was needed on the hardware (site, 2026-10-06; a rigid pen landing fast trips the reflex). The descent above that is flown at the normal speed.",
   "min_piece_m": 0.01,
   "speed_fraction": 0.3,
-  "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
+  "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit",
+  "free_speed_fraction": 0.15,
+  "free_accel_fraction": 0.15,
+  "free_note": "the shares of the joint speed and acceleration limits (10 rad/s^2) a FREE flight between poses may use (aris/free/planner.py). 0.3 and 0.9 flew until 2026-10-09 (Pete at the rig: the flights are aggressive and the arms wobble where they end). Drawing motions, lowers and lifts keep speed_fraction and the retimer's own 0.9"
  },
  "pens": {
   "source": "the pens the holder can carry; `current` names the one that is in (DESIGN 4c, 2026-10-02). rig.pen() hands out the current entry (plus its name) and the server copies it into every job header; rig.rules() takes press and drawing speed from it; the tool model takes its length and capsule radius from it unless the slot's calibration has a passing pen part for this pen.",

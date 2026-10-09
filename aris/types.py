@@ -318,7 +318,10 @@ class DrawRules:
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down
     speed_fraction: float = 0.30       # fraction of the joint speed limits that may be used
-    accel_fraction: float = 0.90       # fraction of the joint acceleration limits, likewise
-                                       # (rig.json drawing.accel_fraction; 0.9 of 10 rad/s^2
-                                       # left the arms wobbling at the end of a flight)
+    # A FREE flight between poses (aris/free/planner.py) has its own shares of the joint
+    # speed and acceleration limits (rig.json drawing.free_*): at 0.3 and 0.9 the arms wobbled
+    # where a flight ended (2026-10-09).  Drawing motions, lowers and lifts keep
+    # speed_fraction and the retimer's 0.9.
+    free_speed_fraction: float = 0.30
+    free_accel_fraction: float = 0.90
     gates: Gates = field(default_factory=Gates)

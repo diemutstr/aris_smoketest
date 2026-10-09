@@ -262,6 +262,18 @@ def test_the_descent_waits_for_the_arm_to_stand_still(rig, setup):
     assert r.done and r.stats["not_at_rest"] == pos.verdict
 
 
+def test_the_cap_on_the_extra_depth_allows_the_planner_its_deepest_touch():
+    """2026-10-09: the planner asked 40 mm for the first touch of an unmeasured slot and the
+    robot PC's cap was 30: every first touch was refused.  The code's default and the
+    repository's site file both stand above what the planner asks."""
+    import json
+    from aris.server import calibrate
+    deepest = max(calibrate.UNCAL_DEPTH, calibrate.CalibSettings().extra_depth)
+    site = json.loads((CONFIG.parent / "robot" / "site.json").read_text())["touch"]
+    assert TouchSettings().extra_max >= deepest
+    assert TouchSettings.from_site(site).extra_max >= deepest
+
+
 def test_refusals_before_moving(rig, setup):
     q0, m = setup
     import dataclasses
