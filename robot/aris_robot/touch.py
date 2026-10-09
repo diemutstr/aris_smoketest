@@ -101,6 +101,8 @@ class TouchSettings:
                                    # flew at the free-flight speed until 2026-10-09: "the
                                    # retraction is crazy fast", Pete at the rig)
     tare_readings: int = 20        # readings at the hover averaged for the force zero
+    readings_min_hz: float = 30.0  # readings a second the robot must give at the hover (it
+                                   # gave about 85 on 2026-10-09); fewer: no descent
     extra_max: float = 0.05        # m, the most a touch may go past its planned end (the
                                    # planner's largest is calibrate.UNCAL_DEPTH, 40 mm)
     step: float = 0.001            # m between IK samples of that extension
@@ -547,6 +549,12 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
     zero = tare(at_hover[-s.tare_readings:])
     if isinstance(zero, Refusal):
         return TouchResult(False, f"{zero.reason}: {zero.detail}")
+    if len(at_hover) < s.readings_min_hz * s.tare_s:
+        # the descent is flown on these readings: too few of them standing still is no
+        # state to go down in (a robot PC in trouble, a stack that just restarted)
+        return TouchResult(False, f"only {len(at_hover)} readings in {s.tare_s:g} s at the hover "
+                                  f"(at least {s.readings_min_hz:g} a second are needed): the "
+                                  f"robot's readings are too sparse to descend on")
     descent, tips = descent_half(motion, kin)
     tip_cmd, tip_act = kin.tip(np.array([descent.q[0], pos.joints()]))
     lag0 = float((tip_cmd - tip_act) @ np.asarray(kin.down, float))
@@ -579,10 +587,22 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
         out.depth_past_end = max(0.0, float(depth))
     else:
         out.why = watch.why or (status if status not in ("", "cancelled") else "no contact")
-    back = _way_back(pos.joints(), knots, motion.q_end, kin, s.back_speed)
+    # the way back up.  An arm that gives no reading any more (a reflex, a dropped link: the
+    # robot stopped by itself) is left where it is and the touch says so: on 2026-10-09 this
+    # place crashed on the missing reading and took the touch's numbers with it.
+    q_now = np.asarray(pos.joints(), float)
+    sep = "; " if out.why else ""
+    if not np.all(np.isfinite(q_now)):
+        out.done, out.why = False, f"{out.why}{sep}the arm gives no reading: no way back flown"
+        return out
+    back = _way_back(q_now, knots, motion.q_end, kin, s.back_speed)
+    if isinstance(back, Refusal):
+        out.done = False
+        out.why = f"{out.why}{sep}no way back: {back.reason} {back.detail}"
+        return out
     went = pos.fly(back, lambda q, F, t, q_ref=None: False)
     if went:
-        out.done, out.why = False, f"{out.why + '; ' if out.why else ''}the way back: {went}"
+        out.done, out.why = False, f"{out.why}{sep}the way back: {went}"
     return out
 
 

@@ -197,6 +197,40 @@ def test_the_paper_is_still_found_on_such_an_arm(rig, setup, field, height):
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0005, r.stats
 
 
+def test_an_arm_that_stops_reporting_ends_the_touch_cleanly(rig, setup):
+    """Job 021: the robot stopped itself in the descent (a reflex), its readings went away,
+    and the touch crashed on the missing reading (\"'Refusal' object has no attribute 't'\")."""
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+
+    class Gone(SimPositionArm):
+        def fly(self, traj, watch):
+            self.flights.append(traj)
+            self.dead = True
+            return "Move command aborted: motion aborted by reflex"
+
+        def joints(self):
+            return np.full(7, np.nan) if getattr(self, "dead", False) else super().joints()
+
+    pos = Gone(q0, FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and len(pos.flights) == 1                  # no way back attempted
+    assert "aborted by reflex" in r.why and "gives no reading: no way back flown" in r.why
+
+
+def test_sparse_readings_at_the_hover_are_no_state_to_descend_in(rig, setup):
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+
+    class Sparse(SimPositionArm):
+        def forces(self, seconds):
+            return super().forces(seconds)[:4]                   # 20 a second
+
+    pos = Sparse(q0, FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and not pos.flights and "too sparse to descend on" in r.why
+
+
 class Creeping(SimPositionArm):
     """The arm falls further behind its command as it descends, in steps: 0.45 mm within
     0.7 s halfway down and 0.35 mm more near the end (1L, 2026-10-09, in free air)."""

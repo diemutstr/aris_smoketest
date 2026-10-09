@@ -266,7 +266,13 @@ def run_job(remote: Remote, job_id: str, rig, config_dir, work_dir, drivers: dic
     if isinstance(settings, Refusal):
         return settings
     progress("collision thresholds")
-    threshold_note = _collision(drivers, "job")
+    # A job that touches the paper on purpose (calibrate, touch-off) keeps the robot's own
+    # collision thresholds at the site's "normal" ones (20 N), not the raised "job" ones
+    # (40 N): the robot itself then stops a descent the detector missed after a millimetre
+    # or two, not after thirteen (1L, 2026-10-09, job 021: nothing fired, the pen went
+    # 13 mm into the table before the 40 N reflex).  Its flights are slow enough for that.
+    touching = header.get("kind") in ("calibrate", "touchoff")
+    threshold_note = _collision(drivers, "normal" if touching else "job")
     if threshold_note:      # the arms keep their normal (lower) thresholds: noted, not refused
         settings["collision_thresholds_not_set"] = threshold_note
     try:

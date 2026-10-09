@@ -36,6 +36,7 @@ from aris_robot.gripper import Gripper, GripperSettings
 from aris_robot.rosarm import BROADCASTERS, MODES, TRAJECTORY, ArmNode, GripperRos, wait
 
 TICK = 0.005               # s between two looks at a running goal
+BLIND_S = 0.3              # s without a reading from the robot: a watched flight is stopped
 
 
 class RosArm:
@@ -409,12 +410,23 @@ class RosArm:
                                  self.state().q)
         result = handle.get_result_async()
         deadline = time.monotonic() + float(traj.t[-1] - traj.t[0]) + 5.0
+        last_reading = time.monotonic()
         while not result.done():
             if self._halt.is_set():
                 wait(handle.cancel_goal_async(), 2.0)
                 return Result.failed("stopped", self.state().q)
             if watch is not None:
-                for q, f, rx, q_ref in self.ros.drain_readings(self.fake):
+                got = self.ros.drain_readings(self.fake)
+                if got:
+                    last_reading = time.monotonic()
+                elif time.monotonic() - last_reading > BLIND_S:
+                    # a watched flight is flown on the robot's readings: without them the
+                    # arm would go on blind, so it stops here
+                    wait(handle.cancel_goal_async(), 2.0)
+                    time.sleep(0.05)
+                    return Result.failed(f"the robot's readings stopped for {BLIND_S:g} s "
+                                         f"during a watched flight: stopped", self.state().q)
+                for q, f, rx, q_ref in got:
                     t = float(traj.t[0]) + (rx - t_sent)    # the fallback for q_ref
                     if watch(q, self.fake_paper.force(q) if self.fake else f, t, q_ref):
                         wait(handle.cancel_goal_async(), 2.0)
