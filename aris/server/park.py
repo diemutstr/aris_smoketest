@@ -24,7 +24,7 @@ import numpy as np
 from aris.free import plan as free_plan
 from aris.server.jobs import arm_progress
 from aris.server.steps import (LIFT_EXTRA, Scene, Step, checked_step, lift_pens,
-                               pen_down, steps_work)
+                               pen_down, rise_first, steps_work)
 from aris.types import Refusal
 
 __all__ = ["submit_park", "plan_park", "Step", "pen_down", "LIFT_EXTRA"]
@@ -56,12 +56,14 @@ def plan_park(st, where: dict) -> list[Step]:
         if a in stuck:
             continue                               # its pen could not rise; it stays
         obs, standing, phase = scene.of(a, now, (a,), (), f"park {a}")
-        m = free_plan(rig.arm(a), now[a], rig.park_q(a), obs, st.rules_for(a),
-                      seed_extra=b"park")
+        # an arm standing low over the table leaves it straight up first (steps.rise_first)
+        rise = rise_first(st, (obs, standing, phase), now[a], a)
+        m = free_plan(rig.arm(a), now[a] if rise is None else rise.q_end, rig.park_q(a), obs,
+                      st.rules_for(a), seed_extra=b"park")
         if isinstance(m, Refusal):
             steps.append(Step(a, phase, why=f"free-space planner: {m.reason}: {m.detail}"))
             continue
-        s = checked_step(st, a, [m], phase, now[a], standing)
+        s = checked_step(st, a, ([] if rise is None else [rise]) + [m], phase, now[a], standing)
         steps.append(s)
         if not s.why:
             now[a] = rig.park_q(a)

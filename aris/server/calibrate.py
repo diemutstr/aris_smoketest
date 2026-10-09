@@ -178,6 +178,14 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
             return Plan(a, phase, [], np.zeros((0, 2)), [], None, up.why)
         steps.append(Step(a, phase, up.motions, up.verdicts, standing))
         q = up.motions[-1].q_end
+    if not rig.at_park(a, q):          # standing low over the table: straight up first
+        from aris.server.steps import checked_step, rise_first
+        rise = rise_first(st, (obs, standing, phase), q, a)
+        if rise is not None:
+            s = checked_step(st, a, [rise], phase, q, standing)
+            if not s.why:
+                steps.append(s)
+                q = rise.q_end
     arm, gates = rig.arm(a), rules.gates
     guard = Guard(arm, obs, gates)
     paper = rig.paper(a, for_planning=True)

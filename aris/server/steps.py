@@ -92,6 +92,36 @@ def checked_step(st, a, motions, phase, q, standing) -> Step:
                 "checker: " + "; ".join(bad) if bad else "")
 
 
+RISE_BELOW = 0.120       # m above the nominal paper: an arm off its park whose pen tip stands
+                         # lower than this rises before it flies
+RISE = 0.040             # m: straight up by this much
+RISE_SPEED = 0.010       # m/s
+
+
+def rise_first(st, scene_of, q, a) -> Motion | None:
+    """A short straight rise for an arm that stands low over the table, off its park (a job
+    that stopped in the middle of a flight, a touch that failed): the real table may stand
+    above the rig's (an arm whose height and tilt are not measured), so the arm leaves it
+    vertically and slowly before a flight plans its way sideways (Pete, 2026-10-09: "jog the
+    arm vertically by a tiny bit").  None when the arm stands high enough, or when the rise
+    cannot be planned: the flight is then planned from where the arm stands, as before."""
+    obs, _, _ = scene_of
+    rig, rules = st.rig, st.rules_for(a)
+    arm, q = rig.arm(a), np.asarray(q, float)
+    tip = rig.to_table(a, arm.tip(q[None])[0])
+    if float(tip[2] - rig.paper_z) >= RISE_BELOW:
+        return None
+    path = rise_path(arm, Guard(arm, obs, rules.gates), q, rig.paper(a, for_planning=True),
+                     RISE, 0.002, 0.15, rules.gates)
+    if isinstance(path, str):
+        return None
+    tips = arm.tip(path)
+    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(tips, axis=0), axis=1))])
+    res = retime_detailed(JointPath(path), arm.limits, replace(rules, draw_speed=RISE_SPEED),
+                          s=s, tip_of=arm.tip, smooth=True)
+    return None if isinstance(res, Refusal) else Motion("free", res.traj)
+
+
 RECOVERY_LIMIT_MARGIN = 0.075   # rad: a pen stopped near a joint limit may rise this close
 
 
