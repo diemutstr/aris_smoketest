@@ -90,8 +90,11 @@ class TouchSettings:
     rest_wait_s: float = 6.0       # s waited for it at most
     force_cap_n: float = 8.0       # N over the zero: the safety stop
     force_ticks: int = 3           # readings in a row over the cap
-    extra_speed: float = 0.002     # m/s past the planned end (the one speed setting: the
-                                   # planned descent is timed by the planner)
+    extra_speed: float = 0.002     # m/s past the planned end (the descent itself is timed by
+                                   # the planner)
+    back_speed: float = 0.030      # m/s of the pen tip on the way back up to the hover (it
+                                   # flew at the free-flight speed until 2026-10-09: "the
+                                   # retraction is crazy fast", Pete at the rig)
     tare_readings: int = 20        # readings at the hover averaged for the force zero
     extra_max: float = 0.05        # m, the most a touch may go past its planned end (the
                                    # planner's largest is calibrate.UNCAL_DEPTH, 40 mm)
@@ -273,7 +276,9 @@ class _Watch:
         self.air_lag = None            # m: the median lag in the air at speed (flight 1)
         self.late = None               # s: how long after the commanded tip the actual one
                                        # started to move (flight 1)
-        self.max_short, self.max_force = 0.0, None
+        self.delay = None              # s: the arm follows the planned trajectory this late
+        self.noise_res = None          # m: the largest residual seen in the air (flight 1)
+        self.max_short, self.max_force, self.max_res = 0.0, None, 0.0
         self.flight, self.readings, self.trace = 0, 0, []
         self.stop_at = None            # what the readings were at the stop
 
@@ -302,12 +307,44 @@ class _Watch:
         self.t_armed = self.t_speed + settle
         self._t_cmd_moved = self._t_act_moved = self._da0 = None
         self.ts, self.dcs, self.das, self.qs = [], [], [], []
-        self.run, self.frun, self.first = 0, 0, None
+        self.run, self.frun, self.rrun, self.first = 0, 0, 0, None
         self._air_short, self._air_force, self._air_lag = [], [], []
         self._t_first, self._t_last = None, None
+        self.lag_start = None          # m: commanded minus actual depth as the flight starts
 
     def threshold(self) -> float:
         return max(self.s.lag_m, self.s.noise_factor * (self.noise or 0.0))
+
+    def threshold_res(self) -> float:
+        return max(2.0 * self.s.lag_m, self.s.noise_factor * (self.noise_res or 0.0))
+
+    def _depth_cmd(self, t) -> float:
+        tc = float(np.clip(t, self.traj.t[0], self.traj.t[-1]))
+        return float((self.kin.tip(self.sample(self.traj, [tc])[0])[0] - self.tip0) @ self.d)
+
+    def _residual(self, t, da) -> float | None:
+        """How far the actual tip is behind where the planned trajectory had it `delay` ago,
+        less what it was behind as the flight started: about zero while the arm follows, at
+        any speed, also while the flight slows down and stops; it grows by the commanded
+        advance once the tip stands on the paper."""
+        if self.delay is None or self.lag_start is None:
+            return None
+        return self._depth_cmd(t - self.delay) - da - self.lag_start
+
+    def _learn_delay(self) -> None:
+        """At the end of the air window: the delay from the lag at speed, and the residual's
+        own noise over the readings of that window."""
+        k0 = bisect.bisect_left(self.ts, self.t_speed + self.s.late_max_s)
+        if self.air_lag is None or self.lag_start is None or len(self.ts) - k0 < 6:
+            return
+        span = self.ts[-1] - self.ts[k0]
+        v = (self.dcs[-1] - self.dcs[k0]) / span if span > 0 else 0.0
+        if v <= 0.0:
+            return
+        self.delay = float(np.clip((self.air_lag - self.lag_start) / v, 0.0, self.s.late_max_s))
+        res = [self._depth_cmd(self.ts[k] - self.delay) - self.das[k] - self.lag_start
+               for k in range(k0, len(self.ts))]
+        self.noise_res = float(np.max(np.abs(res)))
 
     def _depths(self, q, t) -> tuple[float, float]:
         tc = float(np.clip(t, self.traj.t[0], self.traj.t[-1]))
@@ -368,11 +405,14 @@ class _Watch:
                 self._t_act_moved = t
                 if self._t_cmd_moved is not None:
                     self.late = float(np.clip(t - self._t_cmd_moved, 0.0, s.late_max_s))
+        if self.lag_start is None and len(self.ts) >= 3:
+            self.lag_start = float(np.median(np.subtract(self.dcs[:3], self.das[:3])))
         armed = t >= self.t_armed
         if armed and self.noise is None:              # the air window is over: its numbers
             self.noise = float(np.max(np.abs(self._air_short))) if self._air_short else 0.0
             self.zero_motion = float(np.median(self._air_force)) if self._air_force else None
             self.air_lag = float(np.median(self._air_lag)) if self._air_lag else None
+            self._learn_delay()
         zero = self.zero_motion if (armed and self.zero_motion is not None) else self.zero
         fn = None if F is None else normal_force(F, self.kin.normal, s.sign)
         f = None if fn is None else fn - zero
@@ -386,25 +426,46 @@ class _Watch:
                 self._air_short.append(win[1] - win[2])
             if fn is not None:
                 self._air_force.append(fn)
-            self._air_lag.append(dc - da)
+            if t >= self.t_speed + s.late_max_s:
+                self._air_lag.append(dc - da)
         if f is not None:
             self.max_force = f if self.max_force is None else max(self.max_force, f)
+        # the lag rule's signal: known from the end of the first flight's air window on, and
+        # from the first readings of every later flight
+        res = None if (self.flight == 1 and not armed) else self._residual(t, da)
+        if res is not None:
+            self.max_res = max(self.max_res, res)
+        back = max(0, bisect.bisect_left(self.ts, t - s.stall_window_max_s))
         # ---- the force cap: the safety stop, whenever
         self.frun = self.frun + 1 if (f is not None and f > s.force_cap_n) else 0
         if self.frun >= s.force_ticks:
             any_win = self._window(t, 0.0, None)
             short = None if any_win is None else any_win[1] - any_win[2]
-            self.rule, self.force_at, self.lag_at = "force cap", f, short
+            behind = max([x for x in (short, res) if x is not None], default=None)
+            self.rule, self.force_at, self.lag_at = "force cap", f, behind
             self.stop_at = dict(t=t, depth_m=da + self.off, commanded_m=dc + self.off)
-            if short is not None and short >= s.lag_m:
-                self.contact_q = self._rest(any_win[0])
+            if behind is not None and behind >= s.lag_m:
+                self.contact_q = self._rest(back)
             else:
                 self.why = (f"stopped by the force cap in the air: {f:.1f} N over the zero "
-                            f"while the tip was following (it fell "
-                            f"{0.0 if short is None else short * 1000:.2f} mm short): not a "
+                            f"while the tip was following (it was "
+                            f"{0.0 if behind is None else behind * 1000:.2f} mm behind): not a "
                             "contact. Something in the way, or this arm's force estimate "
                             "(robot/site.json touch.force_cap_n)")
             return True
+        # ---- the lag rule: the tip is behind where the trajectory had it, by more than the
+        # arm's own delay explains (it also sees a paper met while the flight slows down)
+        if res is not None and res >= self.threshold_res():
+            if self.rrun == 0:
+                self.first_res = (self._rest(back), res, f)
+            self.rrun += 1
+            if self.rrun >= s.lag_ticks:
+                self.contact_q, self.lag_at, self.force_at = self.first_res
+                self.rule = "lag"
+                self.stop_at = dict(t=t, depth_m=da + self.off, commanded_m=dc + self.off)
+                return True
+        else:
+            self.rrun = 0
         # ---- the stall rule
         if armed and win is not None:
             i, d_cmd, d_act = win
@@ -434,7 +495,10 @@ class _Watch:
                     at_speed_s=num(self.t_speed - self.traj.t[0]),
                     armed_s=num(self.t_armed - self.traj.t[0]),
                     air_noise_mm=mm(self.noise), air_lag_mm=mm(self.air_lag),
-                    late_s=num(self.late),
+                    late_s=num(self.late), delay_s=num(self.delay),
+                    air_residual_mm=mm(self.noise_res),
+                    lag_threshold_mm=mm(self.threshold_res()) if self.delay is not None else None,
+                    largest_residual_mm=mm(self.max_res),
                     threshold_mm=mm(self.threshold()), largest_shortfall_mm=mm(self.max_short),
                     force_zero_standing_n=num(self.zero), force_zero_moving_n=num(self.zero_motion),
                     largest_force_n=num(self.max_force),
@@ -493,22 +557,32 @@ def touch(motion, pos: PositionArm, kin: Kinematics, s: TouchSettings) -> TouchR
         out.depth_past_end = max(0.0, float(depth))
     else:
         out.why = watch.why or (status if status not in ("", "cancelled") else "no contact")
-    back = _way_back(pos.joints(), knots, motion.q_end, kin)
+    back = _way_back(pos.joints(), knots, motion.q_end, kin, s.back_speed)
     went = pos.fly(back, lambda q, F, t, q_ref=None: False)
     if went:
         out.done, out.why = False, f"{out.why + '; ' if out.why else ''}the way back: {went}"
     return out
 
 
-def _way_back(q_now, knots, q_hover, kin: Kinematics):
-    """From where the arm stands, back over the knots it passed, to the hover."""
+def _way_back(q_now, knots, q_hover, kin: Kinematics, speed: float | None = None):
+    """From where the arm stands, back over the knots it passed, to the hover; the pen tip at
+    `speed` (m/s) at most (None: as fast as a free flight)."""
     down = kin.down
     tips = kin.tip(np.array(knots))
     here = float(kin.tip(q_now)[0] @ down)
     passed = [q for q, p in zip(knots, tips) if float(p @ down) < here - 1e-6]
     path = np.array([np.asarray(q_now, float)] + passed[::-1] + [np.asarray(q_hover, float)])
     keep = np.concatenate([[True], np.abs(np.diff(path, axis=0)).max(axis=1) > 1e-9])
-    return retime(JointPath(path[keep]), kin.arm.limits, kin.rules)
+    path = path[keep]
+    if speed is not None and len(path) >= 2:
+        along = np.linalg.norm(np.diff(kin.tip(path), axis=0), axis=1)
+        if np.all(along > 1e-9):                # timed along the pen tip's way, at `speed`
+            slow = retime(JointPath(path), kin.arm.limits,
+                          dataclasses.replace(kin.rules, draw_speed=float(speed)),
+                          s=np.concatenate([[0.0], np.cumsum(along)]))
+            if not isinstance(slow, Refusal):
+                return slow
+    return retime(JointPath(path), kin.arm.limits, kin.rules)
 
 
 class FakePaper:
