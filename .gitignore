@@ -12,3 +12,5 @@ tests/data/server_big.json
 tests/data/server_long.json
 config/*/pens.json
 config/pens.json
+config/calibration/*.json
+config/calibration/removed/
