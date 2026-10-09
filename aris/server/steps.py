@@ -238,6 +238,23 @@ def queue_steps(job, rec, steps, note: str) -> bool:
     return moving
 
 
+def wait_phase(rec, name, poll=0.05) -> str:
+    """Waits until phase `name` has run (its "phase done" row) -> "", or the job ended first
+    -> why (a failed phase, a stop, the run's end)."""
+    import time
+    while True:
+        for r in rec.log.read():
+            if r.get("phase") == name and r.get("event") == "phase done":
+                return ""
+            ev = str(r.get("event", ""))
+            if ev == "phase failed" or (ev.startswith("job ") and ev not in ("job state",
+                                                                            "job started")):
+                return str(r.get("why") or ev)
+        if rec.stop.is_set():
+            return "stop requested"
+        time.sleep(poll)
+
+
 def run_queued(st, rec, job, moving: bool, where: dict):
     """The coordinator's JobRun for the queued job (the robot's, read from its rows)."""
     from aris.server.runner import robot_run, wait_robot

@@ -23,6 +23,21 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-08, night — contact by the encoders, not by force
+
+What changed: the plane fit failed on 1L/1R (contacts ±4 cm) because the force estimate on
+those arms is useless at 3 N. The touch now finds the paper by POSITION LAG: the controller keeps
+commanding the pen down, and the moment the real tip stops following (0.3 mm), that is the
+contact — encoders, not force; the force only stops the arm as a safety cap (8 N) and then also
+counts as the contact. Same for every pen and arm. Also: a slot with no height calibration makes
+its first touch from 60 mm above the nominal paper and plans the rest from that contact (the
+free move that hit the table in job 1594 cannot happen again); and the robot PC starts the
+stacks one at a time (four at once froze the Dell).
+
+What to do: install, then `aris calibrate` on each arm again (the earlier fits are not written,
+nothing to remove), `aris touchoff`, `aris mark --group rows12`, `aris crosses --group rows12`.
+Per touch, the job's rows say which rule found the contact (lag or cap), the lag and the force.
+
 ## 2026-10-08, late night — a pen per arm
 
 What changed: each arm has its own pen (gel in the back row, pencils in the middle row, on one

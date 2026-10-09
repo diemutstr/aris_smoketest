@@ -151,10 +151,15 @@ def check_touch(config_dir, a, m: Motion, phase, q_before, standing=None):
 
 
 def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings(),
-                   points=None, name: str = "calibrate", min_points: int | None = None) -> Plan:
+                   points=None, name: str = "calibrate", min_points: int | None = None,
+                   paper_dz: float = 0.0, home: bool = True) -> Plan:
     """The calibrate job's motions for arm `a`, from where every arm stands (`where`).
     `points`: (N,2) table xy to touch instead of the grid (the touch-off: one point);
-    `name`: the phase is "<name> <slot>"; `min_points`: fewer reachable is a refusal."""
+    `name`: the phase is "<name> <slot>"; `min_points`: fewer reachable is a refusal;
+    `paper_dz`: m above the nominal paper where the free moves keep their clearance from it
+    (the paper found by a first touch, less a little; the touches still run down to the
+    nominal paper and past it); `home`: back to the
+    park at the end (else the arm stays at its last hover)."""
     min_points = MIN_CONTACTS if min_points is None else min_points
     rig, rules = st.rig, st.rules_for(a)
     from aris.server.retreat import retreats
@@ -178,10 +183,12 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
     paper = rig.paper(a, for_planning=True)
     pts = grid_points(rig, a, st.drawing_area, cfg, st.drawing_centre) if points is None \
         else np.asarray(points, float).reshape(-1, 2)
+    free_obs = obs if paper_dz == 0.0 else replace(obs, planes=tuple(
+        replace(p, offset=p.offset + paper_dz) if p.kind == "paper" else p for p in obs.planes))
     spin, paths, dropped = _choose_spin(rig, arm, guard, paper, a, pts, cfg, gates)
     kept, touches = [], []
     for k in sorted(paths):
-        go = free_plan(arm, q, paths[k][-1], obs, rules, seed_extra=b"calibrate")
+        go = free_plan(arm, q, paths[k][-1], free_obs, rules, seed_extra=b"calibrate")
         touch = touch_motion(arm, guard, paths[k], rules, cfg) if not isinstance(go, Refusal) \
             else f"free-space planner: {go.reason}: {go.detail}"
         if isinstance(go, Refusal) or isinstance(touch, str):
@@ -199,7 +206,10 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
                                    [tuple(map(float, pts[k])) for k in dropped], spin, why)
     if not kept:
         return out("no point can be touched")
-    home = free_plan(arm, q, rig.park_q(a), obs, rules, seed_extra=b"calibrate home")
+    if not home:
+        return out("", steps) if len(kept) >= min_points else \
+            out(f"only {len(kept)} points can be touched (at least {min_points})")
+    home = free_plan(arm, q, rig.park_q(a), free_obs, rules, seed_extra=b"calibrate home")
     if isinstance(home, Refusal):
         return out(f"no way back to the park: {home.reason}: {home.detail}")
     v = check(st.config_dir, a, home, phase, q, standing=standing)
@@ -214,6 +224,92 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
 # --------------------------------------------------------------------------- the job
 
 
+UNCAL_HOVER = 0.060      # m above the nominal paper: the first hover of an arm whose height
+                         # is not measured yet (no passing base part)
+UNCAL_DEPTH = 0.040      # m past the nominal paper its first touch may go
+FOUND_HOVER = 0.020      # m above the first contact: every later hover of that job
+FOUND_SLACK = 0.005      # m: the free moves keep their pen clearance from a paper this much
+                         # below the one found (the hovers sit just at that clearance)
+
+
+def base_applied(st, arm) -> bool:
+    return str(st.rig.calibration_status(arm).get("base", "")).startswith("applied")
+
+
+def _staged_work(arm, cfg):
+    """The calibrate job of an arm whose height is not measured (no passing base part): one
+    touch first, from UNCAL_HOVER above the nominal paper and down to UNCAL_DEPTH below it
+    (the free move there kept as high as that hover allows: the paper may be well above the
+    nominal one);
+    then, from where the arm really stands, every other point from FOUND_HOVER above the
+    height that touch found, the free moves kept clear of the paper there."""
+    def work(st, rec, job) -> None:
+        import threading
+        import time
+        from aris.server import runner
+        from aris.server.steps import add_steps, run_queued, wait_phase
+        where = runner.where_now(st, need_all=True)
+        if isinstance(where, Refusal):
+            return runner.fail_job(st, rec, job, where.detail)
+        rec.set_state("planning")
+        t0 = time.perf_counter()
+        pts = grid_points(st.rig, arm, st.drawing_area, cfg, st.drawing_centre)
+        wide = replace(cfg, hover=UNCAL_HOVER, extra_depth=UNCAL_DEPTH)
+        first, k0 = None, 0
+        for k0 in range(len(pts)):
+            first = plan_calibrate(st, arm, where, wide, points=pts[k0:k0 + 1],
+                                   name="calibrate first", min_points=1, home=False,
+                                   paper_dz=UNCAL_HOVER - FOUND_HOVER - FOUND_SLACK)
+            if not first.why:
+                break
+        if first is None or first.why:
+            job.end_phases("calibrate not planned")
+            return runner.fail_job(st, rec, job, "no first touch: " + (first.why if first
+                                                                      else "no points"))
+        add_steps(job, rec, first.steps)
+        box = {}
+        th = threading.Thread(target=lambda: box.update(run=run_queued(st, rec, job, True,
+                                                                         where)), daemon=True)
+        th.start()
+        rec.set_state("moving")
+        why = wait_phase(rec, first.phase.name)
+        rows = [r for r in rec.log.read() if r.get("event") == "contact"
+                and r.get("phase") == first.phase.name and r.get("arm") == arm]
+        plan = first
+        if not why and not rows:
+            why = (f"the first touch found no paper down to {UNCAL_DEPTH * 1e3:.0f} mm below "
+                   "the nominal paper")
+        if not why:
+            q = np.asarray(rows[-1]["q"], float)
+            dz = float(st.rig.to_table(arm, st.rig.arm(arm).tip(q[None])[0])[2] - st.rig.paper_z)
+            real = runner.where_now(st, need_all=True)
+            # a hover must clear the nominal paper's planning clearance too (its touch rises
+            # from the nominal paper): never lower than that plus FOUND_SLACK
+            pl = st.rig.paper(arm, for_planning=True)
+            low = float(pl.pen_margin if pl.pen_margin is not None else pl.margin) + FOUND_SLACK
+            rest = np.delete(pts, k0, axis=0)
+            second = plan_calibrate(st, arm, real if isinstance(real, dict) else where,
+                                    replace(cfg, hover=max(dz + FOUND_HOVER, low),
+                                            extra_depth=UNCAL_DEPTH),
+                                    points=rest, min_points=MIN_CONTACTS - 1,
+                                    paper_dz=dz - FOUND_SLACK)
+            plan = Plan(arm, second.phase, first.steps + second.steps,
+                        np.vstack([first.points_table, second.points_table]),
+                        first.dropped + second.dropped, second.spin, second.why)
+            if second.why:
+                why = second.why
+            else:
+                add_steps(job, rec, second.steps)
+        job.end_phases(why or "calibrate planned")
+        th.join()
+        run = box["run"]
+        if why and run.status == "done":
+            run.status, run.why = "failed", why
+        rep, state, why2 = _job_report(st, rec, plan, run, time.perf_counter() - t0)
+        runner.finish_job(rec, job.dir, rep, state, why2)
+    return work
+
+
 def submit_calibrate(st, store, arm: str, kind: str = "calibrate"):
     """Admit a calibrate job (`kind` "calibrate") or a touch-off ("touchoff") for `arm` and
     start it (refused like park: another job runs, or with the robot, no position reported)."""
@@ -224,8 +320,12 @@ def submit_calibrate(st, store, arm: str, kind: str = "calibrate"):
         return _Refusal("no_arm", f"arm {arm} is not mounted on this rig ({st.rig.arm_ids})")
     cfg = st.calib_settings or CalibSettings()
     if kind == "touchoff":
-        work = steps_work(lambda st_, where: touchoff.plan(st_, arm, where, cfg),
+        tcfg = cfg if base_applied(st, arm) else replace(cfg, hover=UNCAL_HOVER,
+                                                         extra_depth=UNCAL_DEPTH)
+        work = steps_work(lambda st_, where: touchoff.plan(st_, arm, where, tcfg),
                           touchoff.job_report)
+    elif not base_applied(st, arm):
+        work = _staged_work(arm, cfg)
     else:
         work = steps_work(lambda st_, where: plan_calibrate(st_, arm, where, cfg), _job_report)
     return runner.start(st, store, kind, f"{kind} {arm}", work, lambda rec: dict(arm=arm),
@@ -238,26 +338,27 @@ def _job_report(st, rec, plan, run, planning_s):
 
 
 def touch_points(plan: Plan) -> dict:
-    """Queue index of every touch motion -> its grid point (x, y)."""
-    out, i, k = {}, 0, 0
+    """(phase, queue index) of every touch motion of the arm -> its grid point (x, y)."""
+    out, k, count = {}, 0, {}
     for s in plan.steps:
+        name = s.phase.name if s.phase is not None else ""
         for m in s.motions:
-            if m.kind == "touch":
-                out[i] = tuple(round(float(x), 4) for x in plan.points_table[k])
+            i = count[(name, s.arm)] = count.get((name, s.arm), -1) + 1
+            if m.kind == "touch" and s.arm == plan.arm:
+                out[(name, i)] = tuple(round(float(x), 4) for x in plan.points_table[k])
                 k += 1
-            i += 1
     return out
 
 
 def misses(plan: Plan, rows, arm: str) -> list:
     """The grid points whose touch found no paper (a "contact" row is missing for them)."""
-    got = {r.get("index") for r in rows
-           if r.get("event") == "contact" and r.get("arm") == arm}
+    key = lambda r: (r.get("phase") or "", r.get("index"))
+    got = {key(r) for r in rows if r.get("event") == "contact" and r.get("arm") == arm}
     def tried(r):
         ev = r.get("event")
         return r.get("arm") == arm and (ev in ("motion done", "no contact")
                                         or (ev == "failed" and r.get("why") == "no contact"))
-    ran = {r.get("index") for r in rows if tried(r)}
+    ran = {key(r) for r in rows if tried(r)}
     return [p for i, p in touch_points(plan).items() if i in ran and i not in got]
 
 

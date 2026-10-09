@@ -177,22 +177,6 @@ def plan_meeting(st, now, pair, spot) -> tuple | str:
                        hovers={x: got[x][1].tolist() for x in (L, R)})
 
 
-def _phase_end(rec, name, poll=0.05) -> str:
-    """Waits until phase `name` has run (its "phase done") -> "", or the job ended first ->
-    why (a failed phase, a stop, the run's end)."""
-    import time
-    while True:
-        for r in rec.log.read():
-            if r.get("phase") == name and r.get("event") == "phase done":
-                return ""
-            if r.get("event") == "phase failed" or str(r.get("event", "")).startswith("job "):
-                if r.get("event") not in ("job state", "job started"):
-                    return str(r.get("why") or r.get("event"))
-        if rec.stop.is_set():
-            return "stop requested"
-        time.sleep(poll)
-
-
 def _work(pairs, yaw: bool):
     """The mark job, phase by phase: park, then per meeting the flights and the guides; after
     each meeting the way on (home, retreats first) is planned from where the arms REALLY stand
@@ -201,7 +185,7 @@ def _work(pairs, yaw: bool):
         import threading
         import time
         from aris.server import runner
-        from aris.server.steps import add_steps, run_queued
+        from aris.server.steps import add_steps, run_queued, wait_phase
         where = runner.where_now(st, need_all=True)
         if isinstance(where, Refusal):
             return runner.fail_job(st, rec, job, where.detail)
@@ -229,7 +213,7 @@ def _work(pairs, yaw: bool):
                 add_steps(job, rec, got[0])
                 plan.steps += got[0]
                 plan.meetings.append(got[1])
-                why = _phase_end(rec, got[1]["phase"])
+                why = wait_phase(rec, got[1]["phase"])
                 if why:
                     break
                 real = runner.where_now(st, need_all=True)        # where they really stand

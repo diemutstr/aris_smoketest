@@ -511,3 +511,15 @@ less its own pen's press. `aris pen` lists the pens in; `aris pen 1L gel_g2` (`P
 /pens/{slot}`) puts another in (between jobs) and reloads the rig; the GUI's arm cards have a
 pen selector. The touch-off writes the pen part with that slot's pen name; the calibration
 line shows the rig's status ("pen part measured for X, Y is in"). `aris draw --pen` is gone.
+
+## Calibrate without a measured height
+
+When the slot has no passing base part, its height is not known (the nominal base may be off
+by centimetres, the pen longer): the calibrate job touches ONE point first, from a hover 60 mm
+above the nominal paper, the free move there kept as high as that hover allows, the touch
+allowed to run 40 mm past the nominal paper ("calibrate first <slot>"). Once it has run, every
+other point is planned from where the arm really stands, its hover 20 mm above the height that
+first contact found (never below the nominal paper's planning clearance + 5 mm), the free moves
+keeping their clearance from the paper found there (less 5 mm), the touches again allowed 40 mm
+past nominal ("calibrate <slot>"). With a passing base part, as before. The touch-off of a slot
+without a base part hovers 60 mm up and may go 40 mm past nominal.

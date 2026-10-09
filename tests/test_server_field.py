@@ -806,3 +806,33 @@ def test_the_parts_written_carry_the_robot(tmp_path):
     for a in ("2L", "2R"):
         assert files.read(cfg, a)["base"]["robot"] == st.robots[a]
     assert c.post("/park").status_code == 200                   # today's robots: not refused
+
+
+def test_calibrate_without_a_base_part_keeps_clear_of_a_high_paper(tmp_path):
+    """No base part, the paper 25 mm above nominal: the first touch from 60 mm up, the rest
+    from 20 mm above what it found; nothing but the touches comes within 10 mm of the paper."""
+    import shutil
+    from aris.execute.queue import Queue
+    cfg = tmp_path / "cfg"
+    shutil.copytree(TWO, cfg, symlinks=False)
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=2, sim_paper=(0.025, 0.0, 0.0))
+    assert not str(st.rig.calibration_status("2L")["base"]).startswith("applied")
+    rig = st.rig                         # the frame the simulated world was built in
+    c = TestClient(create_app(st))
+    v = _wait_report(c, c.post("/calibrate/2L").json()["id"], 240)
+    assert v["state"] == "done", v["why"]
+    rep = v["report"]
+    assert rep["contacts"] >= 8 and not rep["missed"]
+    jid, high = v["id"], rig.paper_z + 0.025
+    phases = [json.loads(x).get("name") for x in
+              (st.jobs_dir / jid / "phases.jsonl").read_text().splitlines()
+              if x and not json.loads(x).get("end")]
+    assert phases[0] == "calibrate first 2L" and "calibrate 2L" in phases
+    lowest = []
+    for f in (st.jobs_dir / jid).glob("*__2L.queue"):
+        for e in Queue(f).read():
+            if e.motion.kind != "touch":
+                z = rig.to_table("2L", rig.arm("2L").tip(e.motion.traj.q))[:, 2]
+                lowest.append((float(z.min()), f.name, e.motion.kind, e.index))
+    assert lowest and min(lowest)[0] >= high + 0.010, (rig.paper_z, sorted(lowest)[:5])
