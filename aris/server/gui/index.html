@@ -3,111 +3,118 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drawing arms</title>
+<title>ARIS drawing arms</title>
 <link rel="stylesheet" href="/gui/style.css">
 </head>
 <body>
 
 <header id="top">
-  <h1>Drawing arms</h1>
-  <div id="server-light" class="pill pill-grey">connecting…</div>
+  <h1>ARIS · DRAWING ARMS</h1>
+  <div id="server-light" class="pill pill-grey">CONNECTING…</div>
 </header>
 
 <div id="banners"></div>
 
-<!-- The server's last answer, always visible.  Never cleared by the page itself. -->
+<!-- STATUS: the server's last answer, always visible, and the log of earlier answers. -->
 <section id="status" aria-live="polite">
+  <h2>STATUS</h2>
   <div id="status-line" class="status-idle">Nothing pressed yet.</div>
-  <details id="status-history"><summary>Earlier answers</summary><ol id="status-list"></ol></details>
+  <div id="busy-note" class="busy-note" hidden></div>
+  <ol id="status-list" class="log"></ol>
 </section>
 
-<!-- One card per slot the rig has. -->
+<!-- ARMS: one card per slot the rig has. -->
 <section id="arms-panel">
-  <h2>Arms</h2>
+  <h2>ARMS</h2>
   <div id="arm-cards" class="cards"></div>
 </section>
 
 <div class="two-col">
 
-<!-- The current (or last) job. -->
-<section id="job-panel">
-  <h2>Job</h2>
-  <div id="busy-note" class="busy-note" hidden></div>
-  <div class="big-row">
+<!-- DRAWING CONTROL: stop, park, draw, resume. -->
+<section id="control-panel">
+  <h2>DRAWING CONTROL</h2>
+  <div class="btn-row">
     <button id="btn-stop" class="btn btn-stop" disabled>STOP</button>
-    <button id="btn-park" class="btn btn-main">PARK</button>
+    <button id="btn-park" class="btn">PARK</button>
+    <button id="btn-draw" class="btn btn-primary">DRAW</button>
+    <button id="btn-resume" class="btn btn-go" disabled>RESUME DRAWING</button>
   </div>
-  <p class="help">STOP: every arm stops at once and holds; the job is finished.
-    PARK: every arm goes back to its parking position.</p>
-  <div id="job-current" class="job-box">No job yet.</div>
-  <div id="job-actions" class="btn-row"></div>
-  <h3>Report of the last job</h3>
-  <div id="job-report" class="report">No finished job yet.</div>
-  <h3>Earlier jobs (this server run)</h3>
-  <ul id="job-list" class="job-list"></ul>
-</section>
-
-<!-- Pick or upload a drawing, then draw it. -->
-<section id="draw-panel">
-  <h2>Drawing</h2>
-  <label class="field">Drawing
-    <select id="drawing-select"><option value="">(none uploaded yet)</option></select>
-  </label>
-  <div id="drawing-info" class="help"></div>
-
-  <fieldset class="upload">
-    <legend>Add a drawing (.json or .svg)</legend>
-    <input type="file" id="upload-file" accept=".json,.svg">
-    <label class="field">Width in metres (needed for .svg)
-      <input type="number" id="upload-width" step="0.01" min="0" placeholder="e.g. 0.8">
-    </label>
-    <label class="field">Centre at x, y in metres (optional)
-      <input type="text" id="upload-at" placeholder="e.g. 0, 0">
-    </label>
-    <button id="btn-upload" class="btn">ADD DRAWING</button>
-  </fieldset>
-
-  <label class="field">Note (pen, paper, …; goes into the report)
+  <div id="control-picked" class="help"></div>
+  <label class="field">NOTE (pen, paper, …; goes into the report)
     <input type="text" id="draw-note" placeholder="e.g. 4H graphite on 120 g paper">
   </label>
   <label class="check"><input type="checkbox" id="draw-air">
-    Fly it in the air, this many mm above the paper (nothing touches):
+    IN THE AIR, this many mm above the paper (nothing touches):
     <input type="number" id="draw-air-mm" value="30" min="1" step="1" class="short"></label>
-  <button id="btn-draw" class="btn btn-main">DRAW</button>
-  <p class="help">First time with a new drawing, fly it in the air. Hand on the emergency stop.</p>
+  <p class="help">STOP: every arm stops at once and holds. PARK: every arm back to its park.
+    DRAW: the image picked below. RESUME DRAWING: what the last stopped or failed drawing left.
+    First time with a new image, draw it in the air.</p>
+</section>
+
+<!-- SELECT IMAGE: the stored drawings, newest first, and adding one. -->
+<section id="draw-panel">
+  <h2>SELECT IMAGE</h2>
+  <div class="btn-row">
+    <button id="btn-refresh" class="btn btn-small">↻ NEWEST FIRST</button>
+    <span id="drawing-info" class="help"></span>
+  </div>
+  <select id="drawing-select" size="7" aria-label="drawings"></select>
+  <fieldset class="upload">
+    <legend>ADD AN IMAGE (.json or .svg)</legend>
+    <input type="file" id="upload-file" accept=".json,.svg">
+    <div class="inline-fields">
+      <label class="field">WIDTH (m, needed for .svg)
+        <input type="number" id="upload-width" step="0.01" min="0" placeholder="0.8">
+      </label>
+      <label class="field">POSITION x, y (m, optional)
+        <input type="text" id="upload-at" placeholder="0, 0">
+      </label>
+    </div>
+    <button id="btn-upload" class="btn btn-go">UPLOAD</button>
+  </fieldset>
 </section>
 
 </div>
 
-<!-- Calibration: the marks, the paper, the pen. -->
+<!-- LIVE DRAWING OUTPUT: the running (or last) job. -->
+<section id="live-panel">
+  <h2>LIVE DRAWING OUTPUT</h2>
+  <div id="job-current" class="job-box">No job yet.</div>
+  <div id="job-actions" class="btn-row"></div>
+</section>
+
+<!-- CALIBRATION: the marks, the crosses, the pen, the paper. -->
 <section id="calib-panel">
-  <h2>Calibration</h2>
-  <div class="calib-group">
-    <div id="mark-buttons" class="btn-row"></div>
-    <p class="help">MARK: the two arms of a row fly above a spot. Then, at the arms: switch BOTH
-      to programming mode in Desk, bring the two pen tips together in the air until they touch,
-      let go, and switch BOTH back to execution mode with FCI on. The arms go home by
-      themselves. MARK + YAW does it twice, at two spots, and also finds how the arms are
-      turned.</p>
-    <div id="crosses-buttons" class="btn-row"></div>
-    <p class="help">CROSSES: the check afterwards. The L arm draws a cross, the R arm a circle,
-      at the same spots: the cross and the circle should sit on each other.</p>
-  </div>
-  <div class="calib-group">
-    <div id="touchoff-buttons" class="btn-row"></div>
-    <p class="help">TOUCH-OFF: one touch on the paper that measures the pen's length. Right
-      after MARK, and after every pen change. Nothing for you to do.</p>
-  </div>
-  <div class="calib-group">
-    <div id="calibrate-buttons" class="btn-row"></div>
-    <p class="help">CALIBRATE: the arm touches the paper on a grid and measures how flat
-      and how high it lies under that arm.</p>
-  </div>
+  <h2>CALIBRATION</h2>
+  <div id="mark-buttons" class="btn-row"></div>
+  <p class="help">MARK: two neighbouring arms fly above a spot. At the arms: switch BOTH to
+    programming mode in Desk, bring the two pen tips together in the air until they touch, let
+    go, switch BOTH back to execution mode with FCI on. The arms go home by themselves.
+    MARK + YAW does it at two spots and also finds how the arms are turned.</p>
+  <div id="crosses-buttons" class="btn-row"></div>
+  <p class="help">CROSSES: the check afterwards. The L arm draws a cross, the R arm a circle, at
+    the same spots: they should sit on each other.</p>
+  <div id="touchoff-buttons" class="btn-row"></div>
+  <p class="help">TOUCH-OFF: one touch on the paper that measures the pen's length. After MARK
+    and after every pen change. Nothing for you to do.</p>
+  <div id="calibrate-buttons" class="btn-row"></div>
+  <p class="help">CALIBRATE: the arm touches the paper on a grid and measures how flat and how
+    high it lies under that arm.</p>
   <div id="calib-state" class="help"></div>
 </section>
 
-<footer class="help">Every answer of the server is shown in the line at the top, word for word.
-  When the system refuses something, that is it being careful: send Pete the text.</footer>
+<!-- RUN GALLERY: earlier jobs and their reports. -->
+<section id="gallery-panel">
+  <h2>RUN GALLERY</h2>
+  <div class="two-col gallery">
+    <ul id="job-list" class="job-list"></ul>
+    <div id="job-report" class="report">No finished job yet.</div>
+  </div>
+</section>
+
+<footer class="help">Every answer of the server is shown under STATUS, word for word. When the
+  system refuses something, that is it being careful: send Pete the text.</footer>
 
 <script src="/gui/app.js"></script>
 </body>

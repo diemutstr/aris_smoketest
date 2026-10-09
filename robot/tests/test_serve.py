@@ -495,3 +495,52 @@ def test_stacks_start_one_at_a_time(tmp_path):
     assert events.index(("stack ready", "1L")) < events.index(("stack started", "1R"))
     assert ("stack not ready, starting the next", "1R") in events
     st.stop(grace=5.0)
+
+
+def test_six_stacks_start_one_after_the_other_and_all_report(tmp_path):
+    """All six arms mounted (2026-10-09): the site's six stacks start in turn, each once the
+    one before has fresh joint states, and all six report ready or running."""
+    from aris_robot import site as site_mod
+    site = site_mod.load(Path(__file__).resolve().parents[1] / "site.json")
+    slots = [a.id for a in site.arms if a.mounted]
+    assert sorted(slots) == ["1L", "1R", "2L", "2R", "3L", "3R"]
+    assert sorted(a.rt_core for a in site.arms) == [16, 17, 18, 19, 28, 29]
+    rows = Rows(_NoServer(), tmp_path)
+    said = []
+    rows.say = lambda event, **f: said.append(dict(event=event, **f))
+    lasting = [sys.executable, "-c", "import time; time.sleep(100)"]
+    started = {}
+
+    def fresh(arm):                                   # fresh 0.2 s after its stack started
+        if st.state[arm]["running"]:
+            started.setdefault(arm, time.monotonic())
+        return arm in started and time.monotonic() - started[arm] > 0.2
+    st = Stacks({a: lasting for a in slots}, rows, tmp_path, ready=fresh, ready_timeout=5.0)
+    st.start()
+    assert _wait_for(lambda: all(st.state[a]["running"] for a in slots), 20.0)
+    order = [r["arm"] for r in said if r["event"] == "stack started"]
+    assert order == slots                              # one after the other, in turn
+    ready = [r["arm"] for r in said if r["event"] == "stack ready"]
+    assert ready == slots[:-1]                         # each waited for the one before
+    st.stop(grace=5.0)
+
+
+def test_a_core_outside_the_isolated_set_is_refused(tmp_path):
+    from aris_robot.serve import isolated_cores, launch_commands
+    from aris_robot import site as site_mod
+    site = site_mod.load(Path(__file__).resolve().parents[1] / "site.json")
+    iso = tmp_path / "isolated"
+    iso.write_text("8-19,28-39\n")
+    assert isolated_cores(iso) == set(range(8, 20)) | set(range(28, 40))
+    files = []
+    for a in ("2L", "3R"):
+        f = tmp_path / f"{a}.json"
+        f.write_text(json.dumps({"arm": a}))
+        files.append(f)
+    cmds = launch_commands(files, site, isolated=iso)               # 16 and 29: isolated
+    assert cmds["3R"][:3] == ["taskset", "-c", "29"]
+    iso.write_text("8-19\n")
+    with pytest.raises(ValueError, match="rt_core 29 is not an isolated core.*8-19"):
+        launch_commands(files, site, isolated=iso)
+    iso.write_text("")                                              # nothing to check
+    assert launch_commands(files, site, isolated=iso)["3R"][2] == "29"

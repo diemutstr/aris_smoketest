@@ -171,9 +171,8 @@ every request, and says so in its first row. A job planned by different code is 
 anything moves ("the job was planned by e7741e5, this PC runs 515bbad+local changes"): update
 both machines to the same commit.
 
-The config directory must hold the same rig file as the server's. Add
-`--config config/two_arms` before `serve` in the `ExecStart` line when the server runs with
-that one.
+The config directory must hold the same rig file as the server's. With all six arms
+(2026-10-09) that is the root rig: the unit runs `aris-robot --config $HOME/aris3/config serve`.
 
 **Fake hardware**: `aris-robot --fake serve` (add `--fake` to the unit's command line). The
 stacks start on fake hardware, with the trajectory controller on the position interface
@@ -241,7 +240,7 @@ Every stage is a "guide: ..." row on the job and the operator rows.
 
 **Real-time cores.** Each mounted slot's stack runs on its own isolated core: serve launches
 it as `taskset -c <rt_core> ros2 launch ...`, with the cores in site.json `rt_core`: 2L → 16,
-2R → 17, 1L → 18, 1R → 19, 3L → 20, 3R → 21. serve sets no real-time priority. With the whole launch tree at
+2R → 17, 1L → 18, 1R → 19, 3L → 28, 3R → 29. serve sets no real-time priority. With the whole launch tree at
 SCHED_FIFO 95 on top of the site's own helper, the Dell froze twice (2026-10-07, NIC
 watchdog). Real-time priority belongs on the control-loop threads only, and the site's helper
 script sets it. For each running stack, the helper must:
@@ -252,12 +251,12 @@ script sets it. For each running stack, the helper must:
 
 The helper must run again after serve restarts a stack.
 Row 3 hangs inverted like the others since 2026-10-08 (robots 13 and 17): `force_sign` −1,
-cores 20 and 21, `mounted` false until the site file flips it. Link drops ended on 2026-10-07
-once each arm's loop had its own core and the network card's interrupts were kept off those
-cores. The Dell's isolated cores are 8-19 and 28-39. **Cores 20 and 21 are not isolated
-yet.** Before row 3 is mounted, add them to the kernel's isolated set as 16-19 are (the
-`isolcpus=`/`nohz_full=`/`rcu_nocbs=` lists on the kernel command line, then a reboot). Check
-with `cat /sys/devices/system/cpu/isolated`: it must list 20 and 21.
+cores 28 and 29; all six are mounted since 2026-10-09. serve starts the six stacks one after
+the other: the next once the previous one's joint states are fresh, or after 40 s. Link drops
+ended on 2026-10-07 once each arm's loop had its own core and the network card's interrupts
+were kept off those cores. The Dell's isolated cores are 8-19 and 28-39
+(`cat /sys/devices/system/cpu/isolated`). Every `rt_core` in site.json must be one of them:
+serve refuses to start with a core outside that list, and names the list.
 
 **One-time host step: the network card's interrupts on cores 12, 13, 32, 33** (as root, once;
 again after a kernel or NIC change):

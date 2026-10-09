@@ -19,7 +19,7 @@ WorkingDirectory=/home/operator/aris3
 ExecStart=/bin/bash -c 'source /opt/ros/jazzy/setup.bash && \
   source $HOME/ros2_ws/install/setup.bash && \
   source $HOME/aris3/robot/ros2_ws/install/setup.bash && \
-  exec $HOME/aris3/.venv/bin/aris-robot serve'
+  exec $HOME/aris3/.venv/bin/aris-robot --config $HOME/aris3/config serve'
 Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 Environment=PYTHONUNBUFFERED=1
 # the 1 kHz control loop of ros2_control_node (a child) wants real-time priority and locked memory

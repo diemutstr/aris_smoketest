@@ -57,7 +57,7 @@ function robotOf(slot) {
   return m ? m[1] : (said ? String(said) : null);
 }
 
-function label(slot) { const n = robotOf(slot); return n ? `${slot} · robot ${n}` : slot; }
+function label(slot) { const n = robotOf(slot); return n ? `${slot} · ${n}` : slot; }
 
 function running() { return S.jobs.find((j) => !FINAL.includes(j.state)) || null; }
 
@@ -251,7 +251,7 @@ function plainReport(rep) {
     if (rep.planner_error) out.push(`Planner error: ${rep.planner_error}`);
     if (rep.account_error) out.push(`ACCOUNT ERROR (send to Pete): ${rep.account_error}`);
     if (rep.checker && rep.checker.all_queued_checked === false) out.push("WARNING: not every motion carried a passing check (send to Pete).");
-    if (rep.left_m > 0.001 && (st === "stopped" || st === "failed")) out.push("What was left can be drawn with DRAW THE REST below.");
+    if (rep.left_m > 0.001 && (st === "stopped" || st === "failed")) out.push("What was left can be drawn with RESUME DRAWING.");
   } else if (rep.kind === "park") {
     for (const [a, r] of Object.entries(rep.arms || {})) out.push(`${label(a)}: ${r.result}`);
   } else if (rep.kind === "grip") {
@@ -335,12 +335,11 @@ function buildCards() {
     const card = el("div", { class: "card", id: `card-${slot}` },
       el("div", { class: "card-head" },
         el("div", { class: "light light-grey", id: `light-${slot}` }),
-        el("div", {}, el("div", { class: "card-name", text: slot }),
-                      el("div", { class: "card-robot", id: `robot-${slot}` }))),
+        el("div", { class: "card-name", id: `name-${slot}`, text: slot })),
       el("div", { class: "card-state", id: `state-${slot}` }),
       el("div", { class: "card-small", id: `age-${slot}` }),
       el("div", { class: "card-small", id: `cal-${slot}` }),
-      el("div", { class: "btn-row" }, el("span", { class: "card-small", text: "pen in:" }),
+      el("div", { class: "btn-row" }, el("span", { class: "sub", text: "material" }),
         (() => {
           const sel = el("select", { id: `pen-${slot}`, class: "need-idle", "aria-label": `pen in ${slot}` });
           sel.addEventListener("change", () => act(`${label(slot)}: pen ${sel.value}`, "POST",
@@ -348,7 +347,7 @@ function buildCards() {
               ok: () => `${sel.value} is in ${label(slot)} now; touch off its pen before drawing` }));
           return sel;
         })()),
-      el("div", { class: "btn-row" }, grip("home"), grip("open"), grip("close")),
+      el("div", { class: "btn-row" }, el("span", { class: "sub", text: "gripper" }), grip("home"), grip("open"), grip("close")),
       el("div", { class: "card-small", id: `grip-${slot}` }),
       el("div", { class: "btn-row" },
         el("button", { class: "btn btn-small", text: "RECOVER",
@@ -373,7 +372,7 @@ function updateCards() {
     else { light = "green"; state = a.at_park ? "at its park" : "holding still (not at its park)"; }
     if (a && a.ok !== false && a.flags && a.flags.length) state += ` (${a.flags.join(", ")})`;
     $(`light-${slot}`).className = `light light-${light}`;
-    $(`robot-${slot}`).textContent = robotOf(slot) ? `robot ${robotOf(slot)}` : "";
+    $(`name-${slot}`).textContent = label(slot);
     $(`state-${slot}`).textContent = state;
     $(`age-${slot}`).textContent = !a ? "" : a.age_s != null ? `joints read ${Number(a.age_s).toFixed(1)} s ago` :
       a.source ? "" : "joints read now (driver on this computer)";
@@ -444,8 +443,8 @@ function renderJob() {
 }
 
 function restButton(jid) {
-  return el("button", { class: "btn need-idle", text: "DRAW THE REST",
-    onclick: () => act(`DRAW THE REST of ${jid}`, "POST", `/jobs?` + new URLSearchParams(
+  return el("button", { class: "btn btn-go need-idle", text: "RESUME DRAWING",
+    onclick: () => act(`RESUME DRAWING ${jid}`, "POST", `/jobs?` + new URLSearchParams(
       Object.assign({ rest_of: jid }, noteAndAir()))) });
 }
 
@@ -459,12 +458,12 @@ function renderJobList() {
   if (!list.length) { ul.append(el("li", { text: "none yet" })); return; }
   for (const j of list) {
     const cls = j.state === "done" ? "state-done" : FINAL.includes(j.state) ? "state-failed" : "state-running";
-    const li = el("li", {},
+    const li = el("li", { class: j.id === S.reportId ? "shown" : "" },
       el("span", { text: clock(j.received) }),
       el("span", { text: `${KIND_WORDS[j.kind] || j.kind}${j.name ? " · " + j.name : ""}` }),
       el("span", { class: cls, text: j.state + (j.why ? ` (${j.why})` : "") }));
     if (FINAL.includes(j.state))
-      li.append(el("button", { class: "btn btn-small", text: "report", onclick: () => showReport(j.id) }));
+      li.append(el("button", { class: "btn btn-small", text: "REPORT", onclick: () => { showReport(j.id); S.listKey = ""; } }));
     if (j.kind === "draw" && (j.state === "stopped" || j.state === "failed")) {
       const b = restButton(j.id);
       b.classList.add("btn-small");
@@ -474,6 +473,7 @@ function renderJobList() {
   }
 }
 
+// SELECT IMAGE: the stored drawings as a list, newest first.
 function renderDrawings() {
   const key = S.drawings.map((d) => d.id).join(",");
   const sel = $("drawing-select");
@@ -481,11 +481,9 @@ function renderDrawings() {
     S.drawingsKey = key;
     const keep = S.pick || sel.value;
     sel.replaceChildren();
-    if (!S.drawings.length) sel.append(el("option", { value: "", text: "(none uploaded yet: add one below)" }));
-    else sel.append(el("option", { value: "", text: "— pick a drawing —" }));
-    for (const d of [...S.drawings].reverse()) {
-      sel.append(el("option", { value: d.id, text: `${d.name}  (${d.lines} lines, added ${clock(d.stored_at)})` }));
-    }
+    if (!S.drawings.length) sel.append(el("option", { value: "", disabled: "", text: "(no images yet: upload one below)" }));
+    for (const d of [...S.drawings].sort((a, b) => (b.stored_at || 0) - (a.stored_at || 0)))
+      sel.append(el("option", { value: d.id, text: `${d.name}  · ${d.lines} lines · ${clock(d.stored_at)}` }));
     if (keep && S.drawings.some((d) => d.id === keep)) {
       sel.value = keep;
       if (S.pick === keep) S.pick = null;
@@ -499,30 +497,40 @@ function renderDrawings() {
       (b && b.length === 4 ? `; ${(b[2] - b[0]).toFixed(2)} × ${(b[3] - b[1]).toFixed(2)} m around (${((b[0] + b[2]) / 2).toFixed(2)}, ${((b[1] + b[3]) / 2).toFixed(2)})` : "");
   }
   $("drawing-info").textContent = info;
+  $("control-picked").textContent = d ? `IMAGE: ${d.name} (${info})` : "IMAGE: none picked (SELECT IMAGE)";
 }
 
-// Calibration buttons: made once the rig is known.
+// Calibration buttons: made once the rig is known.  MARK, MARK + YAW and CROSSES per mark
+// group of the rig (/rig `mark_groups`, "all" last); without groups, per row pair.
+function markGroups() {
+  const mg = S.rig && S.rig.mark_groups;
+  if (mg && Object.keys(mg).length) {
+    const names = Object.keys(mg).filter((n) => n !== "all");
+    if ("all" in mg) names.push("all");
+    return names.map((n) => ({ name: `${n} (${mg[n].map(label).join(", ")})`, q: { group: n } }));
+  }
+  return rowPairs().map((r) => ({ name: `row ${r.row} (${r.slots.map(label).join(", ")})`, q: { slots: r.slots.join(",") } }));
+}
+
 function buildCalib() {
   const ss = slots();
-  const key = ss.join(",") + "|" + JSON.stringify(rowPairs());
+  const groups = markGroups();
+  const key = ss.map(label).join(",") + "|" + JSON.stringify(groups);
   if (!ss.length || key === S.built.calib) return;
   S.built.calib = key;
   const markBox = $("mark-buttons"), checkBox = $("crosses-buttons");
   markBox.replaceChildren();
   checkBox.replaceChildren();
   const toDo = "the arms fly above the spot; then switch BOTH to programming mode in Desk, bring the pen tips together, let go, back to execution mode with FCI on";
-  for (const r of rowPairs()) {
-    const name = `row ${r.row} (${label(r.slots[0])}, ${label(r.slots[1])})`;
-    const q = { slots: r.slots.join(",") };
-    markBox.append(el("button", { class: "btn btn-main need-idle", text: `MARK ${name}`,
-      onclick: () => act(`MARK ${name}`, "POST", "/mark?" + new URLSearchParams(q), undefined, {
+  for (const g of groups) {
+    markBox.append(el("button", { class: "btn btn-yellow need-idle", text: `MARK ${g.name}`,
+      onclick: () => act(`MARK ${g.name}`, "POST", "/mark?" + new URLSearchParams(g.q), undefined, {
         ok: (d) => `started job ${d.id}: ${toDo}` }) }));
-    if (r.spots.length >= 2)
-      markBox.append(el("button", { class: "btn need-idle", text: `MARK + YAW ${name}`,
-        onclick: () => act(`MARK + YAW ${name}`, "POST", "/mark?" + new URLSearchParams({ ...q, yaw: "true" }), undefined, {
-          ok: (d) => `started job ${d.id}: two meetings, ${toDo}` }) }));
-    checkBox.append(el("button", { class: "btn need-idle", text: `CROSSES ${name}`,
-      onclick: () => act(`CROSSES ${name}`, "POST", "/crosses?" + new URLSearchParams(q), undefined, {
+    markBox.append(el("button", { class: "btn need-idle", text: `MARK + YAW ${g.name}`,
+      onclick: () => act(`MARK + YAW ${g.name}`, "POST", "/mark?" + new URLSearchParams({ ...g.q, yaw: "true" }), undefined, {
+        ok: (d) => `started job ${d.id}: two meetings per pair, ${toDo}` }) }));
+    checkBox.append(el("button", { class: "btn btn-go need-idle", text: `CROSSES ${g.name}`,
+      onclick: () => act(`CROSSES ${g.name}`, "POST", "/crosses?" + new URLSearchParams(g.q), undefined, {
         ok: (d) => `started job ${d.id}: the arms draw their crosses and circles` }) }));
   }
   const tBox = $("touchoff-buttons"), cBox = $("calibrate-buttons");
@@ -568,10 +576,19 @@ function renderBusy() {
   const run = running();
   for (const b of document.querySelectorAll(".need-idle")) b.disabled = !!run;
   for (const id of ["btn-park", "btn-draw"]) $(id).disabled = !!run;
+  const r = resumable();
+  $("btn-resume").disabled = !!run || !r;
+  $("btn-resume").title = r ? `draws what job ${r.id} (${r.state}) left` : "no stopped or failed drawing to resume";
   const note = $("busy-note");
   note.hidden = !run;
   if (run) note.textContent = `Job ${run.id} (${KIND_WORDS[run.kind] || run.kind}) is ${run.state}. ` +
     "One job at a time: wait for it to end, or press STOP.";
+}
+
+// The newest drawing job, when it stopped or failed: what RESUME DRAWING continues.
+function resumable() {
+  const d = [...S.jobs].reverse().find((j) => j.kind === "draw");
+  return d && (d.state === "stopped" || d.state === "failed") ? d : null;
 }
 
 // --------------------------------------------------------------------------- the inputs
@@ -595,21 +612,34 @@ function wire() {
     act("PARK", "POST", "/park"));
   $("btn-draw").addEventListener("click", () => {
     const id = $("drawing-select").value;
-    if (!id) { setStatus("DRAW: pick a drawing first (or add one with ADD DRAWING)", "bad"); return; }
+    if (!id) { setStatus("DRAW: pick a drawing first (SELECT IMAGE, or UPLOAD one)", "bad"); return; }
     const air = $("draw-air").checked;
     act(`DRAW ${id}` + (air ? " in the air" : ""), "POST",
         "/jobs?" + new URLSearchParams(Object.assign({ drawing: id }, noteAndAir())));
   });
   $("drawing-select").addEventListener("change", renderDrawings);
+  $("btn-resume").addEventListener("click", () => {
+    const r = resumable();
+    if (!r) { setStatus("RESUME DRAWING: no stopped or failed drawing to resume", "bad"); return; }
+    act(`RESUME DRAWING ${r.id}`, "POST", "/jobs?" + new URLSearchParams(Object.assign({ rest_of: r.id }, noteAndAir())));
+  });
+  $("btn-refresh").addEventListener("click", async () => {
+    const r = await call("GET", "/drawings");
+    if (!r.ok) { setStatus(`↻ NEWEST FIRST: ${answerText(r)}`, "bad"); return; }
+    S.drawings = r.data || [];
+    S.drawingsKey = "";
+    renderDrawings();
+    setStatus(`↻ NEWEST FIRST: ${S.drawings.length} images`, "ok");
+  });
   $("btn-upload").addEventListener("click", async () => {
     const f = $("upload-file").files[0];
-    if (!f) { setStatus("ADD DRAWING: choose a .json or .svg file first", "bad"); return; }
+    if (!f) { setStatus("UPLOAD: choose a .json or .svg file first", "bad"); return; }
     const form = new FormData();
     form.append("file", f, f.name);
     const w = $("upload-width").value.trim(), at = $("upload-at").value.trim();
     if (w) form.append("width", w);
     if (at) form.append("at", at);
-    const res = await act(`ADD DRAWING ${f.name}`, "POST", "/drawings", undefined, {
+    const res = await act(`UPLOAD ${f.name}`, "POST", "/drawings", undefined, {
       form, ok: (d) => `added as "${d.id}": ${d.lines} lines, ${d.points} points. Picked it for DRAW.` });
     if (res && res.ok && res.data && res.data.id) { S.pick = res.data.id; S.drawingsKey = ""; S.tick = 0; poll(true); }
   });

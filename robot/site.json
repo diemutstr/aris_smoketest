@@ -2,10 +2,10 @@
   "about": {
     "what": "What this operator PC needs to know about the slots it drives: the drawing server, ROS settings, per slot whether it is mounted, its force sign and its real-time core, the touch, the collision thresholds. Which robot hangs in which slot, its address and its DDS domain are the site table's (site_table), one source for each fact.",
     "read_by": "robot/aris_robot/site.py and nothing else",
-    "mounted_source": "2026-10-02: the arms under control are 2R and 3R (site/aris_2026-10.json live_note). Set `mounted` true for a slot only when its arm hangs there and answers on the site table's address.",
+    "mounted_source": "2026-10-09: all six arms are mounted. Set `mounted` false for a slot whose arm is off or away.",
     "force_sign_note": "per slot: +1 when the paper pushing the pen up reads positive; -1 on the hung (inverted) arms, as found 2026-10-06. The first `aris touchoff <slot>` from the planning PC checks it: its report shows the sign of the force onset.",
     "slots_note": "arms are slots 1L 1R 2L 2R 3L 3R (DESIGN 4c); the old robot ids live on only in the site table",
-    "rt_core_note": "each mounted slot's stack runs pinned to its own isolated core (`taskset -c rt_core`, 16-21); link drops ended on 2026-10-07 once each arm's loop had its own core, with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). Real-time priority is set on the control-loop threads only, by the site's helper (README), never on the whole launch: that froze the PC. Row 3 (robots 13 and 17, inverted like the others since 2026-10-08) has cores 20 and 21: these must be isolated on the Dell as 16-19 are (kernel isolcpus) before row 3 is mounted (README)."
+    "rt_core_note": "each mounted slot's stack runs pinned to its own isolated core (`taskset -c rt_core`: 16-19, 28, 29); link drops ended on 2026-10-07 once each arm's loop had its own core, with the NIC's IRQs on cores 12, 13, 32, 33 (README, a one-time host step). Real-time priority is set on the control-loop threads only, by the site's helper (README), never on the whole launch: that froze the PC. Row 3 (robots 13 and 17, inverted like the others since 2026-10-08) runs on cores 28 and 29. Every rt_core must be in the Dell's isolated set (8-19 and 28-39); serve refuses one outside /sys/devices/system/cpu/isolated."
   },
   "server_url": "http://192.168.50.1:8420",
   "site_table": "site/aris_2026-10.json",
@@ -42,12 +42,12 @@
     "force_n_note": "the Cartesian thresholds: x, y, z in N, then the three torques in Nm"
   },
   "slots": {
-    "1L": {"mounted": false, "force_sign": -1.0, "rt_core": 18},
-    "1R": {"mounted": false, "force_sign": -1.0, "rt_core": 19},
+    "1L": {"mounted": true, "force_sign": -1.0, "rt_core": 18},
+    "1R": {"mounted": true, "force_sign": -1.0, "rt_core": 19},
     "2L": {"mounted": true, "force_sign": -1.0, "rt_core": 16},
     "2R": {"mounted": true, "force_sign": -1.0, "rt_core": 17},
-    "3L": {"mounted": false, "force_sign": -1.0, "rt_core": 20},
-    "3R": {"mounted": false, "force_sign": -1.0, "rt_core": 21}
+    "3L": {"mounted": true, "force_sign": -1.0, "rt_core": 28},
+    "3R": {"mounted": true, "force_sign": -1.0, "rt_core": 29}
   },
   "execution": {
     "source": "what worked on the arms, 2026-10-06 (field report). The start tolerance is the job header's or rig.json execution.start_tolerance_rad (0.03), not here.",

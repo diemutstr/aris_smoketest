@@ -161,8 +161,8 @@ failures; it lives at 7d93a14. The guide under FCI (enabling buttons with the co
   force at contact.
 - **Stacks start one at a time:** the next arm's once the previous one's joint states are fresh,
   or after 40 s (the Dell froze launching four).
-- **Row 3** hangs inverted (robots 13, 17): `force_sign` −1, cores 20 and 21, not mounted by
-  default.
+- **Row 3** hangs inverted (robots 13, 17): `force_sign` −1, cores 28 and 29; all six mounted
+  since 2026-10-09.
 - **Old services.** `aris-session@*`, the orchestrators and the keep-runners must be disabled
   on the Dell before serve (they hold the spawner lock): README section 5.
 
@@ -172,7 +172,7 @@ failures; it lives at 7d93a14. The guide under FCI (enabling buttons with the co
   3 N above it over 15 readings. A trip before arming (the descent's own jolt) is counted, not
   taken. The cap (6 N over the hover's air zero) counts from the first reading. An extension
   past the planned end re-arms after its own ramp and keeps the first zero.
-- **Cores.** Stacks run as `taskset -c <rt_core>` (16-19; row 3: 20 and 21, which must be isolated on the Dell as 16-19 are). Real-time priority goes on the
+- **Cores.** Stacks run as `taskset -c <rt_core>` (16-19; row 3: 28 and 29; every core must be in the Dell's isolated set 8-19, 28-39, which serve checks). Real-time priority goes on the
   control-loop threads only, set by the site's helper. The whole tree at FIFO 95 froze the PC.
 - **No silent hangs.** serve watches a job until it has started: no progress for 10 s
   fails it with a row naming the step, also in the job's log, and the late start is blocked.

@@ -451,9 +451,29 @@ class Operator:
                           fault=faults, why=r.why, **_q_fields(d))
 
 
-def launch_commands(args_files, site=None) -> dict:
+ISOLATED = Path("/sys/devices/system/cpu/isolated")
+
+
+def isolated_cores(path=ISOLATED) -> set | None:
+    """The kernel's isolated cores ("8-19,28-39" -> {8..19, 28..39}); None when the file is
+    missing or empty (nothing to check against)."""
+    try:
+        text = Path(path).read_text().strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    out = set()
+    for part in text.split(","):
+        lo, _, hi = part.partition("-")
+        out |= set(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+def launch_commands(args_files, site=None, isolated=ISOLATED) -> dict:
     """slot -> the `ros2 launch` command of its stack, from bringup's argument files; pinned
-    to the slot's isolated core (site.json `rt_core`, `taskset -c`) when it has one.  No
+    to the slot's isolated core (site.json `rt_core`, `taskset -c`) when it has one; a core
+    outside the kernel's isolated set (`isolated`, when that file lists any) is refused.  No
     real-time priority here: the whole launch tree at SCHED_FIFO froze the PC (2026-10-07);
     the site's helper raises the control-loop threads only (README)."""
     out = {}
@@ -461,5 +481,10 @@ def launch_commands(args_files, site=None) -> dict:
         a = json.loads(Path(f).read_text())
         cmd = ["ros2", "launch", "aris_bringup", "arm.launch.py", f"args:={f}"]
         core = None if site is None else site.arm(a["arm"]).rt_core
+        iso = isolated_cores(isolated) if core is not None else None
+        if iso is not None and core not in iso:
+            raise ValueError(f"slot {a['arm']}: rt_core {core} is not an isolated core (the "
+                             f"kernel isolates {Path(isolated).read_text().strip()}): pick one "
+                             f"of those in robot/site.json")
         out[a["arm"]] = cmd if core is None else ["taskset", "-c", str(core)] + cmd
     return out

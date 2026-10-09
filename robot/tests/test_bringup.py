@@ -106,7 +106,7 @@ def test_site_reads_robots_from_the_site_table(tmp_path):
                       ["site_table"]).read_text())["slots"]["2R"]
     assert (a.robot, a.ip, a.domain, a.namespace) == (row["robot"], row["ip"], row["domain"],
                                                        "arm_2R")
-    assert s.mounted == ("2L", "2R")
+    assert s.mounted == ("1L", "1R", "2L", "2R", "3L", "3R")       # all six since 2026-10-09
     assert site_mod.identity(a, None) == "unverified"
     known = site_mod.SiteArm("2R", "fr3-71", a.ip, 71, True, serial="295341-1234")
     assert site_mod.identity(known, "295341-1234") == "verified"
