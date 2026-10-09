@@ -197,6 +197,40 @@ def test_the_paper_is_still_found_on_such_an_arm(rig, setup, field, height):
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0005, r.stats
 
 
+class Creeping(SimPositionArm):
+    """The arm falls further behind its command as it descends, in steps: 0.45 mm within
+    0.7 s halfway down and 0.35 mm more near the end (1L, 2026-10-09, in free air)."""
+
+    def fly(self, traj, watch):
+        from aris.kernel.retime import sample
+        t0, first = traj.t[0], not self.flights
+
+        def behind(t):
+            u = t - t0
+            return 0.09 * np.clip((u - 6.5) / 0.7, 0.0, 1.0) + 0.07 * np.clip((u - 10.5) / 0.6, 0.0, 1.0)
+
+        def seen(q, F, t):
+            if first:
+                q = sample(traj, [max(t0, t - behind(t))])[0][0]
+            return watch(q, F, t)
+        return super().fly(traj, seen)
+
+
+def test_a_lag_that_creeps_up_in_the_air_is_no_contact(rig, setup):
+    """Job 017, touch 11: the lag crept up 0.7 mm over 11 s of free descent and a fixed level
+    called a contact 26 mm above the table at 0.7 N.  The lag rule follows its own recent
+    level; a real paper under the same arm is still found."""
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    pos = Creeping(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and r.why.startswith("no contact within 20 mm"), (r.why, r.rule, r.stats)
+    assert r.stats["largest_residual_mm"] < 0.8
+    paper = FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3)
+    r = touch(m, Creeping(q0, paper), kin, TouchSettings())
+    assert r.done and abs(_height_of(kin, paper, r.q_contact)) < 0.0005, (r.why, r.stats)
+
+
 class Spiking(SimPositionArm):
     """The force estimate reads `extra` N more at readings `at` of the first flight (the
     estimate's own errors: holder mass, friction, the start jolt)."""

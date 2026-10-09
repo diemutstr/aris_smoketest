@@ -306,7 +306,7 @@ class _Watch:
             settle = (late if self.late is None else min(late, self.late + 0.1)) + w + 0.05
         self.t_armed = self.t_speed + settle
         self._t_cmd_moved = self._t_act_moved = self._da0 = None
-        self.ts, self.dcs, self.das, self.qs = [], [], [], []
+        self.ts, self.dcs, self.das, self.qs, self.rs = [], [], [], [], []
         self.run, self.frun, self.rrun, self.first = 0, 0, 0, None
         self._air_short, self._air_force, self._air_lag = [], [], []
         self._t_first, self._t_last = None, None
@@ -316,7 +316,20 @@ class _Watch:
         return max(self.s.lag_m, self.s.noise_factor * (self.noise or 0.0))
 
     def threshold_res(self) -> float:
-        return max(2.0 * self.s.lag_m, self.s.noise_factor * (self.noise_res or 0.0))
+        return max(3.0 * self.s.lag_m, self.s.noise_factor * (self.noise_res or 0.0))
+
+    LAG_LEAD, LAG_SPAN = 1.0, 2.0      # s: the residual is compared with its own median
+                                       # between LAG_LEAD + LAG_SPAN and LAG_LEAD ago
+
+    def _excess(self, t, res) -> float:
+        """The residual over its own recent level.  On 1L (2026-10-09) the lag crept up 0.7 mm
+        over 11 s of free descent, in steps of 0.3 to 0.45 mm, and a fixed level called a
+        contact 26 mm above the table at 0.7 N.  A contact grows by the commanded advance, at
+        least 2 mm/s: past any threshold here well inside LAG_LEAD."""
+        lo = bisect.bisect_left(self.ts, t - self.LAG_LEAD - self.LAG_SPAN)
+        hi = bisect.bisect_right(self.ts, t - self.LAG_LEAD)
+        past = [r for r in self.rs[lo:hi] if r is not None]
+        return res - (float(np.median(past)) if len(past) >= 5 else 0.0)
 
     def _depth_cmd(self, t) -> float:
         tc = float(np.clip(t, self.traj.t[0], self.traj.t[-1]))
@@ -345,6 +358,7 @@ class _Watch:
         res = [self._depth_cmd(self.ts[k] - self.delay) - self.das[k] - self.lag_start
                for k in range(k0, len(self.ts))]
         self.noise_res = float(np.max(np.abs(res)))
+        self.rs[k0:] = res                 # the window's residuals: the first recent level
 
     def _depths(self, q, t) -> tuple[float, float]:
         tc = float(np.clip(t, self.traj.t[0], self.traj.t[-1]))
@@ -393,6 +407,7 @@ class _Watch:
             t = self.ts[-1] + 1e-6                    # readings in order, whatever the clock
         dc, da = self._depths(q, t)
         self.ts.append(t), self.dcs.append(dc), self.das.append(da), self.qs.append(q)
+        self.rs.append(None)
         self.readings += 1
         self._t_first = t if self._t_first is None else self._t_first
         self._t_last = t
@@ -434,6 +449,8 @@ class _Watch:
         # from the first readings of every later flight
         res = None if (self.flight == 1 and not armed) else self._residual(t, da)
         if res is not None:
+            self.rs[-1] = res
+            res = self._excess(t, res)         # over its own recent level, from here on
             self.max_res = max(self.max_res, res)
         back = max(0, bisect.bisect_left(self.ts, t - s.stall_window_max_s))
         # ---- the force cap: the safety stop, whenever

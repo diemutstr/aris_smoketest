@@ -63,6 +63,8 @@ class Plan:
     dropped: list               # (x, y) of points no spin reaches
     spin: float | None
     why: str = ""               # why there is no plan
+    probe: str = ""             # a phase whose contact only found the height (the first touch
+                                # of an unmeasured arm): not one of the plane fit's points
 
     def failed(self) -> dict:
         """What a failed job's report says about the plan."""
@@ -315,15 +317,19 @@ def _staged_work(arm, cfg):
             # from the nominal paper): never lower than that plus FOUND_SLACK
             pl = st.rig.paper(arm, for_planning=True)
             low = float(pl.pen_margin if pl.pen_margin is not None else pl.margin) + FOUND_SLACK
-            rest = np.delete(pts, k0, axis=0)
+            # The first touch only finds the height: it comes from the high hover, with its
+            # own hand orientation, and on 1L (2026-10-09) it read 9.9 mm above the plane the
+            # ten other real contacts shared to 0.7 mm RMS, three runs in a row.  Its point is
+            # touched again here with all the others, and its own contact stays out of the fit.
             second = plan_calibrate(st, arm, real if isinstance(real, dict) else where,
                                     replace(cfg, hover=max(dz + FOUND_TILT + FOUND_HOVER, low),
                                             extra_depth=UNCAL_DEPTH),
-                                    points=rest, min_points=MIN_CONTACTS - 1,
+                                    points=pts, min_points=MIN_CONTACTS,
                                     paper_dz=dz + FOUND_TILT - FOUND_SLACK)
             plan = Plan(arm, second.phase, first.steps + second.steps,
                         np.vstack([first.points_table, second.points_table]),
-                        first.dropped + second.dropped, second.spin, second.why)
+                        first.dropped + second.dropped, second.spin, second.why,
+                        probe=first.phase.name)
             if second.why:
                 why = second.why
             else:
@@ -400,6 +406,9 @@ def _solve(st, rec, plan, run):
         return "stopped", "stop requested", None, None
     rows = rec.log.read()
     missed = misses(plan, rows, arm)
+    if plan.probe:                      # the probe's contact is not one of the fit's points
+        rows = [r for r in rows if not (r.get("event") == "contact" and r.get("arm") == arm
+                                        and r.get("phase") == plan.probe)]
     n = sum(1 for r in rows if r.get("event") == "contact" and r.get("arm") == arm)
     if run.status != "done" and not (missed and "no contact" in run.why):
         return "failed", run.why, None, None
