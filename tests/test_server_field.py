@@ -836,3 +836,42 @@ def test_calibrate_without_a_base_part_keeps_clear_of_a_high_paper(tmp_path):
                 z = rig.to_table("2L", rig.arm("2L").tip(e.motion.traj.q))[:, 2]
                 lowest.append((float(z.min()), f.name, e.motion.kind, e.index))
     assert lowest and min(lowest)[0] >= high + 0.010, (rig.paper_z, sorted(lowest)[:5])
+
+
+# --------------------------------------------------------------------------- six arms
+
+
+@pytest.mark.slow
+def test_the_whole_flow_on_six_arms(tmp_path, capsys):
+    """All six mounted (the root rig, robots from the site table): arms, park, calibrate,
+    touch-off, mark --group all (7 meetings, 10 with --yaw), crosses, two pens, a drawing."""
+    import shutil
+    cfg = tmp_path / "cfg"
+    shutil.copytree(ROOT / "config", cfg, symlinks=False, ignore=shutil.ignore_patterns(
+        "two_arms", "rows12", "all_six", "back_row", "front_row"))
+    st = open_station(cfg, speed=math.inf, uncalibrated=True, cache_dir=ROOT / "out" / "cache",
+                      jobs_dir=tmp_path / "jobs", workers=4, sim_base_error=(3.0, 2.0),
+                      site=ROOT / "site" / "aris_2026-10.json")
+    c, h = TestClient(create_app(st)), None
+    h = ClientHttp(c)
+    rig = c.get("/rig").json()
+    assert rig["mark_groups"]["all"] == ["1L", "1R", "2L", "2R", "3L", "3R"]
+    arms = c.get("/arms").json()["arms"]
+    assert set(arms) == set(st.rig.arm_ids) and all(arms[a]["robot"] for a in arms)
+    assert len(c.get("/pens").json()["table"]) >= 2
+    rng = np.random.default_rng(1)
+    for a, d in st.drivers.items():
+        d._q = st.rig.park_q(a) + rng.uniform(-0.04, 0.04, 7)
+    for argv in (["arms"], ["park"], ["calibrate", "3L"], ["calibrate", "3R"],
+                 ["touchoff", "3R"], ["mark", "--group", "all"],
+                 ["mark", "--group", "all", "--yaw"], ["crosses", "--group", "all"],
+                 ["pen", "3L", "gel_g2"]):
+        assert cli.main(argv + ([] if argv[0] in ("arms", "pen") else ["--poll", "0.05"]),
+                        http=h) == 0, (argv, capsys.readouterr().out[-2000:])
+        out = capsys.readouterr().out
+        if argv[0] == "mark":
+            rep = c.get(f"/jobs/{c.get('/jobs').json()[-1]['id']}/report").json()
+            assert len(rep["meetings"]) == (10 if "--yaw" in argv else 7)
+            assert all(abs(e["turned_mrad"]) < 20 for e in rep["solved"]["slots"].values())
+    assert cli.main(["draw", str(ROOT / "tests" / "data" / "server_wide.json"), "--poll", "0.2"],
+                    http=h) == 0, capsys.readouterr().out[-2000:]

@@ -318,7 +318,8 @@ def solve(st, meetings) -> dict:
                              y_mm=round(1e3 * float(T[1, 3]), 2),
                              yaw_mrad=round(1e3 * yaw, 3),
                              moved_mm=round(1e3 * float(np.linalg.norm(T[:2, 3] - T0[:2, 3])), 2),
-                             turned_mrad=round(1e3 * (yaw - yaw0), 3),
+                             turned_mrad=round(1e3 * float(np.angle(np.exp(1j * (yaw - yaw0)))),
+                                               3),
                              yaw=getattr(f, "yaw_from", "measured"))
     fin = lambda x: None if x is None or not np.isfinite(x) else round(1e3 * float(x), 3)
     return dict(passed=bool(sol.passed), why=sol.why, slots=slots, residual_mm=fin(sol.rms),
