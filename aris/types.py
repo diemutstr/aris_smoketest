@@ -318,4 +318,7 @@ class DrawRules:
     lean_max: float = np.deg2rad(15.0) # rad, how far the pen may lean off its nominal direction
     min_piece: float = 0.010           # m, shortest stretch worth a pen-down
     speed_fraction: float = 0.30       # fraction of the joint speed limits that may be used
+    accel_fraction: float = 0.90       # fraction of the joint acceleration limits, likewise
+                                       # (rig.json drawing.accel_fraction; 0.9 of 10 rad/s^2
+                                       # left the arms wobbling at the end of a flight)
     gates: Gates = field(default_factory=Gates)

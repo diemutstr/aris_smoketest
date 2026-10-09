@@ -18,7 +18,8 @@ class SimPosition:
     """Flies a trajectory under position control, one reading every TICK of motion time: the
     actual joints follow the commanded ones exactly until the pen tip meets the fake paper,
     where the tip stops (the commanded joints go on: the lag); the force is the paper's for
-    where the commanded tip would be (plus noise).  A cancel stops it where it is."""
+    where the arm would be without the paper (plus noise): it rises as the arm pushes on, from
+    the moment the tip arrives, also on an arm that trails.  A cancel stops it where it is."""
 
     def __init__(self, q0, paper: T.FakePaper, noise: float = 0.02, seed: int = 0,
                  trail_s: float = 0.0):
@@ -55,7 +56,7 @@ class SimPosition:
             if stopped is None:
                 u_free = u
             self.q = q_free if stopped is None else stopped
-            if watch(self.q, self._F(at(t)), min(t, t1)):
+            if watch(self.q, self._F(q_free), min(t, t1)):
                 return "cancelled"
         if stopped is None:
             self.q = traj.q[-1].copy()

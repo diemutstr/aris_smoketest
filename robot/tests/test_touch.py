@@ -43,20 +43,24 @@ def _height_of(kin, paper, q):
 
 @pytest.mark.parametrize("height", [0.005, 0.0, -0.004])
 def test_contact_is_where_the_tip_stopped(rig, setup, height):
-    """The actual joints stop at the paper while the commanded go on: contact by the lag,
-    at the paper within 0.3 mm, whatever the force estimate reads (2026-10-08)."""
+    """The actual joints stop at the paper while the commanded go on: contact by the stall
+    rule, at the paper within 0.3 mm, whatever the force estimate reads."""
     r, pos, kin, paper = _run(rig, setup, height)
-    assert r.done and r.rule == "lag", r.why
+    assert r.done and r.rule == "stall", r.why
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
-    assert 0.0003 < r.lag_at_contact < 0.0006 and abs(r.lag0) < 1e-9
+    assert 0.0004 <= r.lag_at_contact < 0.0012 and abs(r.lag0) < 1e-9
     assert r.force_at_contact < 8.0
     assert np.abs(pos.q - setup[0]).max() <= 1e-9                  # back at the hover
     assert r.depth_past_end <= max(0.0, -height) + 0.0003
+    st = r.stats                                                    # the touch's own numbers
+    assert st["readings"] > 100 and st["air_noise_mm"] < 0.05
+    assert st["threshold_mm"] == pytest.approx(0.4) and st["stop_depth_mm"] > 50.0
+    assert len(r.trace) == st["readings"]
 
 
 def test_contact_past_the_planned_end_goes_on_straight_and_slowly(rig, setup):
     r, pos, kin, paper = _run(rig, setup, -0.012)                  # paper 12 mm low
-    assert r.done and r.rule == "lag", r.why
+    assert r.done and r.rule == "stall", r.why
     assert r.depth_past_end == pytest.approx(0.012, abs=0.0003)
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
     ext = pos.flights[1]
@@ -66,6 +70,19 @@ def test_contact_past_the_planned_end_goes_on_straight_and_slowly(rig, setup):
     lateral = (tips - tips[0]) - np.outer((tips - tips[0]) @ kin.down, kin.down)
     assert np.abs(lateral).max() < 2e-5                             # straight on
     assert np.abs(pos.q - setup[0]).max() <= 1e-9
+
+
+@pytest.mark.parametrize("below", [0.0003, 0.001])
+def test_a_paper_just_past_the_planned_end_is_found_by_the_extension(rig, setup, below):
+    """The extension starts from rest right above (or on) the paper: its short blind start
+    presses the pen in a little, never more than a drawing's press, and the contact is still
+    the paper."""
+    r, pos, kin, paper = _run(rig, setup, -below)
+    assert r.done, r.why
+    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
+    deepest = max(float(kin.tip(f.q[-1])[0] @ kin.down) for f in pos.flights[:2])
+    assert r.stats["stop_commanded_mm"] is not None
+    assert r.force_at_contact < 8.0 or r.rule == "force cap"
 
 
 def test_no_contact_gives_up_after_the_extra_depth_and_comes_back(rig, setup):
@@ -80,17 +97,76 @@ def test_no_contact_gives_up_after_the_extra_depth_and_comes_back(rig, setup):
 @pytest.mark.parametrize("height", [0.0, -0.012])
 def test_a_controller_that_trails_by_half_a_millimetre_is_no_contact(rig, setup, height):
     """The arm trails the commanded descent by 0.5 mm all the way down (0.1 s at 5 mm/s):
-    the baseline in the air takes it out, no false contact, and the paper is still found
-    where it is (also on the slower extension)."""
+    a constant lag is no contact, and the paper is still found where it is (also on the
+    slower extension)."""
     q0, m = setup
     kin = Kinematics.of(rig, ARM)
     paper = FakePaper(kin, rig.paper(ARM), height=height, bias=2.3)
     pos = SimPositionArm(q0, paper, trail_s=0.1)
     r = touch(m, pos, kin, TouchSettings())
-    assert r.done and r.rule == "lag", r.why
+    assert r.done and r.rule == "stall", r.why
     assert r.lag_baseline == pytest.approx(0.0005, abs=0.00005)
     assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
     assert np.abs(pos.q - q0).max() <= 1e-9
+
+
+class Field(SimPositionArm):
+    """The arm as it was on 2026-10-09: what the detector READS differs from the perfect arm.
+    `off`: the joints read this far (rad, joint 2) from the commanded ones when the flight
+    starts and settle with time constant `tau` (the arm had not come to rest at the hover:
+    1L stood 0.65 mm off); `late`: the reading's clock runs this many seconds ahead of the
+    arm (the goal starts after it was sent); `jitter`: noise on every joint reading (rad);
+    `stick`: the arm sticks for this many seconds every 0.5 s and then catches up (friction
+    at 5 mm/s)."""
+
+    def __init__(self, q0, paper, off=0.0, tau=0.4, late=0.0, jitter=0.0, stick=0.0):
+        super().__init__(q0, paper, trail_s=late)
+        self.off, self.tau, self.jitter, self.stick = off, tau, jitter, stick
+        self.rng2 = np.random.default_rng(1)
+
+    def fly(self, traj, watch):
+        t0, first, held = traj.t[0], not self.flights, {}
+
+        def seen(q, F, t):
+            q = np.array(q, float)
+            if self.stick and (t - t0) % 0.5 < self.stick and "q" in held:
+                q = held["q"]                              # stuck: the reading does not move
+            else:
+                held["q"] = q.copy()
+            if first:
+                q[1] += self.off * np.exp(-(t - t0) / self.tau)
+            q = q + self.jitter * self.rng2.standard_normal(7)
+            return watch(q, F, t)
+        return super().fly(traj, seen)
+
+
+FIELD = [dict(off=0.002), dict(off=-0.002), dict(off=0.004, tau=1.0), dict(late=0.3),
+         dict(jitter=2e-5), dict(stick=0.08), dict(off=0.002, late=0.2, jitter=2e-5, stick=0.05)]
+
+
+@pytest.mark.parametrize("field", FIELD)
+def test_nothing_in_the_air_is_a_contact(rig, setup, field):
+    """An arm still settling when the descent starts, a late start, noisy joints, an arm that
+    sticks and slips: with the paper out of reach there is NO contact (on 2026-10-09 the old
+    rule called one 1.2 s into the descent, twice, 54 and 143 mm above the table)."""
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    pos = Field(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3), **field)
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and r.why.startswith("no contact within 20 mm"), (r.why, r.rule, r.stats)
+
+
+@pytest.mark.parametrize("field", FIELD)
+@pytest.mark.parametrize("height", [0.02, 0.0, -0.012])
+def test_the_paper_is_still_found_on_such_an_arm(rig, setup, field, height):
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    paper = FakePaper(kin, rig.paper(ARM), height=height, bias=2.3)
+    pos = Field(q0, paper, **field)
+    r = touch(m, pos, kin, TouchSettings())
+    assert r.done, (r.why, r.stats)
+    # within half a millimetre of the paper (the noise and the stick are in the reading too)
+    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0005, r.stats
 
 
 class Spiking(SimPositionArm):
@@ -110,33 +186,86 @@ class Spiking(SimPositionArm):
         return super().fly(traj, spiked)
 
 
-def test_a_force_spike_without_lag_is_no_contact(rig, setup):
+def test_a_force_spike_without_a_stall_is_no_contact(rig, setup):
     q0, m = setup
     kin = Kinematics.of(rig, ARM)
     pos = Spiking(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3), 6.0,
                   set(range(1, 60)))
     r = touch(m, pos, kin, TouchSettings())
     assert not r.done and r.why.startswith("no contact"), r.why
+    # over the cap, but for single readings only: still nothing
+    pos = Spiking(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3), 12.0,
+                  set(range(100, 2000, 7)))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and r.why.startswith("no contact"), r.why
 
 
-def test_a_force_over_the_cap_is_a_contact_at_that_reading(rig, setup):
+def test_a_force_that_starts_with_the_motion_is_not_the_paper(rig, setup):
+    """The estimate jumps by 5 N when the arm starts to move and stays there (friction): the
+    zero taken in the air at speed takes it out, so the cap is not 3 N away all the way down."""
     q0, m = setup
     kin = Kinematics.of(rig, ARM)
-    pos = Spiking(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3), 10.0, {200})
+    paper = FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3)
+    pos = Spiking(q0, paper, 5.0, set(range(1, 100000)))
     r = touch(m, pos, kin, TouchSettings())
-    assert r.done and r.rule == "force cap", r.why
-    assert r.force_at_contact > 8.0 and abs(r.lag_at_contact) < 1e-4
-    from aris.kernel.retime import sample
-    descent = pos.flights[0]
-    q_200 = sample(descent, [descent.t[0] + 199 * 0.004])[0][0]     # the 200th reading
-    assert np.allclose(r.q_contact, q_200, atol=1e-9)
-    assert np.abs(pos.q - q0).max() <= 1e-9                         # the way back flown
+    assert r.done and r.rule == "stall", r.why
+    assert r.stats["force_zero_moving_n"] == pytest.approx(r.air_zero + 5.0, abs=0.2)
+    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
+
+
+def test_a_force_over_the_cap_in_the_air_stops_the_arm_and_is_no_contact(rig, setup):
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    pos = Spiking(q0, FakePaper(kin, rig.paper(ARM), height=-0.05, bias=2.3), 10.0,
+                  set(range(200, 260)))
+    r = touch(m, pos, kin, TouchSettings())
+    assert not r.done and r.rule == "force cap", (r.why, r.rule)
+    assert r.why.startswith("stopped by the force cap in the air") and "not a contact" in r.why
+    assert r.force_at_contact > 8.0 and r.q_contact is None
+    assert len(pos.flights) == 2                                    # the descent, the way back
+    assert np.abs(pos.q - q0).max() <= 1e-9
+
+
+def test_a_stiff_paper_trips_the_force_cap_and_that_is_the_contact(rig, setup):
+    """8 N reached half a millimetre in, before the stall rule has its window: the cap stops
+    the arm, the tip had stopped following, so it is the paper."""
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+    paper = FakePaper(kin, rig.paper(ARM), height=0.0, k=15000.0, bias=2.3)
+    pos = SimPositionArm(q0, paper)
+    r = touch(m, pos, kin, TouchSettings())
+    assert r.done and r.rule == "force cap", (r.why, r.rule)
+    assert r.force_at_contact > 8.0 and r.lag_at_contact >= 0.0004
+    assert abs(_height_of(kin, paper, r.q_contact)) < 0.0003
+    assert np.abs(pos.q - q0).max() <= 1e-9
+
+
+def test_the_descent_waits_for_the_arm_to_stand_still(rig, setup):
+    q0, m = setup
+    kin = Kinematics.of(rig, ARM)
+
+    class Settling(SimPositionArm):
+        asked = None
+
+        def still(self, rest_s, rest_m, wait_s):
+            Settling.asked = (rest_s, rest_m, wait_s, len(self.flights))
+            return self.verdict
+
+    pos = Settling(q0, FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3))
+    pos.verdict = ""
+    r = touch(m, pos, kin, TouchSettings())
+    assert r.done and Settling.asked == (0.5, 0.00005, 6.0, 0)      # asked before the descent
+    assert r.stats["not_at_rest"] is None
+    pos = Settling(q0, FakePaper(kin, rig.paper(ARM), height=0.0, bias=2.3))
+    pos.verdict = "the tip still moved 0.31 mm in 0.5 s after 6 s at the hover"
+    r = touch(m, pos, kin, TouchSettings())     # an arm that never rests: flown, and said
+    assert r.done and r.stats["not_at_rest"] == pos.verdict
 
 
 def test_refusals_before_moving(rig, setup):
     q0, m = setup
     import dataclasses
-    r = touch(dataclasses.replace(m, extra_depth=0.05), SimPositionArm(q0, None), Kinematics.of(rig, ARM),
+    r = touch(dataclasses.replace(m, extra_depth=0.06), SimPositionArm(q0, None), Kinematics.of(rig, ARM),
               TouchSettings())
     assert not r.done and "cap" in r.why
     class Silent(SimPositionArm):                    # no force signal at all
@@ -146,7 +275,7 @@ def test_refusals_before_moving(rig, setup):
     r = touch(m, pos, Kinematics.of(rig, ARM), TouchSettings())
     assert not r.done and r.why.startswith("no_tare") and not pos.flights
     r, pos, _, _ = _run(rig, setup, 0.0, bias=9.0)  # a large air reading is no reason to stop
-    assert r.done and r.rule == "lag", r.why
+    assert r.done and r.rule == "stall", r.why
 
 
 def test_the_executor_logs_the_contact_row_with_the_joints(rig, setup, tmp_path):

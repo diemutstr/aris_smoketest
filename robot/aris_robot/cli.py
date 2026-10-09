@@ -73,6 +73,7 @@ def cmd_serve(a, site, rig) -> int:
                         ).start()
         for i, d in drivers.items():          # recovery steps as rows; a stalled stack restarts
             d.say = lambda event, _i=i, **f: rows.say(event, arm=_i, **f)
+            d.trace_dir = log_dir / "touches"     # every touch's readings, one CSV each
             d.restart_stack = lambda _i=i: stacks.restart(_i)
     op = Operator(remote, a.config, a.work, drivers, log_dir, stacks, rows=rows,
                   robots=robots(site))

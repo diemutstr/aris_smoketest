@@ -106,7 +106,7 @@ def retime(path: JointPath, limits: Limits, rules: DrawRules, s: np.ndarray | No
 def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     s: np.ndarray | None = None, *, deviation: float = 1.5e-4,
                     tip_budget_m: float | None = None, tip_of=None,
-                    accel_fraction: float = 0.9, jerk_fraction: float = 0.9,
+                    accel_fraction: float | None = None, jerk_fraction: float = 0.9,
                     blend_time: float = 0.025, knot_dt: float = 0.05, smooth: bool = False,
                     speed_cap=None) -> RetimeResult | Refusal:
     """`retime`, plus what it did.
@@ -120,7 +120,8 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
                     Needs `tip_of` (Q (N,7) -> tips (N,3)).  Default with `tip_of`: 0.1 mm for
                     drawing motions, none for free motions.  Only the corners that break it are
                     rounded more tightly.
-    accel_fraction  of the acceleration limit, the most the result may use.
+    accel_fraction  of the acceleration limit, the most the result may use (default:
+                    rules.accel_fraction).
     jerk_fraction   of the jerk limit, likewise.  Velocity uses rules.speed_fraction.
     blend_time      s, length of each of the three box averages that soften speed changes.
     knot_dt         s, the longest gap between output samples.
@@ -144,6 +145,8 @@ def retime_detailed(path: JointPath, limits: Limits, rules: DrawRules,
     if tip_of is not None and tip_budget_m is None and s is not None:
         tip_budget_m = 1e-4
     u_knots, q_knots = prepared
+    if accel_fraction is None:
+        accel_fraction = getattr(rules, "accel_fraction", 0.9)
     targets = (rules.speed_fraction * limits.qd_max, accel_fraction * limits.qdd_max,
                jerk_fraction * limits.qddd_max)
     # The written-out samples add a little to the rounding; leave them a tenth of each budget.

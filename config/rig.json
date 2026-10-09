@@ -698,8 +698,10 @@
     "landing_speed_m_per_s": 0.003,
     "landing_speed_note": "the pen tip's speed over the last millimetres of a lower, as it meets the paper: 3 mm/s was needed on the hardware (site, 2026-10-06; a rigid pen landing fast trips the reflex). The descent above that is flown at the normal speed.",
     "min_piece_m": 0.01,
-    "speed_fraction": 0.3,
-    "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit"
+    "speed_fraction": 0.15,
+    "speed_fraction_note": "fraction of the joint speed limits that may be used; a ratio, no unit. 0.3 until 2026-10-09 (Pete at the rig: the flights between poses are aggressive and the arms wobble at their end)",
+    "accel_fraction": 0.15,
+    "accel_fraction_note": "fraction of the joint acceleration limits (10 rad/s^2) that may be used; the code's default, 0.9, is what flew until 2026-10-09"
   },
   "pens": {
     "source": "the pens the holder can carry; `current` names the one that is in (DESIGN 4c, 2026-10-02). rig.pen() hands out the current entry (plus its name) and the server copies it into every job header; rig.rules() takes press and drawing speed from it; the tool model takes its length and capsule radius from it unless the slot's calibration has a passing pen part for this pen.",

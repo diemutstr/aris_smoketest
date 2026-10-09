@@ -224,8 +224,11 @@ def plan_calibrate(st, a: str, where: dict, cfg: CalibSettings = CalibSettings()
 # --------------------------------------------------------------------------- the job
 
 
-UNCAL_HOVER = 0.060      # m above the nominal paper: the first hover of an arm whose height
-                         # is not measured yet (no passing base part)
+UNCAL_HOVER = 0.150      # m above the nominal paper: the first hover of an arm whose height
+                         # is not measured yet (no passing base part).  60 mm until 2026-10-09:
+                         # the table may stand centimetres above the nominal one, and the
+                         # flight to the hover is planned clear of a paper up to
+                         # UNCAL_HOVER - FOUND_HOVER - FOUND_SLACK above it
 UNCAL_DEPTH = 0.040      # m past the nominal paper its first touch may go
 FOUND_HOVER = 0.020      # m above the first contact: every later hover of that job
 FOUND_SLACK = 0.005      # m: the free moves keep their pen clearance from a paper this much
@@ -282,6 +285,16 @@ def _staged_work(arm, cfg):
         if not why:
             q = np.asarray(rows[-1]["q"], float)
             dz = float(st.rig.to_table(arm, st.rig.arm(arm).tip(q[None])[0])[2] - st.rig.paper_z)
+            top = UNCAL_HOVER - FOUND_HOVER - FOUND_SLACK
+            if dz > top:
+                # nothing can be planned from a paper this close under the hover, and a real
+                # paper there is unlikely: say what it is instead of "no point can be touched"
+                why = (f"the first touch reports the paper {dz * 1e3:.0f} mm above the nominal "
+                       f"one, only {(UNCAL_HOVER - dz) * 1e3:.0f} mm below the hover it started "
+                       f"from: a contact in the air? (the touch's row on the robot PC has the "
+                       f"detector's numbers; a paper really higher than {top * 1e3:.0f} mm "
+                       f"above the nominal one needs a higher UNCAL_HOVER)")
+        if not why:
             real = runner.where_now(st, need_all=True)
             # a hover must clear the nominal paper's planning clearance too (its touch rises
             # from the nominal paper): never lower than that plus FOUND_SLACK

@@ -64,6 +64,7 @@ class RosArm:
         self._halt = threading.Event()
         self._stopped = False
         self.last_report: dict = {}
+        self.trace_dir = None                    # serve: where each touch's readings go
 
     # ------------------------------------------------------------------ verbs
 
@@ -128,12 +129,33 @@ class RosArm:
                      rule=r.rule or None, lag_at_contact_m=r.lag_at_contact,
                      force_at_contact_n=r.force_at_contact, lag0_m=r.lag0,
                      depth_past_end_m=r.depth_past_end, why=r.why,
-                     text=("stopped by the force cap" if r.rule == "force cap" else None))
+                     text=("stopped by the force cap" if r.rule == "force cap" else None),
+                     stats=r.stats, trace=self._save_trace(r))
             if r.held:
                 self._stopped = True             # stands where it hit; a person looks first
             if r.done:
                 return Result.ok(r.q_contact)
             return Result.failed(r.why, self.state().q)
+
+    def _save_trace(self, r) -> str | None:
+        """Every reading of the touch as a CSV in `trace_dir` (flight, time, commanded and
+        actual depth below the hover in mm, force over the zero in N): what to look at when a
+        contact is doubted.  -> the file's name, or None."""
+        if self.trace_dir is None or not r.trace:
+            return None
+        try:
+            from pathlib import Path
+            d = Path(self.trace_dir)
+            d.mkdir(parents=True, exist_ok=True)
+            f = d / f"touch_{self.arm_id}_{time.strftime('%Y%m%d-%H%M%S')}.csv"
+            with open(f, "w") as out:
+                out.write("flight,t_s,commanded_mm,actual_mm,force_n\n")
+                for k, t, dc, da, fo in r.trace:
+                    out.write(f"{k},{t:.4f},{dc * 1e3:.4f},{da * 1e3:.4f},"
+                              f"{'' if fo is None else format(fo, '.3f')}\n")
+            return f.name
+        except OSError:
+            return None
 
     def guide(self, motion) -> Result:
         """At the hover the trajectory controller is let go and the person is told what to do
@@ -445,4 +467,24 @@ class _Position:
 
     def joints(self):
         return self.arm.state().q
+
+    def still(self, rest_s: float, rest_m: float, wait_s: float) -> str:
+        """Wait (at most `wait_s`) until the pen tip has not moved more than `rest_m` for
+        `rest_s`.  -> "" then, else what it still did."""
+        a, seen, span = self.arm, [], float("nan")
+        t_end = time.monotonic() + wait_s
+        while True:
+            q, now = a.state().q, time.monotonic()
+            if np.all(np.isfinite(q)):
+                seen.append((now, a.kin.tip(q)[0]))
+            seen = [x for x in seen if now - x[0] <= rest_s]
+            if seen and now - seen[0][0] >= 0.9 * rest_s:
+                tips = np.array([x[1] for x in seen])
+                span = float(np.linalg.norm(tips.max(axis=0) - tips.min(axis=0)))
+                if span <= rest_m:
+                    return ""
+            if now > t_end:
+                return (f"the tip still moved {span * 1000:.2f} mm in {rest_s:g} s after "
+                        f"{wait_s:g} s at the hover")
+            time.sleep(0.02)
 
