@@ -46,6 +46,11 @@
       "torque_nm": [20, 20, 20, 20, 10, 10, 10],
       "force_n": [20, 20, 20, 20, 20, 20]
     },
+    "touch": {
+      "torque_nm": [30, 30, 27, 27, 24, 21, 18],
+      "force_n": [30, 30, 30, 30, 30, 30]
+    },
+    "touch_note": "for jobs that touch the paper on purpose (calibrate, touch-off), 2026-10-09: the robot's own stop under a descent the detector missed. 40 N let the pen go 13 mm into the table once (1L, job 021); 20 N tripped 60 ms after the detector's own stop on a stiff contact (3L, job 028: 7.9 N at the stop).",
     "force_n_note": "the Cartesian thresholds: x, y, z in N, then the three torques in Nm"
   },
   "slots": {
