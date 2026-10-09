@@ -83,7 +83,7 @@ What changed:
   where it is and the next phase plans its way out (a retreat, then park).
 - **L and R are now as seen from Diemut's desk**: L = her left, R = her right. Every file was
   renamed: rig, site table, configs, figures, documents. New table: 1L = 31, 1R = 2, 2L = 71,
-  2R = 97, 3L = 13, 3R = 17.
+  2R = 97, 3L = 17, 3R = 13.
 - **Row 3 hangs** (13 and 17 inverted): `config/front_row` and `config/all_six` exist;
   `config/back_row` is in the repository now too.
 

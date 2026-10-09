@@ -40,8 +40,8 @@ anywhere any more; this table translates (picture: `docs/figures/table_orientati
 | 1R | far row, your right | 2 (.13) |
 | 2L | middle row, your left | 71 (.14) |
 | 2R | middle row, your right | 97 (.15) |
-| 3L | the row at your desk, your left | 13 (.11) |
-| 3R | the row at your desk, your right | 17 (.16) |
+| 3L | the row at your desk, your left | 17 (.16) |
+| 3R | the row at your desk, your right | 13 (.11) |
 
 If you (or your assistant) catch yourself saying "arm 71", say "2L" instead; every command,
 message and file uses the slot.

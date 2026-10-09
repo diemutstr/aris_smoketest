@@ -2,7 +2,7 @@
   "about": {
     "what": "Which robot hangs in which slot of the frame, as of October 2026 (decided 2026-10-02: arms are named by slot; the old prime-number robot ids live on only here). Read by the robot side (robot/), never by the planning code: aris/rig.py does not read site/.",
     "slots_note": "slot = row 1..3 along table y (-1.21, 0, +1.21 m; row 3 at Diemut's desk) and L/R AS SEEN FROM HER DESK: L = her left = table x = +0.305, R = her right = -0.305 (renamed 2026-10-08); see config/rig.json slots.",
-    "mapping_source": "Diemut's map, 2026-10-08, in her L/R: back row 1L = robot 31 (.12), 1R = 2 (.13); middle 2L = 71 (.14), 2R = 97 (.15); front row (her desk) 3L = 13 (.11), 3R = 17 (.16), all six hanging inverted. Earlier tables (2026-10-02/05/06) are superseded.",
+    "mapping_source": "Pete at the hardware 2026-10-09 (row 3) and Diemut's map 2026-10-08 (rows 1, 2), L/R as seen from her desk: 1L = robot 31 (.12), 1R = 2 (.13); 2L = 71 (.14), 2R = 97 (.15); 3L = 17 (.16), 3R = 13 (.11); all six hanging inverted.",
     "ip_source": "robot/site.json `arms` (control-stack briefing 2026-09-09, section 5, arm_registry.py), carried over by robot id. The DDS domain there was the robot id; it is copied as `domain`.",
     "live_note": "the arms under control are the middle row, 2L (robot 97) and 2R (robot 71), config/two_arms. 1L and 1R hang in their slots switched off and are fenced off; 3L is a floor-mounted upright arm and 3R is empty (no hanger steel at either, config/rig.json slots `hanger: false`).",
     "sure_note": "`sure: true` rows were checked on site on 2026-10-06. `controlled: \"never\"` marks a robot this rig must never drive; `absent: true` a slot with no robot in it (the robot named is kept, with its address, so that the table stays complete).",
@@ -38,18 +38,18 @@
       "why": "site 2026-10-08: slots renamed L/R as seen from Diemut's desk; robots confirmed by her map; live"
     },
     "3L": {
-      "robot": "fr3-13",
-      "ip": "192.168.50.11",
-      "domain": 13,
-      "sure": true,
-      "why": "site 2026-10-08: slots renamed L/R as seen from Diemut's desk; robots confirmed by her map; hanging inverted since 2026-10-08 (was a floor arm)"
-    },
-    "3R": {
       "robot": "fr3-17",
       "ip": "192.168.50.16",
       "domain": 17,
       "sure": true,
-      "why": "site 2026-10-08: slots renamed L/R as seen from Diemut's desk; robots confirmed by her map; hanging inverted since 2026-10-08 (was absent)"
+      "why": "Pete at the hardware, 2026-10-09: row 3 is 3L = 17 (.16), 3R = 13 (.11), seen from Diemut's desk; Diemut's map had them the other way"
+    },
+    "3R": {
+      "robot": "fr3-13",
+      "ip": "192.168.50.11",
+      "domain": 13,
+      "sure": true,
+      "why": "Pete at the hardware, 2026-10-09: row 3 is 3L = 17 (.16), 3R = 13 (.11), seen from Diemut's desk; Diemut's map had them the other way"
     }
   }
 }
