@@ -10,6 +10,7 @@ executor never plans and knows nothing about other arms.  Every state change goe
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 
@@ -21,6 +22,10 @@ from aris.execute.queue import End, Queue
 from aris.types import Slot
 
 REST_QD = 5e-3          # rad/s, "standing still" for the parked test  # rad/s; 1e-3 never settled on the real arms (site, 2026-10-06)
+REST_WAIT = 2.0         # s the arm is given to come to rest where its last motion ended,
+                        # before the parked test says no.  One look at once failed a
+                        # calibration on 1L (2026-10-09): the arm had touched the paper
+                        # cleanly, come back up slowly and was still settling by a hair.
 
 
 @dataclass(frozen=True)
@@ -73,11 +78,21 @@ class Executor:
             waiting = False
             item = ready.popleft()
             if isinstance(item, End):
-                s = self.driver.state()
-                parked = bool(s.ok and np.max(np.abs(s.qd)) <= REST_QD and (
-                    last_end is None or np.max(np.abs(s.q - last_end)) <= self.start_tol))
+                t_end = time.monotonic() + REST_WAIT
+                while True:
+                    s = self.driver.state()
+                    parked = bool(s.ok and np.max(np.abs(s.qd)) <= REST_QD and (
+                        last_end is None or np.max(np.abs(s.q - last_end)) <= self.start_tol))
+                    if parked or stop.is_set() or time.monotonic() >= t_end:
+                        break
+                    stop.wait(0.05)
                 self._log("finished", phase, done=done, complete=item.complete,
-                          parked=parked, note=item.note, q=s.q)
+                          parked=parked, note=item.note, q=s.q,
+                          **({} if parked else dict(
+                              ok=bool(s.ok), flags=list(s.flags),
+                              fastest_joint_rad_per_s=float(np.max(np.abs(s.qd))),
+                              off_the_end_rad=None if last_end is None
+                              else float(np.max(np.abs(s.q - last_end))))))
                 return ArmRun(self.arm_id, phase, "finished", done, item.note, -1, s.q,
                               item.complete, parked)
             refused = self._refuse_start(item.motion)
