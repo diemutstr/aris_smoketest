@@ -44,7 +44,10 @@ Q7_TRIES = np.deg2rad([0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0])
 @dataclass(frozen=True)
 class CalibSettings:
     grid: int = 5               # points per side of the grid
-    radius: float = 0.6         # m from the arm's axis
+    radius: float = 0.5         # m from the arm's axis.  0.6 until 2026-10-09: on 1L the eight
+                                # contacts within 0.5 m fit one plane to 0.68 mm RMS, the four
+                                # at 0.53-0.58 m read up to 5 mm high (the stretched arm sags,
+                                # about 15 mm per m^2 of reach) and failed the fit
     edge: float = 0.02          # m kept inside the drawing area
     hover: float = 0.06         # m above the nominal paper
     step: float = 0.002         # m between IK samples of the descent
