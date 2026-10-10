@@ -81,6 +81,11 @@ class TouchSettings:
                                    # commanded advance over the window
     settle_s: float = 1.0          # s at constant speed, in the air, before the stall rule
                                    # looks (its noise is measured at the end of that time)
+    clear_m: float = 0.005         # m of commanded descent from the hover before the stall and
+                                   # lag rules may call a contact: the hover is 20 mm or more
+                                   # above any paper, and a slow descent's start (the arm
+                                   # starts late, still swinging from its flight) looked like
+                                   # a stall 0.5 mm in (1L, 2026-10-10, job 067)
     late_max_s: float = 0.5        # s: the most the arm may start after the reading's clock
                                    # (the goal is sent, accepted, then flown); the noise is
                                    # measured on windows that begin after it
@@ -430,6 +435,7 @@ class _Watch:
         if self.lag_start is None and len(self.ts) >= 3:
             self.lag_start = float(np.median(np.subtract(self.dcs[:3], self.das[:3])))
         armed = t >= self.t_armed
+        clear = self.flight != 1 or dc >= s.clear_m     # not at the very start of a descent
         if armed and self.noise is None:              # the air window is over: its numbers
             self.noise = float(np.max(np.abs(self._air_short))) if self._air_short else 0.0
             self.zero_motion = float(np.median(self._air_force)) if self._air_force else None
@@ -479,7 +485,7 @@ class _Watch:
             return True
         # ---- the lag rule: the tip is behind where the trajectory had it, by more than the
         # arm's own delay explains (it also sees a paper met while the flight slows down)
-        if res is not None and res >= self.threshold_res():
+        if clear and res is not None and res >= self.threshold_res():
             if self.rrun == 0:
                 self.first_res = (self._rest(back), res, f)
             self.rrun += 1
@@ -495,7 +501,7 @@ class _Watch:
             i, d_cmd, d_act = win
             short = d_cmd - d_act
             self.max_short = max(self.max_short, short)
-            if short >= thr and d_act <= s.stall_ratio * d_cmd:
+            if clear and short >= thr and d_act <= s.stall_ratio * d_cmd:
                 if self.run == 0:
                     self.first = (self._rest(i), short, f)
                 self.run += 1
