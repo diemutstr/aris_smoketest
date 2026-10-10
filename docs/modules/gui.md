@@ -1,114 +1,104 @@
 # gui — the drawing arms page
 
-**Job.** One web page with big buttons for Diemut, in place of the desktop GUI she lost when
-the stack was replaced. It does nothing the `aris` commands cannot do: every button is one
-request to the drawing server, and the server's answer (success, or the refusal word for word)
-is shown in the status line at the top. The page has no logic of its own about what is safe;
-the server decides, the page shows what it said.
+**Job.** One web page for Diemut that looks like the main window of her old PyQt GUI
+(`franka_control_gui.py`, `FrankaControlGUI.init_ui`: "ARIS_KINDT - FR3 CONTROL", 1400×800)
+and drives this system. Every control is one request to the drawing server; the server's
+answer (success, or the refusal word for word) is written to STATUS, the right column. Nothing
+asks "are you sure"; the server decides what is safe and the page shows what it said. Old
+controls that have no counterpart here stay in place, greyed, with a one-line "not part of this
+system", so the layout is the one she knows.
 
-Files: `aris/server/gui/` — `index.html` (the panels), `app.js` (polling, buttons, the report
-in plain words), `style.css`. Plain HTML, JavaScript and CSS: no build step, no framework, no
-internet (nothing is loaded from outside the server). The server serves the folder as static
-files (`server.py`, `GET /gui/...`; `GET /` and `GET /gui` redirect to `/gui/`).
+Files: `aris/server/gui/` — `index.html` (the window), `app.js` (polling, wiring, reports in
+plain words, the popups), `style.css` (the old stylesheets' colours, fonts, sizes). Plain
+HTML/JS/CSS: no build step, no framework, nothing from the internet. The server serves the
+folder (`GET /gui/...`; `GET /` and `GET /gui` redirect to `/gui/`). Endpoints:
+`aris/server/API.md`.
 
 ## Opening it
 
-Start the server as usual (`docs/FOR_THE_ARTIST.md`, section 4), then open in a browser:
+Start the server as usual (`docs/FOR_THE_ARTIST.md`, section 4), then in a browser:
+`http://localhost:8420/gui` on the planning laptop, or `http://<planning laptop>:8420/gui` from
+another computer on the robot network (the server started with `--host 0.0.0.0`). Several
+browsers may have it open at once; reloading loses nothing.
 
-- on the planning laptop itself: `http://localhost:8420/gui`
-- from another computer on the robot network: `http://<planning laptop>:8420/gui` (the server
-  must have been started with `--host 0.0.0.0`, as in the daily start-up line)
+## The window
 
-The page can be open in several browsers at once; it only reads, except when a button is pressed.
-Reloading the page loses nothing (the job history lives in the server). The `aris` commands keep
-working beside it.
+Three columns as the old QSplitter (400 | 820 | 173, the middle one scrolls) and the status bar:
 
-## The look
+- **Left, the dialogue panel:** RESTART GUI · LOG FILES · SSH CHECKS on top; AI VISION and
+  AI TEXT / SPEECH below (greyed).
+- **Middle, the controls:** A R I S _ K I N D T, the discovery row (greyed),
+  A _ K _ M O D U L E S, then the two section bars with their submenus —
+  **⇄ MULTITASK / OPERATION CONTROL** (ARM COUNT, MATERIAL, verify arms, CALL OPERATOR, the
+  ROBOTS grid, the INDIVIDUAL / SET tabs with GRIPPER WIDTH / FORCE) and **AESTHETIC
+  GENERATOR + CODES** (Ae_G_ IMAGE (upload), the generator sections, P_ DRAWING CONTROL,
+  OPERATION / ORCHESTRATOR, ACTIVE FILE INFO, WAYPOINT PEEK, SVG (ADVANCED), RASTER (ADVANCED))
+  — and EMERGENCY at the bottom. The bars and the ▸ sections fold as before; the page
+  remembers which are open.
+- **Right, STATUS:** every answer, newest at the bottom; refusals red; a job's report in
+  plain words when it ends; a MARK job's instructions to the person as they come.
+- **Status bar:** SYSTEM: READY (or NO SERVER), operator PC code different, UNCALIBRATED,
+  no drawing area, the running job.
 
-The look of her old PyQt GUI: black background, panels #1A1A1A / #0A0A0A, white text in
-Courier New, UPPERCASE section headers, square buttons (#1A1A1A, white bold text, #333 on
-hover), primary actions yellow (#FFD700, black text: DRAW, MARK), go actions green (#00CC00,
-black text: RESUME DRAWING, UPLOAD, CROSSES), STOP red. No rounded corners, no shadows,
-dense. All of it is in `style.css`.
+The selected arm is the one in ARM COUNT; the arm buttons (gripper, MATERIAL, CALL OPERATOR,
+Z TOUCH, MEASURE SURFACE) act on it. While a job runs the buttons that start a job are greyed
+(the server allows one job at a time) and STATUS says which job runs; the stop buttons are lit
+only then.
 
-## The sections, top to bottom
+## Old control → what it does now
 
-**Top.** "server answers" (green) or "NO SERVER" (red). Red banners when the server does not
-answer or the robot PC runs different code than the laptop (jobs are refused until both are
-updated); yellow when the server runs `--uncalibrated` or cannot draw (no drawing area).
+| old control | now |
+|---|---|
+| ARM COUNT (1–6) | picks the arm: one entry per slot with its robot number, "2L  #71" (the number only when `/arms` or `/rig` gives it) |
+| ROBOTS grid (old SUPERVISION panel) | live: per slot the light (green still / amber moving / red no reading or fault), state, reading age, calibration base / pen |
+| MATERIAL | the pen in the selected arm's holder: `GET /pens`, `POST /pens/{slot}` |
+| verify arms | `GET /arms`: each arm's joints, at park or not, and the code line (same / DIFFERENT) into STATUS |
+| CALL OPERATOR | `POST /arms/{slot}/recover` for the selected arm |
+| START POS, START SET POS | `POST /park` (every arm to its park) |
+| SSH CHECKS (both) | a popup of checks, PASS / FAIL: server answers, code same, each arm's reading, drawing area, calibration |
+| GRIPPER WIDTH / FORCE, HOME GRIP / OPEN / CLOSE (INDIVIDUAL) | `POST /grip/{slot}` `{verb, width_m, force_n}` for the selected arm |
+| … SET GRIPPERS (SET) | the same for every arm ticked in SET, one after the other (one job at a time) |
+| KILL MOTION, KILL SET MOTION, KILL ALL, • CANCEL SVG, EMERGENCY | `POST /jobs/{id}/stop` of the running job (EMERGENCY also reminds that the arms' own stop is the one in her hand) |
+| • SELECT SVG (both) | pick a `.svg` (with WIDTH, optional POSITION x,y) or a drawing `.json`: `POST /drawings`; it becomes the IMAGE FILE |
+| IMAGE FILE (SVG ADVANCED) | the stored drawings, newest first (`GET /drawings`, ↻ reads them again); SVG CONFIG (YAML) shows the picked one |
+| START DRAWING, • START SVG | `POST /jobs?drawing=<IMAGE FILE>&note=…&air_mm=…` (NOTE and IN THE AIR mm rows in SVG ADVANCED) |
+| RESUME DRAWING, • RESUME SVG | `POST /jobs?rest_of=<id>` of the newest drawing job that stopped or failed |
+| Z TOUCH | `POST /touchoff/{slot}`: measures the selected arm's pen length |
+| MEASURE SURFACE | `POST /calibrate/{slot}`: the paper under the selected arm |
+| MARK, MARK + YAW, CROSSES (new row under Z TOUCH) | `POST /mark?group=…` (`&yaw=true`), `POST /crosses?group=…`, the group from `/rig` `mark_groups` |
+| PEN HEIGHT mm, force label | the press of the selected arm's pen (`/rig` `pens_in`), read-only — config is never edited from the page |
+| PAPER WIDTH / LENGTH, CENTER X / Y | the drawing area and its centre (`/rig`), read-only |
+| SYSTEM STATUS | popup: `/rig` + `/arms` + the code line, per arm joints, flags, calibration, pen |
+| ACTIVE FILE INFO | the running (or last) job: arms, file, motions done / queued and strokes per arm, state and phase; REFRESH ↻ reads again; FULL DETAILS ▸ shows the job header (`/jobs/{id}/header`) |
+| STROKE line, WAYPOINT PEEK | motions done / queued; per phase and arm queued, done, the current motion |
+| VIEW LIVE PATH | popup: the running job's events (`/jobs/{id}/events`), following as they come |
+| LOG FILES | popup: the jobs of this server run, each with REPORT (plain words), EVENTS and, for a stopped or failed drawing, RESUME DRAWING |
+| greyed (in place, "not part of this system") | AI VISION, AI TEXT / SPEECH, discovery, LEGACY / Z-TOUCH / RTffLL modes, MULTITASK, START POS INV, TOUCHDOWN ↓, SELFTEST, FULL RECOVERY, MOVEIT, image generation (Ae_G_, PHOTO → SVG, X-RAY, …), editors, drawing / motion codes, CONFIG FILES, RELAUNCH CLONE / X, SUPERVISION, ORCHESTRATOR, TRANSITION, CLEAR ALL (WIPE!), RESTART GUI, AUTO-RECOVERY, EXPORT PATHWAY CSV, PAUSE / RAISE, raster drawing |
 
-**STATUS.** The answer to the last button: yellow while asking, green for success ("started job
-…"), red for a refusal (`refused: busy: job … is planning; one job at a time`) or an error; the
-driver's instructions to the person during a MARK job also appear here. Under it the log of the
-last 50 answers with the time, and, while a job runs, which one. Nothing is hidden or shortened.
+## Adding a control
 
-**ARMS.** One card per slot the rig has (`/rig`; six with `config`, two with
-`config/two_arms`), labelled slot and robot number, "2L · 71" (the number only when `/arms` or
-`/rig` gives it, from the site table the server was started with, `--site`; otherwise the slot
-alone). The light: green = joints read and the arm still (the text says whether it is at its
-park), amber = moving, red = no reading (with the reason) or a fault (e.g. after STOP, until
-RECOVER). Then how old the joint reading is, the calibration state (base, pen), MATERIAL (the
-pen in that arm's holder: a choice from `GET /pens` `table`, set with `POST /pens/{slot}`),
-GRIPPER HOME / OPEN / CLOSE (`POST /grip/{slot}`, a short job) with the width it was left at,
-and RECOVER (`POST /arms/{slot}/recover`).
-
-**DRAWING CONTROL.** STOP (`POST /jobs/{id}/stop`, lit only while a job runs), PARK
-(`POST /park`), DRAW (the image picked in SELECT IMAGE: `POST /jobs?drawing=<id>&note=…&air_mm=…`),
-RESUME DRAWING (what the newest drawing job left, when it stopped or failed:
-`POST /jobs?rest_of=<id>`). A NOTE for the report, and IN THE AIR (draws the given millimetres
-above the paper, nothing touches).
-
-**SELECT IMAGE.** The stored images (`GET /drawings`), newest first, as a list; "↻ NEWEST
-FIRST" reads the list again at once. ADD AN IMAGE: a `.json` drawing, or an `.svg` with its
-WIDTH in metres and, if wanted, its POSITION "x, y" in metres; UPLOAD (`POST /drawings`) picks
-the new image at once.
-
-**LIVE DRAWING OUTPUT.** The running job, or the last one: kind, state and reason, phase, lines
-in the drawing, motions done of those planned so far, and per arm the strokes drawn and what it
-is doing now (`/jobs/{id}` and `/jobs/{id}/events`, once a second). A drawing that stopped or
-failed gets a RESUME DRAWING button here too.
-
-**CALIBRATION.** Per mark group of the rig (`/rig` `mark_groups`: row2, rows12, rows23, all —
-"all" last): MARK (`POST /mark?group=…`), MARK + YAW (`&yaw=true`), CROSSES
-(`POST /crosses?group=…`). Per arm: TOUCH-OFF and CALIBRATE (`POST /touchoff/{slot}`,
-`POST /calibrate/{slot}`). Each kind with one line of what it does, in Diemut's words. The
-saved calibration files are listed at the bottom.
-
-**RUN GALLERY.** The jobs of this server run, newest first, each with REPORT (and RESUME
-DRAWING for a stopped or failed drawing); beside the list the chosen job's report in plain
-words (`/jobs/{id}/report`): what was drawn, what was left over and why, the gripper width,
-the calibration results. The newest finished job's report is shown by itself.
-
-Every button acts on one click, without a confirmation dialog, and shows the server's answer.
-While a job runs, the buttons that start a job are greyed out and STATUS says which job runs
-(the server allows one job at a time; the gripper and the material are jobs or refused too).
-RECOVER and STOP stay usable.
-
-## Adding a button
-
-1. In `index.html`, put a `<button id="btn-mything" class="btn">MY THING</button>` in the section
-   it belongs to (`btn-primary` / `btn-yellow` for a main action, `btn-go` for a go action), with a `<p class="help">` line saying in plain words what it does. Add the
-   class `need-idle` if it starts a job (it is then greyed out while a job runs).
+1. In `index.html`, put the button where the old one was, with the class of its look
+   (`qsub` submenu button, `qbar` section bar, `hdr` header, …) and an `id`. Add `need-idle`
+   if it starts a job (greyed while one runs), `data-stop="LABEL"` if it stops the running job.
 2. In `app.js`, in `wire()`:
    ```js
    $("btn-mything").addEventListener("click", () =>
      act("MY THING", "POST", "/my/endpoint", { some: "body" }));
    ```
-   `act(label, method, path, body, opts)` sends the request and writes the answer to the status
-   line; `opts.ok(data)` turns a success answer into words (default: "started job <id>"). Never catch an error
-   without showing it: `act` already shows refusals and failures.
-3. Buttons made per slot are built once in `buildCards()` / `buildCalib()` (not on every poll,
-   so a click is never lost to a rebuild); their texts are updated in `updateCards()`.
+   `act(label, method, path, body, opts)` sends the request and writes the answer to STATUS;
+   `opts.ok(data)` turns a success into words (default "started job <id>"). Never catch an
+   error without showing it.
+3. A live readout goes into a `render…()` function (called after every poll); a view in its
+   own window is `openPopup(title, viewFn)`.
 
 A new job kind gets its plain-words report in `plainReport()` and a name in `KIND_WORDS`.
-The endpoints themselves are listed in `aris/server/API.md`.
 
 ## Checked
 
-In headless Chrome against `aris serve --config config/two_arms --driver sim --uncalibrated`
-(2026-10-07) and against the six-arm rig, `aris serve --config config --driver sim
---uncalibrated --site site/aris_2026-10.json` (2026-10-09): six cards 1L · 31, 1R · 2,
-2L · 71, 2R · 97, 3L · 13, 3R · 17; MARK / MARK + YAW / CROSSES for row2, rows12, rows23, all;
-↻ NEWEST FIRST; DRAW in the air; the busy refusal shown verbatim; STOP; RESUME DRAWING; a
-MATERIAL change; the reports; no confirmation dialog anywhere. Not yet seen against the robot
-driver (`--driver robot`): joint ages and "no reading".
+In headless Chrome against `aris serve --config config --driver sim --uncalibrated --site
+site/aris_2026-10.json` (six arms), 2026-10-10: ARM COUNT lists 1L #31, 1R #2, 2L #71,
+2R #97, 3L #17, 3R #13 (as that server's site table says); MARK groups row2, rows12, rows23,
+all; SELECT SVG upload, verify arms, gripper OPEN, START SVG in the air, the busy refusal shown
+verbatim, KILL MOTION, RESUME DRAWING, EMERGENCY, LOG FILES with a report, SYSTEM STATUS,
+MATERIAL, Z TOUCH (refused by the job itself: no paper measured yet); no confirmation dialog.
+Not yet seen against the robot driver (`--driver robot`).
