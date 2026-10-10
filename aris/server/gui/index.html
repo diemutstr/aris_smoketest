@@ -3,118 +3,276 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ARIS drawing arms</title>
+<title>ARIS_KINDT - FR3 CONTROL</title>
 <link rel="stylesheet" href="/gui/style.css">
 </head>
 <body>
+<!-- The main window of Diemut's old PyQt GUI (franka_control_gui.py, init_ui), rebuilt as a
+     page over the drawing server.  Three columns as its QSplitter: the dialogue panel (400),
+     the controls (820, scrolls), STATUS (173, min 200); the status bar at the bottom.
+     Controls with no counterpart in this system stay in place, greyed (class "na"). -->
+<div id="window">
 
-<header id="top">
-  <h1>ARIS · DRAWING ARMS</h1>
-  <div id="server-light" class="pill pill-grey">CONNECTING…</div>
-</header>
-
-<div id="banners"></div>
-
-<!-- STATUS: the server's last answer, always visible, and the log of earlier answers. -->
-<section id="status" aria-live="polite">
-  <h2>STATUS</h2>
-  <div id="status-line" class="status-idle">Nothing pressed yet.</div>
-  <div id="busy-note" class="busy-note" hidden></div>
-  <ol id="status-list" class="log"></ol>
-</section>
-
-<!-- ARMS: one card per slot the rig has. -->
-<section id="arms-panel">
-  <h2>ARMS</h2>
-  <div id="arm-cards" class="cards"></div>
-</section>
-
-<div class="two-col">
-
-<!-- DRAWING CONTROL: stop, park, draw, resume. -->
-<section id="control-panel">
-  <h2>DRAWING CONTROL</h2>
-  <div class="btn-row">
-    <button id="btn-stop" class="btn btn-stop" disabled>STOP</button>
-    <button id="btn-park" class="btn">PARK</button>
-    <button id="btn-draw" class="btn btn-primary">DRAW</button>
-    <button id="btn-resume" class="btn btn-go" disabled>RESUME DRAWING</button>
+<!-- ================================================================ DIALOGUE PANEL (far left) -->
+<div id="col-dialogue" class="col">
+  <div class="row gap6">
+    <button class="qbtn-outline o-orange na" title="not part of this system">RESTART GUI</button>
+    <button id="btn-log-files" class="qbtn-outline o-cyan">LOG FILES</button>
+    <button id="btn-ssh-checks" class="qbtn-outline o-green">SSH CHECKS</button>
   </div>
-  <div id="control-picked" class="help"></div>
-  <label class="field">NOTE (pen, paper, …; goes into the report)
-    <input type="text" id="draw-note" placeholder="e.g. 4H graphite on 120 g paper">
-  </label>
-  <label class="check"><input type="checkbox" id="draw-air">
-    IN THE AIR, this many mm above the paper (nothing touches):
-    <input type="number" id="draw-air-mm" value="30" min="1" step="1" class="short"></label>
-  <p class="help">STOP: every arm stops at once and holds. PARK: every arm back to its park.
-    DRAW: the image picked below. RESUME DRAWING: what the last stopped or failed drawing left.
-    First time with a new image, draw it in the air.</p>
-</section>
-
-<!-- SELECT IMAGE: the stored drawings, newest first, and adding one. -->
-<section id="draw-panel">
-  <h2>SELECT IMAGE</h2>
-  <div class="btn-row">
-    <button id="btn-refresh" class="btn btn-small">↻ NEWEST FIRST</button>
-    <span id="drawing-info" class="help"></span>
+  <div style="height:24px"></div>
+  <div class="big-lila">AI VISION</div>
+  <div class="cam-grid">
+    <button class="cam na">RealSense D415</button><button class="cam na">RealSense D455</button>
+    <button class="cam na">RealSense D435i</button><button class="cam na">Dino-Lite</button>
+    <button class="cam na">Astra Pro</button><button class="cam na">Ring Macro Cam</button>
+    <button class="cam na">USB Webcam</button><button class="cam na">360 Dome Cam</button>
   </div>
-  <select id="drawing-select" size="7" aria-label="drawings"></select>
-  <fieldset class="upload">
-    <legend>ADD AN IMAGE (.json or .svg)</legend>
-    <input type="file" id="upload-file" accept=".json,.svg">
-    <div class="inline-fields">
-      <label class="field">WIDTH (m, needed for .svg)
-        <input type="number" id="upload-width" step="0.01" min="0" placeholder="0.8">
-      </label>
-      <label class="field">POSITION x, y (m, optional)
-        <input type="text" id="upload-at" placeholder="0, 0">
-      </label>
-    </div>
-    <button id="btn-upload" class="btn btn-go">UPLOAD</button>
-  </fieldset>
-</section>
-
+  <button class="vision-wall na">⛶  VISION WALL</button>
+  <input class="qline na" placeholder="Image path (for Image source)..." disabled>
+  <div style="height:10px"></div>
+  <div class="big-lila">AI TEXT / SPEECH</div>
+  <div class="row gap6">
+    <select class="combo-y na" disabled><option>MONOLOGUE</option><option>DIALOGUE</option></select>
+    <span class="slash">/</span>
+    <button class="audio-btn na">AUDIO ▾</button>
+    <button class="btn-start na">Start</button><button class="btn-stop-s na">Stop</button>
+    <button class="btn-pause na">Pause</button>
+  </div>
+  <button class="mono-prompt na">MONOLOGUE/<i>PROMPT</i></button>
+  <textarea id="dialogue-text" class="dialogue-text na" readonly
+    placeholder="AI VISION · AI TEXT / SPEECH · DISCOVERY: not part of this system"></textarea>
+  <div class="row gap6">
+    <button class="save-btn na">SAVE MONOLOGUE</button><button class="save-btn na">SAVE DIALOGUE</button>
+  </div>
+  <div class="na-note">AI VISION, AI TEXT / SPEECH: not part of this system</div>
 </div>
 
-<!-- LIVE DRAWING OUTPUT: the running (or last) job. -->
-<section id="live-panel">
-  <h2>LIVE DRAWING OUTPUT</h2>
-  <div id="job-current" class="job-box">No job yet.</div>
-  <div id="job-actions" class="btn-row"></div>
-</section>
-
-<!-- CALIBRATION: the marks, the crosses, the pen, the paper. -->
-<section id="calib-panel">
-  <h2>CALIBRATION</h2>
-  <div id="mark-buttons" class="btn-row"></div>
-  <p class="help">MARK: two neighbouring arms fly above a spot. At the arms: switch BOTH to
-    programming mode in Desk, bring the two pen tips together in the air until they touch, let
-    go, switch BOTH back to execution mode with FCI on. The arms go home by themselves.
-    MARK + YAW does it at two spots and also finds how the arms are turned.</p>
-  <div id="crosses-buttons" class="btn-row"></div>
-  <p class="help">CROSSES: the check afterwards. The L arm draws a cross, the R arm a circle, at
-    the same spots: they should sit on each other.</p>
-  <div id="touchoff-buttons" class="btn-row"></div>
-  <p class="help">TOUCH-OFF: one touch on the paper that measures the pen's length. After MARK
-    and after every pen change. Nothing for you to do.</p>
-  <div id="calibrate-buttons" class="btn-row"></div>
-  <p class="help">CALIBRATE: the arm touches the paper on a grid and measures how flat and how
-    high it lies under that arm.</p>
-  <div id="calib-state" class="help"></div>
-</section>
-
-<!-- RUN GALLERY: earlier jobs and their reports. -->
-<section id="gallery-panel">
-  <h2>RUN GALLERY</h2>
-  <div class="two-col gallery">
-    <ul id="job-list" class="job-list"></ul>
-    <div id="job-report" class="report">No finished job yet.</div>
+<!-- ================================================================ CONTROLS (middle, scrolls) -->
+<div id="col-controls" class="col">
+  <button class="title-kindt">A R I S _ K I N D T</button>
+  <div class="discovery-label">A_K_ Self_ Explanatory_ Discovery</div>
+  <div class="row gap4">
+    <button class="disc-start na">START DISCOVERY ▾</button>
+    <button class="disc-resume na">RESUME</button>
+    <button class="disc-stop na">STOP DISCOVERY</button>
   </div>
-</section>
+  <div class="na-note">discovery: not part of this system</div>
+  <div style="height:61px"></div>
+  <div class="modules-label">A _ K _ M O D U L E S</div>
 
-<footer class="help">Every answer of the server is shown under STATUS, word for word. When the
-  system refuses something, that is it being careful: send Pete the text.</footer>
+  <!-- ROBOT: the bar and its submenu container -->
+  <button id="bar-robot" class="qbar bar-lila" data-fold="robot-container">⇄ MULTITASK / OPERATION CONTROL</button>
+  <div id="robot-container" class="sub-container">
+    <div class="row gap4">
+      <span class="lbl-b pad4">ARM COUNT</span>
+      <select id="arm-select" class="combo-arm" aria-label="arm"></select>
+      <span id="arm-select-state" class="small-grey"></span>
+    </div>
+    <div class="row gap4">
+      <span class="mode-lbl na">LEGACY</span><span class="mode-box na"></span>
+      <span class="mode-lbl na">Z-TOUCH</span><span class="mode-box na"></span>
+      <span class="mode-lbl na">RTffLL</span><span class="mode-box na"></span>
+      <span class="lbl-gold pad4">MATERIAL</span>
+      <select id="material" class="combo-arm" aria-label="material"></select>
+      <span class="mt-arrow na">&nbsp;&nbsp;→ <b>⇄ MULTITASK</b></span>
+    </div>
+    <div class="na-note">LEGACY / Z-TOUCH / RTffLL, MULTITASK: not part of this system</div>
+    <button id="btn-verify" class="verify-link">verify arms</button>
+    <button id="btn-call-operator" class="call-op">CALL OPERATOR</button>
+    <!-- the robots, live (the old SUPERVISION grid) -->
+    <div id="robots-grid" class="sup-panel"></div>
+
+    <div class="tabs" id="robot-tabs">
+      <div class="tabbar">
+        <button class="tab active" data-tab="tab-individual">INDIVIDUAL</button>
+        <button class="tab" data-tab="tab-set">SET</button>
+      </div>
+      <div class="pane" id="tab-individual">
+        <button class="qsub na">START POS INV</button>
+        <button id="btn-start-pos" class="qsub need-idle">START POS</button>
+        <button class="qsub na">TOUCHDOWN ↓</button>
+        <button class="qsub na">SELFTEST</button>
+        <button class="qsub na">FULL RECOVERY</button>
+        <button id="btn-ssh-checks-2" class="qsub">SSH CHECKS</button>
+        <div class="na-note">START POS INV, TOUCHDOWN ↓, SELFTEST, FULL RECOVERY: not part of this system</div>
+        <div class="grip-label">GRIPPER</div>
+        <div class="row gap10"><span class="w-lbl">WIDTH:</span>
+          <input id="grip-width" class="spin" type="number" min="0" max="0.08" step="0.01" value="0.070"></div>
+        <div class="row gap10"><span class="w-lbl">FORCE:</span>
+          <input id="grip-force" class="spin" type="number" min="0" max="100" step="1" value="70"></div>
+        <button class="qsub need-idle" data-grip="home">HOME GRIP</button>
+        <button class="qsub need-idle" data-grip="open">OPEN</button>
+        <button class="qsub need-idle" data-grip="close">CLOSE</button>
+        <div id="grip-said" class="small-grey"></div>
+        <button class="kill-btn" data-stop="KILL MOTION">KILL MOTION</button>
+      </div>
+      <div class="pane" id="tab-set" hidden>
+        <div id="set-boxes" class="set-boxes"></div>
+        <button class="qsub na">MOVEIT+RVIZ SET</button>
+        <button id="btn-start-set" class="qsub need-idle">START SET POS</button>
+        <button class="qsub na">SELFTEST SET</button>
+        <div class="na-note">MOVEIT+RVIZ SET, SELFTEST SET: not part of this system</div>
+        <div class="grip-label">GRIPPER</div>
+        <div class="row gap10"><span class="w-lbl">WIDTH:</span>
+          <input id="grip-width-all" class="spin cyan" type="number" min="0" max="0.08" step="0.01" value="0.070"></div>
+        <div class="row gap10"><span class="w-lbl">FORCE:</span>
+          <input id="grip-force-all" class="spin cyan" type="number" min="0" max="100" step="1" value="70"></div>
+        <button class="qsub need-idle" data-grip-set="home">HOME SET GRIPPERS</button>
+        <button class="qsub need-idle" data-grip-set="open">OPEN SET GRIPPERS</button>
+        <button class="qsub need-idle" data-grip-set="close">CLOSE SET GRIPPERS</button>
+        <button class="kill-btn" data-stop="KILL SET MOTION">KILL SET MOTION</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AESTHETIC GENERATOR: the bar and its submenu container (everything in it 11px) -->
+  <button id="bar-drawing" class="qbar bar-orange" data-fold="drawing-container">AESTHETIC GENERATOR + CODES</button>
+  <div id="drawing-container" class="sub-container s11">
+
+    <button class="fold f-yellow" data-fold="upload-panel" data-label="Ae_G_ IMAGE (upload)">▾ Ae_G_ IMAGE (upload)</button>
+    <div id="upload-panel" class="fold-panel fp-yellow">
+      <button class="qsub na">• SELECT RASTER IMG</button>
+      <button id="btn-select-svg" class="qsub sel-red">• SELECT SVG</button>
+      <input id="file-input" type="file" accept=".json,.svg" hidden>
+      <div class="param"><span>WIDTH (m):</span><input id="up-width" class="pfield" type="number" min="0" step="0.01" placeholder="0.80"></div>
+      <div class="param"><span>POSITION x,y (m):</span><input id="up-at" class="pfield" type="text" placeholder="0, 0"></div>
+      <div class="na-note">SELECT RASTER IMG: not part of this system. SELECT SVG takes a .svg (with its WIDTH) or a drawing .json and stores it on the server.</div>
+    </div>
+
+    <div class="hdr h-yellow">AI Image Generation</div>
+    <button class="qsub na">▶ PROMPT → IMAGE</button>
+    <button class="qsub na">▶ IMAGE + TEXT → IMAGE</button>
+    <button class="qsub na">▶ AI STYLE CONVERSION</button>
+    <div class="hdr h-yellow">Ae_G_ GENERATION STYLES</div>
+    <button class="qsub na">▶ PHOTO → RASTER (lineart)</button>
+    <button class="qsub na">▶ PHOTO → SCAFFOLD (construction lines)</button>
+    <button class="qsub na">▶ PHOTO → SVG  ▼</button>
+    <button class="qsub na xray">▶ X-RAY DRAWGEN</button>
+    <button class="qsub na">▶ LAYERED EMPHASIS (SVG STACK)</button>
+    <button class="qsub na">▶ HANDWRITING (text/numbers)</button>
+    <button class="qsub na">▶ LIVE CODE GENERATOR</button>
+    <div class="hdr h-orange">Ae_E_EDITOR</div>
+    <button class="qsub na">▶ SVG EDITOR  (vector: straighten · emphasis · erase · transform)</button>
+    <button class="qsub na">▶ RASTER STROKE EDITOR  (image → strokes: contours, hatching)</button>
+    <button class="hdr-btn h-yellow na">Ae_G_ DRAWING CODES (algorithm registry)</button>
+    <button class="hdr-btn h-yellow na">Ae_G_ MOTION CODES</button>
+    <div class="hdr h-green">P_ MOTION PIPELINE (RUN drawing-code + motion preset)</div>
+    <button class="fold f-green na">▸ CONFIG FILES (edit raster / svg config.yaml)</button>
+    <div class="na-note">image generation, editors, drawing and motion codes, config files: not part of this system (the server plans every drawing; config is never edited from here)</div>
+
+    <div class="hdr h-lila">P_ DRAWING CONTROL</div>
+    <div class="row gap4">
+      <button id="btn-start-drawing" class="dc-btn c-pink need-idle">START DRAWING</button>
+      <button id="btn-resume-drawing" class="dc-btn c-deeporange need-idle">RESUME DRAWING</button>
+      <button class="dc-btn c-red na">RELAUNCH CLONE</button>
+      <button class="dc-btn c-pink2 na">RELAUNCH X</button>
+    </div>
+    <div id="dc-picked" class="small-grey"></div>
+
+    <button class="fold f-pink" data-fold="ops-panel" data-label="OPERATION / ORCHESTRATOR">▸ OPERATION / ORCHESTRATOR</button>
+    <div id="ops-panel" class="fold-panel fp-pink" hidden>
+      <button class="sup-btn na">SUPERVISION / OVERLAP ZONES  ▾</button>
+      <button class="orch-btn na"><span class="c-lila">ORCHESTRATOR</span> <span class="c-green">[ON]</span></button>
+      <button id="btn-system-status" class="sysstat-btn">SYSTEM STATUS</button>
+      <button class="trans-btn na">TRANSITION</button>
+      <button class="kill-btn" data-stop="KILL ALL">KILL ALL</button>
+      <button class="wipe-btn na">CLEAR ALL <span class="c-wipe">(WIPE!)</span></button>
+      <button class="qbtn-outline o-orange na">RESTART GUI</button>
+      <div class="na-note">SUPERVISION, ORCHESTRATOR, TRANSITION, CLEAR ALL, RESTART GUI: not part of this system</div>
+    </div>
+
+    <button id="btn-afi" class="afi-btn" data-fold="afi-panel">ACTIVE FILE INFO</button>
+    <div id="afi-panel" class="afi-panel">
+      <div id="afi-arm" class="afi-arm"></div>
+      <div id="afi-file" class="afi-line"></div>
+      <div id="afi-stroke" class="afi-line"></div>
+      <div id="afi-status" class="afi-line"></div>
+      <div class="afi-line na">AUTO-RECOVERY: not part of this system</div>
+      <button class="recov-btn na">TEST AUTO-RECOVERY</button>
+      <div id="afi-eta" class="afi-line"></div>
+      <div class="row space-between">
+        <button id="btn-afi-refresh" class="link-red">REFRESH ↻</button>
+        <button id="btn-afi-details" class="link-red">FULL DETAILS ▸</button>
+      </div>
+    </div>
+    <button id="btn-waypoint-peek" class="peek-btn">WAYPOINT PEEK</button>
+
+    <button class="adv-btn" data-fold="svg-container" data-label="SVG (ADVANCED)">▼ SVG (ADVANCED)</button>
+    <div id="svg-container" class="adv-container">
+      <div class="param"><span>IMAGE FILE:</span><select id="image-file" class="pfield wide"></select>
+        <button id="btn-refresh-images" class="link-yellow">↻</button></div>
+      <div class="param"><span>PEN HEIGHT:</span><input id="pen-height" class="pfield" readonly><span>mm</span>
+        <span class="small-grey">press of the pen in, read-only</span></div>
+      <div class="param"><span>PAPER WIDTH:</span><input id="paper-w" class="pfield" readonly><span>m</span></div>
+      <div class="param"><span>PAPER LENGTH:</span><input id="paper-l" class="pfield" readonly><span>m</span></div>
+      <div class="param na"><span>COVERAGE %:</span><input class="pfield" value="35" disabled></div>
+      <div class="param na"><span>HEIGHT RATE:</span><input class="pfield" value="0.00" disabled></div>
+      <div class="param"><span>CENTER X:</span><input id="center-x" class="pfield" readonly><span>m</span></div>
+      <div class="param"><span>CENTER Y:</span><input id="center-y" class="pfield" readonly><span>m</span></div>
+      <div class="param"><span>NOTE:</span><input id="draw-note" class="pfield wide" type="text" placeholder="pen, paper, …"></div>
+      <div class="param"><span>IN THE AIR mm:</span><input id="draw-air" class="pfield" type="number" min="0" step="1" value="0">
+        <span class="small-grey">0 = on the paper</span></div>
+      <div class="na-note">COVERAGE, HEIGHT RATE: not part of this system. Paper and centre: the drawing area, read-only.</div>
+      <div class="lbl-gold">SVG CONFIG (YAML)</div>
+      <pre id="svg-config-view" class="config-view"></pre>
+      <button id="btn-select-svg-2" class="qsub sel-red">• SELECT SVG</button>
+      <div class="row gap4">
+        <button id="btn-start-svg" class="svg-btn c-white need-idle">• START SVG</button>
+        <button id="btn-resume-svg" class="svg-btn c-orange need-idle">• RESUME SVG</button>
+        <button class="svg-btn c-blue na">• EXPORT PATHWAY CSV</button>
+      </div>
+      <div class="row gap5 touch-row">
+        <button id="btn-z-touch" class="ztouch need-idle">Z TOUCH</button>
+        <button id="btn-measure" class="measure need-idle">MEASURE SURFACE</button>
+        <span id="force-label" class="force-label"></span>
+      </div>
+      <div class="row gap4 touch-row">
+        <span class="lbl-gold">MARK</span>
+        <select id="mark-group" class="combo-arm" aria-label="mark group"></select>
+        <button id="btn-mark" class="ztouch need-idle">MARK</button>
+        <button id="btn-mark-yaw" class="ztouch need-idle">MARK + YAW</button>
+        <button id="btn-crosses" class="measure need-idle">CROSSES</button>
+      </div>
+      <div id="stroke-label" class="stroke-label"></div>
+      <button id="btn-live-path" class="link-yellow big">VIEW LIVE PATH</button>
+      <button class="link-yellow big na">SVG AESTHETIC PREVIEW</button>
+      <button class="link-yellow big na">PHOTO → SVG</button>
+      <button class="qsub na">• PAUSE SVG</button>
+      <button class="qsub na">• RAISE SVG</button>
+      <button class="qsub" data-stop="CANCEL SVG">• CANCEL SVG</button>
+      <div class="na-note">EXPORT PATHWAY CSV, AESTHETIC PREVIEW, PHOTO → SVG, PAUSE, RAISE: not part of this system</div>
+    </div>
+
+    <button class="adv-btn" data-fold="raster-container" data-label="RASTER (ADVANCED)">▶ RASTER (ADVANCED)</button>
+    <div id="raster-container" class="adv-container" hidden>
+      <div class="param na"><span>IMAGE FILE:</span><input class="pfield" value="No file selected" disabled></div>
+      <div class="row gap8"><button class="penh-btn na">PEN HEIGHT</button>
+        <input id="pen-height-2" class="pfield" readonly><span>mm</span></div>
+      <div class="na-note">raster drawing: not part of this system (PEN HEIGHT shows the pen's press, read-only)</div>
+    </div>
+  </div>
+
+  <div style="height:20px"></div>
+  <button id="btn-emergency" class="qbar bar-pink emergency">EMERGENCY</button>
+  <div class="small-grey">EMERGENCY stops the running job here; the arms' own emergency stop is the one in your hand.</div>
+  <div style="height:30px"></div>
+</div>
+
+<!-- ================================================================ STATUS (right) -->
+<div id="col-status" class="col">
+  <div class="status-label">STATUS</div>
+  <div id="status-display" class="status-display" aria-live="polite"></div>
+</div>
+</div>
+
+<div id="statusbar">SYSTEM: READY</div>
+
+<!-- the old GUI's popup windows (SYSTEM STATUS, LOG FILES, ...): not confirmations, just views -->
+<div id="popup" class="popup" hidden>
+  <div class="popup-title"><span id="popup-title"></span><button id="popup-close" class="popup-close">CLOSE</button></div>
+  <div id="popup-body" class="popup-body"></div>
+</div>
 
 <script src="/gui/app.js"></script>
 </body>

@@ -23,6 +23,18 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-10 — the page is Diemut's old window
+
+`http://localhost:8420/gui` now reproduces the old "ARIS_KINDT - FR3 CONTROL" window: the same
+three columns, headers, tabs, colours and button names, every control wired to this system
+(ARM COUNT = the slot the arm buttons act on; MATERIAL = the pen in that arm; GRIPPER WIDTH /
+FORCE with INDIVIDUAL / SET; SELECT SVG + START DRAWING / RESUME DRAWING; Z TOUCH = touch-off,
+MEASURE SURFACE = calibrate; MARK / MARK + YAW / CROSSES per group; START POS = park; CALL
+OPERATOR = recover; SYSTEM STATUS, LOG FILES, VIEW LIVE PATH). Old controls that have no
+counterpart here (AI vision, discovery, photo → SVG, relaunch) stay where they were, greyed.
+`docs/modules/gui.md` has the table old control → what it does now. Nothing to do: install and
+open the page.
+
 ## 2026-10-09/10 — the field branch (`field-2026-10-09` on the fork `diemutstr/aris_smoketest`)
 
 Written on site with Pete at the stop; not yet in `wernerpe/aris_smoketest`. Both machines run
