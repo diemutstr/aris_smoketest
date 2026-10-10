@@ -23,6 +23,73 @@ On the laptop: restart `aris serve`, then `aris arms`. It must list every arm wi
 `operator PC code: same (<commit>)`. If it says DIFFERENT, one machine did not get the update:
 do the steps again there. Nothing else is needed; jobs are refused until the two match.
 
+## 2026-10-09/10 — the field branch (`field-2026-10-09` on the fork `diemutstr/aris_smoketest`)
+
+Written on site with Pete at the stop; not yet in `wernerpe/aris_smoketest`. Both machines run
+this branch (commit `e87204c` when this was written); the remote is called `fork` on both.
+
+**How it is installed today** (from the laptop, nobody touches the Dell):
+
+```
+git push fork aris3:field-2026-10-09
+ssh 192.168.50.2 'cd ~/aris-clean/aris && robot/serve.sh stop && git fetch -q fork field-2026-10-09 && git merge --ff-only FETCH_HEAD && robot/serve.sh start'
+```
+
+then restart `aris serve` on the laptop when anything under `aris/` changed, and wait until
+`aris arms` says `operator PC code: same (<commit>)` with every slot reporting. `robot/serve.sh
+start|stop|status` runs the runner on the Dell without systemd (log `out/operator/launch.log`).
+
+**What changed**
+
+- *The touch* (`robot/aris_robot/touch.py`, settings in `robot/site.json` `touch`): contact is
+  where the pen tip stops going down. Three rules, each needing 3 readings: the tip advanced at
+  most half of what was commanded over a sliding window and fell short by the threshold
+  (stall); the shortfall grew against its own level of 1-3 s ago (lag); 8 N over the force's
+  zero (the cap, a contact only when the tip also fell short). Every touch writes its readings
+  to `out/operator/touches/touch_<slot>_<time>.csv` on the Dell and its numbers (`stats`) into
+  its row. No descent on sparse readings; a watched flight stops when readings stop for 0.3 s.
+- *Touch jobs run on their own collision thresholds*, 30 N (`site.json` `collision.touch`).
+- *The descent is 2 mm/s* (5 before): the arm follows its command about 0.25 s late, so at the
+  detector's stop the command stood 2.4-4 mm ahead of the pen and the arm pressed on into the
+  table, tripping the robot's reflex after the stop on stiff spots.
+- *An unmeasured arm* makes its first touch from 150 mm, then plans the rest 50 mm of tilt
+  allowance above that contact; the first touch is not part of the fit. The grid stays within
+  0.5 m of the arm's axis (the stretched arm sags, about 15 mm per m² of reach).
+- *An arm standing low over the table rises straight up first* (40 mm at 10 mm/s) before any
+  flight; a pen at the paper of an arm whose height is not measured rises from where it stands
+  with no set-down (the set-down drove 3L into the table, job 030).
+- *Free flights* run at 0.15 of the joint speed and acceleration limits
+  (`rig.json` `drawing.free_speed_fraction`, `free_accel_fraction`); the way back from a touch
+  at 30 mm/s.
+- *Calibration files are site state*: ignored by git; the runner moves a file the server lacks
+  to `calibration/removed/` instead of deleting it; no test is handed the real `config` folder
+  (a test run on the live laptop deleted the four files on 10-09; they were rebuilt from the
+  jobs' events with `scratch/restore_calibration.py`).
+- *Row 3*: 3L is robot 17, 3R is robot 13 (`site/aris_2026-10.json`).
+
+**What was found on the Dell and is NOT fixed in code**
+
+- The old system's `aris-orchestrator@13` and `@17` (user services) were running and polled
+  `ros2 control` into the domains of robots 13 and 17 without pause, a full core each. Stopped
+  on 10-10 with Pete's word (`systemctl --user stop`); they come back with `start` or a login.
+  `aris-phd-latch@13/@17`, `aris-phd-press@13/@17` and `aris-arm2-progress` still run.
+- Link drops (`communication_constraints_violation`) come in bursts on several arms at once;
+  a drop on the working arm fails the job, a drop on a parked arm fails its last check ("no
+  joint states for ..."). The contacts of such a job are good: `scratch/restore_calibration.py
+  <slot>=<job id>` fits them with the server's own code and writes the file (3L, job 032).
+- When the runner refuses a job (`wrong_rig`, `wrong_code`) the server shows it as "moving"
+  for ever: watch `out/jobs/<id>/events.jsonl` for `"refused"` and `aris stop`.
+- `pens.json` and `rig.json` are not sent to the Dell: after `aris pen ...` copy
+  `config/pens.json` there, or every job is refused with `wrong_rig`.
+- The code comparison covers `aris/` only; a change under `robot/` alone is not noticed.
+- Once in job 021 no rule fired and the pen went 13 mm into the table until the robot's 40 N
+  reflex (the Dell was degraded, two other arms had just dropped); unexplained. The 30 N
+  thresholds and the readings watchdog are the net under it.
+
+**What to do**: every `aris calibrate <slot>` from all arms parked (`aris park` first, `aris
+recover <slot>` after a fault). State on 10-10: 1L, 1R, 2L, 2R, 3L have a base calibration;
+3R, every touch-off, `aris mark` and `aris crosses` are still to do.
+
 ## 2026-10-08, night — contact by the encoders, not by force
 
 What changed: the plane fit failed on 1L/1R (contacts ±4 cm) because the force estimate on
