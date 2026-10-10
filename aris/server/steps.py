@@ -149,6 +149,20 @@ def lift_pens(st, scene, now, down) -> list[Step]:
 def _lift_one(st, scene_of, q, a) -> Step:
     obs, standing, phase = scene_of
     rig, rules, got = st.rig, st.rules_for(a), None
+    if not rig.calibration_status(a)["base"].startswith("applied"):
+        # The table's real height under this arm is not measured: a pen "between the surface
+        # and its clearance" may stand ON the table, and setting it down drives it in (3L,
+        # 2026-10-09, job 030: the robot's reflex after 1 s).  No set-down: straight up from
+        # where the pen stands, slowly, checked as a lift-off from a surface at the tip.
+        rise = rise_first(st, scene_of, q, a)
+        if rise is None:
+            return Step(a, phase, why="the pen is near the paper of an arm whose height is "
+                                      "not measured and cannot rise straight up")
+        up = Motion("lift", rise.traj)
+        z = float(rig.to_table(a, rig.arm(a).tip(np.asarray(q, float)[None])[0])[2])
+        v = check(st.config_dir, a, up, phase, q, standing=standing, surface_z=z)
+        return Step(a, phase, (up,), (v,), dict(standing),
+                    "" if v.passed else "checker: lift: " + ", ".join(v.failed))
     for gates in (rules.gates, replace(rules.gates, limit_margin=RECOVERY_LIMIT_MARGIN)):
         got = _rise_from(rig, a, obs, q, replace(rules, gates=gates))
         if not isinstance(got, str):
