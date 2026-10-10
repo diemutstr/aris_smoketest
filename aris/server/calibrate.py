@@ -52,7 +52,12 @@ class CalibSettings:
     hover: float = 0.06         # m above the nominal paper
     step: float = 0.002         # m between IK samples of the descent
     max_jump: float = 0.15      # rad, the most a joint moves between two samples
-    speed: float = 0.005        # m/s of the pen along the descent
+    speed: float = 0.002        # m/s of the pen along the descent.  0.005 until 2026-10-09: the
+                                # arm follows its command about 0.25 s late, so at the
+                                # detector's stop the command stood 2.4-4 mm ahead of the pen
+                                # and the arm pressed on into the table: the robot's own
+                                # reflex (30 N) after the stop on stiff spots (3L job 028, 3R
+                                # job 035)
     extra_depth: float = 0.020  # m past the nominal paper the arm may go before giving up
 
 
